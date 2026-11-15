@@ -1,0 +1,7 @@
+method	median_wall_s	min_wall_s	max_wall_s	time_vs_mole	median_total_bytes	total_vs_mole_pct	listed_entries_total_bytes	listed_vs_mole_pct
+mole	107.5	100.8	130.0	1.00	737563436181	+0.00	737575152793	+0.00
+du	59.3	57.7	64.5	0.55	745564422144	+1.08	745556750336	+1.08
+jwalk	49.1	47.6	58.6	0.46	744785186816	+0.98	744788398080	+0.98
+bulk	30.9	30.0	36.5	0.29	744785461248	+0.98	744789020672	+0.98
+
+# entries du sized that mole did not list	2	98304 bytes	.orbstack,OrbStack

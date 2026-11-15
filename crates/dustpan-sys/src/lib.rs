@@ -2,6 +2,26 @@
 //! `dustpan-core` does no I/O. The binary uses portable `std` I/O and no `unsafe`.
 mod os;
 mod privilege;
+mod probe;
+
+#[cfg(target_os = "linux")]
+mod linux {
+    pub(crate) mod process;
+}
+#[cfg(target_os = "macos")]
+mod macos {
+    pub(crate) mod process;
+}
+#[cfg(unix)]
+mod unix {
+    pub(crate) mod identity;
+}
+#[cfg(windows)]
+mod windows {
+    pub(crate) mod identity;
+    pub(crate) mod process;
+}
 
 pub use os::os_facts;
 pub use privilege::is_root;
+pub use probe::LiveProbe;

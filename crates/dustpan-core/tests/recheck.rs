@@ -11,6 +11,7 @@ use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
 use dustpan_core::probe::{Owner, Probe, Seen};
+use dustpan_core::whitelist::Whitelist;
 use std::sync::Arc;
 
 const APP: &str = "/Users/alice/Library/Caches/com.example.app";
@@ -49,6 +50,7 @@ fn guard(fs: &FakeProbe) -> Guard {
             os: Os::MacOs,
             home: p("/Users/alice"),
             env: &env,
+            whitelist: Whitelist::defaults(Os::MacOs, &p("/Users/alice")),
         },
         fs,
     )

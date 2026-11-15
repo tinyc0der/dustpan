@@ -54,6 +54,7 @@ pub fn run(args: &[OsString], json: bool, out: &mut dyn Write) -> Exit {
         os,
         home: home.clone(),
         env: &env,
+        whitelist: dustpan_core::whitelist::Whitelist::defaults(os, &home),
     };
     let guard = match Guard::new(inputs, &probe) {
         Ok(guard) => guard,
@@ -176,7 +177,7 @@ fn write_json(out: &mut dyn Write, rows: &[Row]) -> io::Result<()> {
             quoted_or_null(kept.map(|r| r.layer().code().to_owned())),
             quoted_or_null(kept.map(|r| r.code().to_owned())),
             quoted_or_null(kept.map(ToString::to_string)),
-            quoted_or_null(source.map(ToString::to_string)),
+            quoted_or_null(source.map(|s| s.to_string())),
         )?;
     }
     writeln!(out, "]}}")

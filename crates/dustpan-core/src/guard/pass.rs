@@ -137,7 +137,7 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// Layers 1 to 4 in order; the first refusal decides. `seen` skips the leaf `lstat`.
+    /// Layers 1 to 5 in order; the first refusal decides. `seen` skips the leaf `lstat`.
     ///
     /// A path that every layer passes is then judged under the spelling the file system stores
     /// for it, which can only refuse (SAFE-03). A scanned entry was named by a directory read,
@@ -275,6 +275,9 @@ impl<'a> Pass<'a> {
                 };
                 return (Verdict::Kept(KeptReason::Protected(hit)), identity);
             }
+        }
+        if let Some(hit) = self.policy.whitelisted(path, &mut self.scratch) {
+            return (Verdict::Kept(KeptReason::Whitelisted(hit)), identity);
         }
         (Verdict::Eligible, identity)
     }

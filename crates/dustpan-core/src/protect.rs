@@ -12,6 +12,7 @@ mod macos;
 mod macos_bundles;
 mod names;
 mod table;
+mod whitelisted;
 mod windows;
 
 pub(crate) use compiled::{Policy, Step};

@@ -40,6 +40,7 @@ mod unix {
     use dustpan_core::paths::Os;
     use dustpan_core::probe::fake::FakeProbe;
     use dustpan_core::probe::{Handles, Probe, ProcessTable, Seen};
+    use dustpan_core::whitelist::Whitelist;
     use dustpan_sys::LiveProbe;
     use std::hint::black_box;
     use std::path::{Path, PathBuf};
@@ -220,6 +221,7 @@ mod unix {
             os: Os::current(),
             home: home.clone(),
             env: &env,
+            whitelist: Whitelist::defaults(Os::current(), &home.clone()),
         };
         let live = LiveProbe::new();
         let live_guard = Guard::new(inputs(), &live).expect("the policy loads on this host");

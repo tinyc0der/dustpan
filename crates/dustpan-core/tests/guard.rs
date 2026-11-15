@@ -11,6 +11,7 @@ use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
 use dustpan_core::probe::{Owner, Pid, Probe, Seen, Unseen};
+use dustpan_core::whitelist::Whitelist;
 use std::sync::Arc;
 
 const HOME: &str = "/Users/alice";
@@ -50,6 +51,7 @@ fn guard(fs: &FakeProbe) -> Guard {
             os: Os::MacOs,
             home: p(HOME),
             env: &env,
+            whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
         },
         fs,
     )
@@ -1319,6 +1321,7 @@ fn an_unreadable_protected_anchor_means_no_guard() {
             os: Os::MacOs,
             home: p(HOME),
             env: &env,
+            whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
         },
         &fs,
     );
@@ -1340,6 +1343,7 @@ fn a_home_that_is_a_system_root_means_no_guard() {
                 os: Os::MacOs,
                 home: p(home),
                 env: &env,
+                whitelist: Whitelist::defaults(Os::MacOs, &p(home)),
             },
             &mac(),
         );

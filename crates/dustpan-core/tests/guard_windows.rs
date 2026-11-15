@@ -6,6 +6,7 @@ use dustpan_core::guard::{Guard, GuardInputs, KeptReason, PolicyError, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
+use dustpan_core::whitelist::Whitelist;
 
 const HOME: &str = r"C:\Users\alice";
 
@@ -45,6 +46,7 @@ fn guard(fs: &FakeProbe, env: &dyn Fn(&str) -> Option<String>) -> Guard {
             os: Os::Windows,
             home: p(HOME),
             env,
+            whitelist: Whitelist::defaults(Os::Windows, &p(HOME)),
         },
         fs,
     )
@@ -194,6 +196,7 @@ fn a_profile_that_is_a_system_tree_means_no_guard() {
                 os: Os::Windows,
                 home: p(home),
                 env: &env,
+                whitelist: Whitelist::defaults(Os::Windows, &p(home)),
             },
             &windows(),
         );

@@ -34,13 +34,14 @@ fn main() -> std::process::ExitCode {
 #[cfg(unix)]
 mod unix {
     use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
+    use dustpan_core::config::Read;
     use dustpan_core::guard::{Guard, GuardInputs, Verdict};
     use dustpan_core::identity::Node;
     use dustpan_core::path::AbsPath;
     use dustpan_core::paths::Os;
     use dustpan_core::probe::fake::FakeProbe;
     use dustpan_core::probe::{Handles, Probe, ProcessTable, Seen};
-    use dustpan_core::whitelist::Whitelist;
+    use dustpan_core::whitelist::{self, Whitelist};
     use dustpan_sys::LiveProbe;
     use std::hint::black_box;
     use std::path::{Path, PathBuf};
@@ -199,6 +200,32 @@ mod unix {
         }
     }
 
+    /// A 500-line user whitelist that names none of the fixture's paths, so every path is still
+    /// judged eligible and the number measures what layer 5 costs to say no: 250 literals under
+    /// `~/Projects`, 150 literal cache folders and 100 cache globs beside the fixture's own.
+    fn big_whitelist(home: &AbsPath) -> Whitelist {
+        let mut text = String::from("# bench whitelist\n");
+        for n in 0..250 {
+            text.push_str(&format!("~/Projects/app{n}/node_modules/.cache\n"));
+        }
+        for n in 0..150 {
+            text.push_str(&format!("~/Library/Caches/org.vendor.{n}\n"));
+        }
+        for n in 0..100 {
+            text.push_str(&format!("~/Library/Caches/com.vendor.{n}.*\n"));
+        }
+        let file = AbsPath::parse(home.as_path().join(".config/dustpan/whitelist").as_os_str())
+            .expect("the whitelist path is absolute");
+        let list = whitelist::load(Os::current(), home, &file, Read::Text(text))
+            .expect("the bench whitelist parses");
+        assert_eq!(
+            list.entries().len(),
+            500 + 11,
+            "500 user lines and the safety entries"
+        );
+        list
+    }
+
     pub fn run() -> ExitCode {
         let (home, cached) = fixture();
         let home = home.canonicalize().expect("fixture home resolves");
@@ -221,7 +248,7 @@ mod unix {
             os: Os::current(),
             home: home.clone(),
             env: &env,
-            whitelist: Whitelist::defaults(Os::current(), &home.clone()),
+            whitelist: big_whitelist(&home),
         };
         let live = LiveProbe::new();
         let live_guard = Guard::new(inputs(), &live).expect("the policy loads on this host");

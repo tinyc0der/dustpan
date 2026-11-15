@@ -242,13 +242,85 @@ fn has_token(hay: &[u8], needle: &[u8]) -> bool {
     })
 }
 
+/// Words that name a folder of the system layout or of a bundle, and so sit in the path of
+/// unrelated software: `/Contents/MacOS/` is in the path of every bundled executable. None of
+/// them is evidence of who a process is. Words under four letters (`usr`, `bin`, `opt`) never
+/// count, so they are not listed. `docs/design/m0-3-guard.md` ("Fix round 2") has the counts
+/// the macOS words come from; the Linux words are the FHS, snap and flatpak folders that hold
+/// executables.
+const LAYOUT_WORDS: &[&str] = &[
+    "appex",
+    "application",
+    "applications",
+    "bundle",
+    "contents",
+    "coreservices",
+    "current",
+    "flatpak",
+    "framework",
+    "frameworks",
+    "games",
+    "helpers",
+    "home",
+    "lib32",
+    "lib64",
+    "libexec",
+    "library",
+    "libx32",
+    "local",
+    "loginitems",
+    "macos",
+    "plugins",
+    "private",
+    "privateframeworks",
+    "resources",
+    "sbin",
+    "share",
+    "sharedsupport",
+    "snap",
+    "support",
+    "system",
+    "users",
+    "utilities",
+    "versions",
+    "volumes",
+    "xpcservices",
+];
+
+/// Whether `word`, already lowercased, can tie a command line to a bundle id.
+fn is_evidence(word: &[u8]) -> bool {
+    word.len() >= 4 && !LAYOUT_WORDS.iter().any(|layout| layout.as_bytes() == word)
+}
+
+/// Whether the command line of `proc` spells the bundle id `id`: the whole id, or its last
+/// segment and one earlier segment as whole tokens (Mole's
+/// `_mole_user_cache_owner_process_state`, lib/core/file_ops.sh:459-540). `com` is in every
+/// reverse-DNS id and corroborates nothing; it is under four letters, like every other segment
+/// too short to count.
+fn spells(proc: &Proc, id: &str) -> bool {
+    let mut line = lower(proc.exe.as_encoded_bytes());
+    line.push(b' ');
+    line.extend(lower(proc.args.as_encoded_bytes()));
+    let id = lower(id.as_bytes());
+    if finds(&line, &id).next().is_some() {
+        return true;
+    }
+    let mut segments: Vec<&[u8]> = id.split(|&b| b == b'.').collect();
+    let Some(leaf) = segments.pop() else {
+        return false;
+    };
+    let counts = |word: &[u8]| is_evidence(word) && has_token(&line, word);
+    counts(leaf) && segments.iter().any(|segment| counts(segment))
+}
+
 impl Owner {
     /// Whether this owner runs, from one process table. Pure, so the rule is tested with no
-    /// processes. A bundle id matches a process in a bundle with that id, compared without
-    /// case. It also matches a process whose command line contains the id, or contains the
-    /// id's last segment and one earlier segment as whole tokens (Mole's
-    /// `_mole_user_cache_owner_process_state`, lib/core/file_ops.sh:459-540): the only signal
-    /// where no bundle id exists, and one that can only add a refusal elsewhere. A process name
+    /// processes.
+    ///
+    /// A bundle id matches a process in a bundle with that id, compared without case. A
+    /// process in a bundle is that bundle's app and no other, so nothing else about it is
+    /// asked. A process in no bundle, which is every process on Linux, matches when its
+    /// command line spells the id ([`spells`]): the only signal there is. A process name
     /// matches an executable with exactly that file name.
     ///
     /// An owner no process matches is idle only when every process of this user was
@@ -285,30 +357,12 @@ impl Owner {
             Self::Process(name) => {
                 Path::new(&proc.exe).file_name().and_then(|n| n.to_str()) == Some(&**name)
             }
-            Self::BundleId(id) => {
-                if let App::Bundles(bundles) = &proc.app
-                    && bundles.iter().any(|b| b.eq_ignore_ascii_case(id))
-                {
-                    return true;
+            Self::BundleId(id) => match &proc.app {
+                App::Bundles(bundles) if !bundles.is_empty() => {
+                    bundles.iter().any(|b| b.eq_ignore_ascii_case(id))
                 }
-                let mut line = lower(proc.exe.as_encoded_bytes());
-                line.push(b' ');
-                line.extend(lower(proc.args.as_encoded_bytes()));
-                let id = lower(id.as_bytes());
-                if finds(&line, &id).next().is_some() {
-                    return true;
-                }
-                let mut segments: Vec<&[u8]> = id.split(|&b| b == b'.').collect();
-                let Some(leaf) = segments.pop() else {
-                    return false;
-                };
-                if segments.is_empty() || leaf.len() < 4 || !has_token(&line, leaf) {
-                    return false;
-                }
-                // `com` is in every reverse-DNS id and corroborates nothing; it is under four
-                // bytes, like every other segment too short to count.
-                segments.iter().any(|s| s.len() >= 4 && has_token(&line, s))
-            }
+                App::Bundles(_) | App::Unknown { .. } => spells(proc, id),
+            },
         }
     }
 }
@@ -365,6 +419,51 @@ mod tests {
         assert_eq!(
             bundle("com.google.Chrome").state_in(&table(true, &[leaf_only])),
             OwnerState::Idle
+        );
+    }
+
+    #[test]
+    fn a_layout_word_is_no_evidence() {
+        for (id, exe) in [
+            (
+                "com.example.macos.helper",
+                "/opt/tools/Contents/MacOS/helper",
+            ),
+            ("com.example.system.library", "/System/Library/thing"),
+            ("org.example.share.snap", "/snap/share/bin/tool"),
+        ] {
+            assert_eq!(
+                bundle(id).state_in(&table(true, &[exe])),
+                OwnerState::Idle,
+                "{id}"
+            );
+        }
+        // The same shape with a word that names a product.
+        let procs = table(true, &["/opt/example/Contents/MacOS/helper"]);
+        assert_eq!(
+            bundle("com.example.macos.helper").state_in(&procs),
+            OwnerState::Running(vec![Pid(1)])
+        );
+        // The whole id in the path is evidence whatever its words are.
+        let procs = table(true, &["/opt/x/com.example.system.library"]);
+        assert_eq!(
+            bundle("com.example.system.library").state_in(&procs),
+            OwnerState::Running(vec![Pid(1)])
+        );
+    }
+
+    #[test]
+    fn a_process_in_a_bundle_matches_by_bundle_id_alone() {
+        let brave = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+        let ids = App::Bundles(Box::new(["com.brave.Browser".into()]));
+        let procs = in_app(table(true, &[brave]), ids);
+        assert_eq!(
+            bundle("com.other.brave.browser").state_in(&procs),
+            OwnerState::Idle
+        );
+        assert_eq!(
+            bundle("com.brave.browser").state_in(&procs),
+            OwnerState::Running(vec![Pid(1)])
         );
     }
 

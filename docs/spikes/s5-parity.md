@@ -8,7 +8,7 @@ Spike S5 asks whether `mo clean`, `mo purge` and `mo installer` can run in dry-r
 
 ## The fixture and the guard rails
 
-`mkfixture.sh` builds a fake home under `$TMPDIR`. It has app and browser caches (Chrome, Firefox, a made-up app), logs, a file in `.Trash`, three projects (`node_modules` and `target` folders aged 30 days, and a fresh `node_modules`), and in `Downloads` a `.dmg`, a `.pkg`, a zip with an `.app` inside, and a plain zip. It also has symlink traps: two cache entries and a log entry that point outside the fixture, one of them at the real `~/Documents`, a `node_modules` symlink, and a `.dmg` symlink.
+`mkfixture.sh` builds a fake home under `$TMPDIR`. It has app and browser caches (Chrome, Firefox, a made-up app), logs, a file in `.Trash`, and four projects. Two projects have a `node_modules` or `target` folder aged 30 days, one has a fresh `node_modules`, and one has a `node_modules` symlink. `Downloads` holds a `.dmg`, a `.pkg`, a zip with an `.app` inside, a plain zip, and a `.dmg` symlink. Two cache entries and one log entry are symlinks that point outside the fixture, and one of them points at the real `~/Documents`.
 
 `run.sh` runs each command with `HOME` set to the fixture, stdin from `/dev/null`, and the `--dry-run` flag, inside `sandbox-exec -f deny-writes.sb`. The profile allows everything except writes under `/Users`, `/Library`, `/Applications`, `/opt` and `/usr/local`, and running `/usr/bin/sudo`. Before any `mo` run, the script proves the sandbox works (`sandbox-proof.txt`). A write under `/Users` fails with `Operation not permitted` (exit 1). Running `sudo` fails at `execvp` (exit 71). A write inside the fixture succeeds.
 

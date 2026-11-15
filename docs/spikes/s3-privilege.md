@@ -56,6 +56,6 @@ This part is written from the Win32 API contract. It has not run, because it nee
 - The parent waits on `hProcess` and reads the exit code with `GetExitCodeProcess`. The helper exits after its last action, so a session batches every admin action through one helper and one prompt.
 - The UAC prompt runs on the secure desktop, so typed keys do not reach the console. Still call `FlushConsoleInputBuffer` before the TUI resumes.
 
-Lane 6 checks this on Windows: one UAC prompt, the helper exits after its action, and `s3-windows.png` shows it.
+Lane 6 checks this on Windows. It passes when one UAC prompt appears, the helper exits after its action, and `s3-windows.png` shows both.
 
 Verdict. Build the `Privileged` sink as suspend, `sudo -v` on the user's terminal, then `sudo -n dustpan --privileged-helper` over stdin and stdout with a closed action enum, and always `tcflush` plus drain events before resume; Touch ID and password runs are pending the operator, and Windows uses a `runas` relaunch over an ACL-locked named pipe.

@@ -42,11 +42,11 @@ A container folder itself does not. Shortly after the spike created `~/Library/C
 
 ## Privacy protection on the Trash
 
-`tcc-probe.sh` records what this process may do with `~/.Trash`. Listing `~/.Trash` and reading `~/.Trash/.DS_Store` are denied. A rename into `~/.Trash`, a `stat` of a known name, and an unlink of a known name are allowed (`run1/tcc.tsv`, `run2/tcc.tsv`). So the sink can move items in and report their names, but it cannot list the Trash. That is why `NSFileManager` returning the landed URL matters: the sink learns the name without a directory read.
+`tcc-probe.sh` records what this process may do with `~/.Trash`. Listing `~/.Trash` and reading `~/.Trash/.DS_Store` are denied. A rename into `~/.Trash`, a `stat` of a known name, and an unlink of a known name are allowed (`run1/tcc.tsv`, `run2/tcc.tsv`). So the sink can move items in and report their names, but it cannot list the Trash. That is why it matters that `NSFileManager` returns the landed URL. The sink learns the name without a directory read.
 
 ## Put Back
 
-Put Back is not verified. Finder keeps put-back records in `~/.Trash/.DS_Store`, which this process may not read. Reading the enabled state of **File > Put Back** through accessibility was not reliable unattended. In trial reads that were not committed, the item showed as enabled for a file moved by `renameatx_np`, which has no put-back record, because Finder was not the active app and its menu state was stale. The test for this question is to press **Put Back** and check that the file returns, which `putback.py` does. It needs Finder in front and nobody else at the keyboard.
+Put Back is not verified. Finder keeps put-back records in `~/.Trash/.DS_Store`, which this process may not read. Reading the enabled state of **File > Put Back** through accessibility was not reliable unattended. In trial reads that were not committed, the item showed as enabled for a file moved by `renameatx_np`, which has no put-back record. The likely cause is that Finder was not the active app, so its menu state was stale. The test for this question is to press **Put Back** and check that the file returns, which `putback.py` does. It needs Finder in front and nobody else at the keyboard.
 
 ## Over SSH
 

@@ -85,8 +85,9 @@ pub struct Proc {
     /// The arguments after the executable, joined by spaces, where the OS exposes them.
     pub args: OsString,
     pub app: App,
-    /// The identifier in the executable's code signature, where the OS has one (macOS). It is
-    /// the bundle id for an app, and the only id of a daemon that sits in no bundle.
+    /// The identifier in the executable's code signature, where the OS has one (macOS). By
+    /// default it is the bundle id for an app and the file name for a bare executable, and
+    /// the signer can set it. A daemon that sits in no bundle has no other id.
     pub signing_id: Option<Box<str>>,
     /// The app groups the process's entitlements name (macOS): the folders in
     /// `Library/Group Containers` the system lets it use.
@@ -586,6 +587,8 @@ mod tests {
             ("2BBY89MBSN.dev.warpdrive", false),
             ("2BBY89MBSN.dev", false),
             ("2BBY89MBSN.Office", false),
+            ("243LU875E5.groups.dev.warp", true),
+            ("243LU875E.groups.dev.warp", false),
         ] {
             assert_eq!(
                 group(folder).state_in(&warp) == OwnerState::Running(vec![Pid(1)]),

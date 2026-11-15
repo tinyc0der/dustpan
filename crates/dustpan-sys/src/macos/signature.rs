@@ -15,7 +15,8 @@ const ROOM: usize = 64 << 10;
 const MAX_ROOM: usize = 1 << 20;
 
 unsafe extern "C" {
-    /// `csops(2)`, in libSystem. The SDK declares it in `sys/codesign.h` for the kernel only.
+    /// `csops`, exported by libSystem. The macOS SDK ships no user-space header for it and the
+    /// `libc` crate has no binding; xnu declares it in `bsd/sys/codesign.h`.
     fn csops(
         pid: libc::pid_t,
         ops: libc::c_uint,
@@ -73,7 +74,8 @@ fn answer(
         }
         match io::Error::last_os_error().raw_os_error() {
             Some(libc::ESRCH) => return Err(Unanswered::Gone),
-            // An unsigned process, and a signature with no identifier.
+            // EINVAL: the process has no valid signature, and the system honors no
+            // entitlement without one. ENOENT: the signature has no identifier.
             Some(libc::EINVAL | libc::ENOENT) => return Ok(None),
             // The header was written and says how much room the answer needs.
             Some(libc::ERANGE) if whole(buf) > buf.len() && whole(buf) <= MAX_ROOM => {
@@ -155,7 +157,7 @@ mod tests {
         let me = libc::pid_t::try_from(std::process::id()).unwrap();
         let mine = of(me, &mut buf).expect("the kernel answers for this process");
         assert_eq!(mine.app_groups, Box::default());
-        // No pid is this large: `kern.maxproc` caps them far below.
+        // No pid is this large: xnu's `PID_MAX` is 99999.
         assert_eq!(of(libc::pid_t::MAX, &mut buf), Err(Unanswered::Gone));
     }
 }

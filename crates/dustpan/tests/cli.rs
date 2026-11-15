@@ -16,6 +16,31 @@ fn version_prints_two_lines() {
     assert_eq!(lines.len(), 2, "{stdout}");
     assert_eq!(lines[0], "dustpan 0.1.0");
     assert_eq!(lines[1].split(" · ").count(), 3, "{}", lines[1]);
+    assert_os_line(lines[1]);
+}
+
+fn assert_os_line(line: &str) {
+    let os = line.split(" · ").next().unwrap();
+    let arch = line.split(" · ").nth(1).unwrap();
+    let expected_arch = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "arm64"
+    } else {
+        std::env::consts::ARCH
+    };
+    assert_eq!(arch, expected_arch, "{line}");
+    if cfg!(target_os = "macos") {
+        let version = os
+            .strip_prefix("macOS ")
+            .unwrap_or_else(|| panic!("{line}"));
+        assert!(!version.trim().is_empty(), "{line}");
+    } else if cfg!(windows) {
+        let version = os
+            .strip_prefix("Windows ")
+            .unwrap_or_else(|| panic!("{line}"));
+        assert!(!version.trim().is_empty(), "{line}");
+    } else {
+        assert_ne!(os, "Linux", "os-release was not read: {line}");
+    }
 }
 
 #[test]

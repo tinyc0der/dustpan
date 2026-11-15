@@ -7,7 +7,7 @@ The terminal is put back on every way out: `q`, `Ctrl+C`, a panic and SIGTERM. R
 - `restore-q` after `q`, exit 0.
 - `restore-ctrl-c` after `Ctrl+C`, exit 130.
 - `restore-sigterm` after SIGTERM, exit 130.
-- `restore-hangup` ends the process when its terminal closes (SIGHUP), with no spin.
+- `restore-hangup` ends the process when its terminal closes, with or without SIGHUP, and never spins (lanes 11 and 13).
 - `restore-panic` after a panic, with the panic message readable.
 
 ## How to get to it (user POV)

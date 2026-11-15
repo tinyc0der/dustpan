@@ -58,7 +58,7 @@ If the screen is locked the GUI path fails (`ioreg -n Root -d1 -a | grep -A1 CGS
 
 Wait after a key with `$V wait home "<text>" 3`, not a fixed sleep. For restore checks start a shell pane (`$V start sh 120 40`), type the binary path with `$V text sh "$BIN"` plus `$V keys sh Enter`, then quit it and read `$V info sh` and `stty -a` from the same shell.
 
-The lane runner drives all of this for the M0-6 checklist lanes (1 to 8 and 10) and saves one capture per lane:
+The lane runner drives all of this for the M0-6 checklist lanes (1 to 8 and 10) plus lane 0 (the wrap check bites on a wrapped capture), 11 (hangup), 12 (`Tab` swap at 80 by 24) and 13 (terminal closed without SIGHUP), and saves one capture per lane:
 
 ```bash
 python3 .claude/skills/verify/scripts/home-lanes.py /tmp/swarm-m0-6/owner --bin $BIN
@@ -98,6 +98,8 @@ $G close m06-home
 - Prove the user path: real keys, mouse bytes and resizes into the real binary. Do not call internal functions.
 - Prove the action and the state after it: the screen text after each key, `info` for cursor and alternate screen, `stty -a` and the exit code after a quit.
 - A PNG goes in the repo only after you look at it for the account name or host name. The repo is public.
+- Wrapping is proven by `wrapped` in `home-lanes.py`: every expected text appears whole on exactly one line and no line starts with the tail of another. Lane 0 runs it on a real capture and on the same capture cut at 22 cells, and the second must fail. A width check cannot fire here, because a capture is never wider than its pane.
+- `scripts/term-race.py RUNS SIGNAL BIN` sends the signal while the main thread redraws and fails when the cursor is left hidden. Run it with 300 runs after a change to drawing or restore.
 - Borders are proven by `box_borders_align` in `home-lanes.py`, which measures cell columns with East Asian widths and fails on a border one cell off its corners. Check it bites by shifting a border in a saved capture.
 
 ## Cleanup
@@ -108,7 +110,7 @@ tmux -L dustpan-verify -f /dev/null kill-server   # every pane this skill starte
 $G close m06-home                 # each window you opened
 ```
 
-Never kill by process name. A TERM test kills the child pid you read from `$V pid`.
+Never kill by process name. In a shell pane `$V pid` is the shell, so a TERM test reads the dustpan child with `pgrep -P "$($V pid sh)"` and sends TERM to that pid.
 
 ## Features
 

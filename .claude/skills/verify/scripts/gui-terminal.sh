@@ -6,7 +6,7 @@
 #   resize NAME COLS ROWS             resize the window with the xterm 8;rows;cols t sequence
 #   shot   NAME OUT.png               screenshot the window through agent-desktop, title bar cropped off
 #   id     NAME                       agent-desktop window id
-#   close  NAME                       close the window if it is still open
+#   close  NAME                       close the window that `open` recorded for NAME, and no other
 set -euo pipefail
 cmd=${1:?command}
 name=${2:?name}
@@ -44,6 +44,7 @@ case $cmd in
       sleep 0.1
     done
     [[ -s $tty_file ]] || { echo "window never started" >&2; exit 1; }
+    window_id > "$state/$name.wid"
     ;;
   resize)
     printf '\033[8;%s;%st' "$2" "$1" > "$(cat "$tty_file")"
@@ -59,12 +60,15 @@ case $cmd in
     ;;
   id) window_id ;;
   close)
-    osascript -e 'on run argv' \
-      -e 'tell application "Terminal"' \
-      -e 'repeat with w in windows' \
-      -e 'if (name of w) contains (item 1 of argv) then close w saving no' \
-      -e 'end repeat' -e 'end tell' -e 'end run' "$name" > /dev/null 2>&1 || true
-    rm -f "$tty_file" "$state/$name.command"
+    wid_file=$state/$name.wid
+    if [[ -s $wid_file ]]; then
+      osascript -e 'on run argv' \
+        -e 'tell application "Terminal"' \
+        -e 'repeat with w in windows' \
+        -e 'if (id of w) is (item 1 of argv as integer) then close w saving no' \
+        -e 'end repeat' -e 'end tell' -e 'end run' "$(sed 's/^w-//' "$wid_file")" > /dev/null 2>&1 || true
+    fi
+    rm -f "$tty_file" "$wid_file" "$state/$name.command"
     ;;
   *) echo "unknown command $cmd" >&2; exit 2 ;;
 esac

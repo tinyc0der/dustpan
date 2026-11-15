@@ -7,6 +7,7 @@ Every screen shares a header, body, toast line and footer. The footer drops hint
 - `frame-header` shows `dustpan › Home` and the volume, dropping the volume name before the free space.
 - `frame-hints` drops `Ctrl+C Quit now` first and keeps `q Quit` and `? Help` last.
 - `frame-detail` shows the detail pane at 100 columns or more.
+- `frame-tab` swaps the list and the detail pane with `Tab` between 60 and 99 columns, shows a `Tab Detail` hint there, and does nothing at 100 or more.
 - `frame-too-small` shows "dustpan needs 60 by 16" and returns to Home after a resize.
 
 ## How to get to it (user POV)
@@ -17,7 +18,8 @@ Every screen shares a header, body, toast line and footer. The footer drops hint
 
 Preconditions: pane `home` running at 120 by 40.
 
-- **Narrow.** `$V resize home 70 20` then `$V screen home`. No row is wider than 70 and the footer lacks `Ctrl+C` but ends `? Help  q Quit`.
+- **Narrow.** `$V resize home 70 20` then `$V screen home`. Every entry row and footer hint shows whole on one line (lane 4), and the footer lacks `Ctrl+C` but ends `? Help  q Quit`.
+- **Tab.** `$V resize home 80 24`, `$V keys home Tab`. The screen shows the detail pane for the cursor entry, and `Tab` again returns the list (lane 12).
 - **Smallest.** `$V resize home 60 16`. Home still draws, nothing wraps.
 - **Too small.** `$V resize home 50 12`. The screen reads `dustpan needs 60 by 16` and `Resize to continue`.
 - **Return.** `$V resize home 120 40`. Home and the detail pane are back, with the cursor where it was.

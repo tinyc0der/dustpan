@@ -26,8 +26,34 @@ def drive(*args, check=True):
     return done.stdout
 
 
+ENTRIES = ["Clean", "Uninstall", "Analyze", "Optimize", "Status", "Purge", "Installers", "Slim", "History"]
+
+
 def cells(text):
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 0 if unicodedata.combining(c) else 1 for c in text)
+
+
+HINTS = ["↑↓ Move", "Enter Open", "1-9 Jump", "Tab Detail", ", Settings", "? Help", "q Quit", "Ctrl+C Quit now"]
+ENTRY_ROW = r"\d  {} +Coming in M\d"
+
+
+def wrapped(screen, expected):
+    """Return why a screen shows a wrap, or None. Each expected text must appear whole on exactly one line, and no line
+    may start with the tail of an expected text that sits whole elsewhere or not at all."""
+    lines = screen.split("\n")
+    for text in expected:
+        pattern = re.compile(text if text.startswith("\\d") else re.escape(text))
+        whole = [line for line in lines if pattern.search(line)]
+        if len(whole) != 1:
+            return f"{text!r} appears whole on {len(whole)} lines"
+    for text in (t for t in expected if not t.startswith("\\d")):
+        words = text.split(" ")
+        for skip in range(1, len(words)):
+            tail = " ".join(words[skip:])
+            for line in lines:
+                if line.lstrip().startswith(tail) and text not in line:
+                    return f"line {line!r} starts with the tail {tail!r} of {text!r}"
+    return None
 
 
 def start(binary, cols, rows, *extra, env=None):
@@ -134,17 +160,63 @@ class Lanes:
         self.save("narrow.txt", f"=== Home @ 70x20 ===\n{screen}\n=== Help @ 70x20 ===\n{help_screen}")
         lines = screen.rstrip("\n").split("\n")
         footer = lines[-1]
-        too_wide = [l for l in lines if cells(l) > 70]
+        shown = [hint for hint in HINTS if hint in footer]
+        expected = ["dustpan › Home", "free", *shown]
+        expected += [ENTRY_ROW.format(label) for label in ENTRIES]
+        bad_wrap = wrapped(screen, expected)
         ok = (
-            not too_wide
+            bad_wrap is None
             and "q Quit" in footer
             and "? Help" in footer
+            and "Tab Detail" in footer
             and "Ctrl+C" not in footer
             and "Wheel" not in footer
             and "Coming in M3" in screen
         )
         aligned = box_borders_align(help_screen)
-        self.report(4, True if ok and aligned is True else (too_wide or footer if not ok else aligned), f"footer {footer.strip()!r}; help borders aligned")
+        self.report(4, True if ok and aligned is True else (bad_wrap or footer if not ok else aligned), f"footer {footer.strip()!r}; help borders aligned")
+
+    def lane12(self):
+        start(self.binary, 80, 24)
+        before = drive("screen", SESSION)
+        drive("keys", SESSION, "Down", "Down", "Tab")
+        time.sleep(0.2)
+        detail = drive("screen", SESSION)
+        drive("keys", SESSION, "?")
+        time.sleep(0.2)
+        help_screen = drive("screen", SESSION)
+        drive("keys", SESSION, "?", "Tab")
+        time.sleep(0.2)
+        back = drive("screen", SESSION)
+        drive("stop", SESSION)
+        self.save("tab.txt", f"=== list @ 80x24 ===\n{before}\n=== after Down Down Tab ===\n{detail}\n=== help ===\n{help_screen}\n=== Tab again ===\n{back}")
+        footer = before.rstrip("\n").split("\n")[-1]
+        ok = (
+            "Tab Detail" in footer
+            and "Explore disk usage" in detail
+            and "Uninstall" not in detail
+            and "Tab" in help_screen
+            and "Uninstall" in back
+            and wrapped(detail, ["dustpan › Home", "Status  Coming in M1"]) is None
+        )
+        self.report(12, True if ok else f"Tab did not swap panes at 80x24: {detail!r}", "Tab swaps list and detail at 80x24, hint and help entry present")
+
+    def lane13(self):
+        probe = os.path.join(HERE, "hangup-without-sighup.py")
+        done = subprocess.run([sys.executable, probe, self.binary], capture_output=True, text=True, timeout=30)
+        self.save("hangup-no-sighup.txt", done.stdout + done.stderr)
+        self.report(13, True if done.returncode == 0 else done.stdout.strip().splitlines()[-1:] or "probe failed", "a terminal that closes without SIGHUP still ends the process")
+
+    def lane0(self):
+        shown = ["dustpan › Home", "free", "q Quit", "? Help"] + [ENTRY_ROW.format(label) for label in ENTRIES]
+        start(self.binary, 70, 20)
+        screen = drive("screen", SESSION)
+        drive("stop", SESSION)
+        clean = wrapped(screen, shown)
+        chopped = "\n".join(piece for line in screen.split("\n") for piece in (line[:22], line[22:]))
+        wrapped_bad = wrapped(chopped, shown)
+        ok = clean is None and wrapped_bad is not None
+        self.report(0, True if ok else f"wrap check: clean screen {clean!r}, wrapped screen {wrapped_bad!r}", "the wrap check passes the real capture and fails the same capture wrapped at 22 cells")
 
     def lane5(self):
         start(self.binary, 120, 40)
@@ -245,17 +317,19 @@ class Lanes:
         self.report(11, True if not alive else f"pid {pid} outlived its terminal", "closing the terminal ends the process")
 
     def lane10(self):
-        done = subprocess.run(f"{self.binary} </dev/null | cat", shell=True, capture_output=True, text=True, timeout=10)
-        self.save("no-tty.txt", done.stdout)
-        ok = done.returncode == 0 and "Usage:" in done.stdout and "\x1b" not in done.stdout
-        self.report(10, True if ok else f"exit {done.returncode}, output {done.stdout[:80]!r}", "prints help, no escape codes, exit 0")
+        out_path = os.path.join(self.out, "no-tty.txt")
+        with open(out_path, "w") as sink:
+            done = subprocess.run([self.binary], stdin=subprocess.DEVNULL, stdout=sink, timeout=10)
+        text = open(out_path).read()
+        ok = done.returncode == 0 and "Usage:" in text and "\x1b" not in text
+        self.report(10, True if ok else f"exit {done.returncode}, output {text[:80]!r}", "prints help, no escape codes, exit 0")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("out")
     parser.add_argument("--bin", default=os.path.join(HERE, "../../../../target/release/dustpan"))
-    parser.add_argument("--only", default="1,2,3,4,5,6,7,8,10,11")
+    parser.add_argument("--only", default="0,1,2,3,4,5,6,7,8,10,11,12,13")
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
     lanes = Lanes(args.out, os.path.abspath(args.bin))

@@ -42,7 +42,7 @@ pub fn log_dir(os: Os, env: Env) -> Option<PathBuf> {
         Os::MacOs => Some(home_dir(os, env)?.join("Library/Logs/dustpan")),
         Os::Linux => {
             let state = var(env, "XDG_STATE_HOME")
-                .filter(|p| p.is_absolute())
+                .filter(|p| p.starts_with("/"))
                 .or_else(|| Some(home_dir(os, env)?.join(".local/state")))?;
             Some(state.join("dustpan"))
         }

@@ -25,3 +25,4 @@
 | 2026-11-15 | The Intel macOS runner is `macos-15-intel`, not `macos-13` | GitHub retired `macos-13` in late 2025; `macos-15-intel` is the Intel image it offers | `.github/workflows/ci.yml` |
 | 2026-11-15 | Root refusal exits 3 (Refused), not 1 | `docs/PLAN.md` and the M0 checklist set 3; SAFE-16's test line says 1 and predates the exit table | `docs/PLAN.md` exit table |
 | 2026-11-15 | `--version` reads the OS through `sysctlbyname`, `/etc/os-release` and `RtlGetVersion`, with no subprocess | Keeps it under the 20 ms budget and outside SAFE-19 and SAFE-20 | `crates/dustpan-sys/src/os.rs` |
+| 2026-11-15 | The Apple Silicon macOS runner is `macos-15`, not `macos-14` | CI on this repo failed `macos-14` with "configuration macos-14-arm64-us-default is not supported" | check-run 132839324106 annotation |

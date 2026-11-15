@@ -44,6 +44,26 @@ fn version_survives_a_closed_pipe() {
 }
 
 #[test]
+fn debug_version_survives_a_closed_stderr_pipe() {
+    let home = fresh_home("closed-stderr");
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("dustpan"))
+        .args(["--debug", "--version"])
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("LOCALAPPDATA", home.join("AppData"))
+        .env_remove("XDG_STATE_HOME")
+        .stdout(Stdio::piped())
+        .stderr(writer)
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&home).ok();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("dustpan 0.1.0\n"));
+}
+
+#[test]
 fn help_lists_the_global_flags_and_no_commands() {
     dustpan()
         .arg("--help")
@@ -114,6 +134,13 @@ fn no_color_flag_and_env_strip_escapes_from_help() {
     assert!(!env.contains(&0x1b));
 }
 
+fn fresh_home(tag: &str) -> PathBuf {
+    let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("home-{tag}"));
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::create_dir_all(&home).unwrap();
+    home
+}
+
 fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
@@ -127,9 +154,7 @@ fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn debug_writes_a_session_log_that_names_no_home() {
-    let home =
-        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("home-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
+    let home = fresh_home("session-log");
     dustpan()
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -141,8 +166,12 @@ fn debug_writes_a_session_log_that_names_no_home() {
 
     let mut logs = Vec::new();
     files_under(&home, &mut logs);
+    let log = logs
+        .first()
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .unwrap_or_default();
+    std::fs::remove_dir_all(&home).ok();
     assert_eq!(logs.len(), 1, "{logs:?}");
-    let log = std::fs::read_to_string(&logs[0]).unwrap();
     assert!(log.starts_with("dustpan 0.1.0\n"), "{log}");
     assert!(!log.contains(home.to_str().unwrap()), "{log}");
     assert!(log.contains("argv: dustpan"), "{log}");

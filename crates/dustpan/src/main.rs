@@ -10,7 +10,8 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     // SAFE-16. This runs before argument parsing so even `--version` refuses.
     if dustpan_sys::is_root() {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "dustpan: run without sudo; it asks for administrator access when an operation needs it."
         );
         return Exit::Refused.into();
@@ -34,12 +35,17 @@ fn main() -> ExitCode {
     let facts = dustpan_sys::os_facts();
     if cli.debug {
         match debug::start_session(&facts, &args) {
-            Ok(path) => eprintln!("debug log: {path}"),
-            Err(err) => eprintln!("dustpan: could not write the debug log: {err}"),
+            Ok(path) => _ = writeln!(std::io::stderr(), "debug log: {path}"),
+            Err(err) => {
+                _ = writeln!(
+                    std::io::stderr(),
+                    "dustpan: could not write the debug log: {err}"
+                )
+            }
         }
     }
 
-    // A closed pipe is not an error: write and ignore failure instead of panicking in println!.
+    // A closed pipe is not an error: write and ignore failure instead of panicking in print macros.
     if cli.version {
         let _ = writeln!(
             std::io::stdout(),

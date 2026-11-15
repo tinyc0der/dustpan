@@ -7,3 +7,18 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
+
+[features]
+# The in-memory `probe::fake::FakeProbe`. Only test targets turn it on (SAFE-17).
+testkit = []
+
+[dev-dependencies]
+# Integration tests and the bench see the fake through this self-dependency.
+dustpan-core = { path = ".", features = ["testkit"] }
+# The guard bench measures the real probe on a real fixture tree, so the number includes the
+# syscalls. Integration targets link the same core lib as sys, so `AbsPath` and the rest unify.
+dustpan-sys.workspace = true
+
+[[bench]]
+name = "guard"
+harness = false

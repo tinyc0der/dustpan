@@ -172,6 +172,10 @@ dependencies = [
 [[package]]
 name = "dustpan-core"
 version = "0.1.0"
+dependencies = [
+ "dustpan-core",
+ "dustpan-sys",
+]
 
 [[package]]
 name = "dustpan-sys"

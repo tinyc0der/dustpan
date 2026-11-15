@@ -1,0 +1,235 @@
+//! Matching one name: globs, bundle-id patterns and keywords.
+use crate::guard::{Kind, PolicyError};
+use std::collections::HashSet;
+
+pub(super) fn fold(bytes: &[u8], fold_case: bool) -> Vec<u8> {
+    if fold_case {
+        bytes.to_ascii_lowercase()
+    } else {
+        bytes.to_vec()
+    }
+}
+
+pub(super) fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
+/// One component of a row's anchor.
+pub(super) enum Comp {
+    Lit(Box<[u8]>),
+    Glob(Glob),
+}
+
+impl Comp {
+    pub(super) fn new(name: &[u8], fold_case: bool) -> Self {
+        let folded = fold(name, fold_case);
+        if folded.contains(&b'*') {
+            Self::Glob(Glob(folded.into()))
+        } else {
+            Self::Lit(folded.into())
+        }
+    }
+}
+
+/// A pattern over one name where `*` matches any run of bytes.
+pub(super) struct Glob(pub Box<[u8]>);
+
+impl Glob {
+    pub(super) fn matches(&self, name: &[u8]) -> bool {
+        let pattern = &*self.0;
+        let (mut p, mut n) = (0, 0);
+        let mut retry: Option<(usize, usize)> = None;
+        while n < name.len() {
+            if p < pattern.len() && pattern[p] == b'*' {
+                retry = Some((p, n));
+                p += 1;
+            } else if p < pattern.len() && pattern[p] == name[n] {
+                p += 1;
+                n += 1;
+            } else if let Some((star, at)) = retry {
+                retry = Some((star, at + 1));
+                p = star + 1;
+                n = at + 1;
+            } else {
+                return false;
+            }
+        }
+        pattern[p..].iter().all(|&b| b == b'*')
+    }
+}
+
+/// Bundle-id globs sorted by shape, so one name costs a hash lookup, a trie walk and a few
+/// substring scans instead of five hundred glob matches.
+#[derive(Default)]
+pub(super) struct NamePatterns {
+    exact: HashSet<Box<[u8]>>,
+    prefixes: PrefixSet,
+    suffixes: Vec<Box<[u8]>>,
+    contains: Vec<Box<[u8]>>,
+    general: Vec<Glob>,
+    /// `*a*b` patterns. Mole matches a pattern that starts with `*` against the whole path, and
+    /// these can match across a separator, so they keep that meaning.
+    whole_path: Vec<Glob>,
+    keywords: Vec<(Box<[u8]>, Kind)>,
+}
+
+pub(super) enum BundleMatch {
+    No,
+    /// The name itself is protected.
+    Name,
+    /// A `*x*` pattern: the name and everything below it are protected.
+    Anywhere,
+}
+
+impl NamePatterns {
+    pub(super) fn add_bundle(&mut self, pattern: &'static str) -> Result<(), PolicyError> {
+        let bytes = pattern.as_bytes();
+        let inner = pattern.trim_matches('*');
+        if inner.is_empty() {
+            return Err(PolicyError::BadAnchor(pattern));
+        }
+        let (lead, trail) = (bytes[0] == b'*', bytes[bytes.len() - 1] == b'*');
+        match (inner.contains('*'), lead, trail) {
+            (true, true, _) => self.whole_path.push(Glob(bytes.into())),
+            (true, false, _) => self.general.push(Glob(bytes.into())),
+            (false, false, false) => drop(self.exact.insert(bytes.into())),
+            (false, false, true) => self.prefixes.insert(inner.as_bytes()),
+            (false, true, false) => self.suffixes.push(inner.as_bytes().into()),
+            (false, true, true) => self.contains.push(inner.as_bytes().into()),
+        }
+        Ok(())
+    }
+
+    pub(super) fn add_keyword(&mut self, folded: Vec<u8>, kind: Kind) {
+        self.keywords.push((folded.into(), kind));
+    }
+
+    pub(super) fn bundle(&self, name: &[u8]) -> BundleMatch {
+        if self.contains.iter().any(|c| contains(name, c)) {
+            BundleMatch::Anywhere
+        } else if self.exact.contains(name)
+            || self.prefixes.matches(name)
+            || self.suffixes.iter().any(|s| name.ends_with(s))
+            || self.general.iter().any(|g| g.matches(name))
+        {
+            BundleMatch::Name
+        } else {
+            BundleMatch::No
+        }
+    }
+
+    pub(super) fn whole_path(&self, path: &[u8]) -> bool {
+        self.whole_path.iter().any(|g| g.matches(path))
+    }
+
+    pub(super) fn keyword(&self, folded: &[u8]) -> Option<Kind> {
+        self.keywords
+            .iter()
+            .find(|(k, _)| contains(folded, k))
+            .map(|&(_, kind)| kind)
+    }
+}
+
+/// Byte trie over the fixed prefixes of `prefix*` patterns.
+struct PrefixSet {
+    nodes: Vec<(Vec<(u8, u32)>, bool)>,
+}
+
+impl Default for PrefixSet {
+    fn default() -> Self {
+        Self {
+            nodes: vec![(Vec::new(), false)],
+        }
+    }
+}
+
+impl PrefixSet {
+    fn insert(&mut self, prefix: &[u8]) {
+        let mut at = 0;
+        for &b in prefix {
+            let next = self.nodes[at].0.iter().find(|(k, _)| *k == b).map(|e| e.1);
+            at = match next {
+                Some(next) => next as usize,
+                None => {
+                    self.nodes.push((Vec::new(), false));
+                    let new = self.nodes.len() - 1;
+                    self.nodes[at].0.push((b, new as u32));
+                    new
+                }
+            };
+        }
+        self.nodes[at].1 = true;
+    }
+
+    fn matches(&self, name: &[u8]) -> bool {
+        let mut at = 0;
+        for &b in name {
+            match self.nodes[at].0.iter().find(|(k, _)| *k == b) {
+                Some(&(_, next)) => at = next as usize,
+                None => return false,
+            }
+            if self.nodes[at].1 {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_glob_matches_like_a_shell_star() {
+        let glob = |p: &str| Glob(p.as_bytes().into());
+        assert!(glob("*dev.orbstack*").matches(b"HUAQ24HBR6.dev.orbstack"));
+        assert!(glob("com.apple.*").matches(b"com.apple.Safari"));
+        assert!(!glob("com.apple.*").matches(b"com.applesauce"));
+        assert!(glob("state_*.sqlite").matches(b"state_5.sqlite"));
+        assert!(!glob("state_*.sqlite").matches(b"state_5.sqlite-wal"));
+        assert!(glob("*").matches(b""));
+        assert!(!glob("a*b").matches(b"ab-c"));
+    }
+
+    #[test]
+    fn a_prefix_set_matches_any_listed_prefix() {
+        let mut set = PrefixSet::default();
+        set.insert(b"com.apple.");
+        set.insert(b"keyboard");
+        assert!(set.matches(b"com.apple.finder"));
+        assert!(set.matches(b"keyboard"));
+        assert!(!set.matches(b"com.apple"));
+        assert!(!set.matches(b"keyboar"));
+    }
+
+    #[test]
+    fn bundle_patterns_are_sorted_by_shape() {
+        let mut names = NamePatterns::default();
+        for pattern in [
+            "Claude",
+            "com.apple.*",
+            "*.inputmethod",
+            "*tailscale*",
+            "a*b",
+            "*x*y*",
+        ] {
+            names.add_bundle(pattern).unwrap();
+        }
+        assert!(matches!(names.bundle(b"Claude"), BundleMatch::Name));
+        assert!(matches!(names.bundle(b"claude"), BundleMatch::No));
+        assert!(matches!(
+            names.bundle(b"com.apple.Safari"),
+            BundleMatch::Name
+        ));
+        assert!(matches!(names.bundle(b"x.inputmethod"), BundleMatch::Name));
+        assert!(matches!(
+            names.bundle(b"io.tailscale.ipn"),
+            BundleMatch::Anywhere
+        ));
+        assert!(matches!(names.bundle(b"a-to-b"), BundleMatch::Name));
+        assert!(names.whole_path(b"/a/x/b/y/c"));
+        assert!(!names.whole_path(b"/a/y/b/x"));
+        assert!(names.add_bundle("*").is_err());
+    }
+}

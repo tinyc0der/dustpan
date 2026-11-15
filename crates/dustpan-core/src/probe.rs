@@ -85,6 +85,12 @@ pub struct Proc {
     /// The arguments after the executable, joined by spaces, where the OS exposes them.
     pub args: OsString,
     pub app: App,
+    /// The identifier in the executable's code signature, where the OS has one (macOS). It is
+    /// the bundle id for an app, and the only id of a daemon that sits in no bundle.
+    pub signing_id: Option<Box<str>>,
+    /// The app groups the process's entitlements name (macOS): the folders in
+    /// `Library/Group Containers` the system lets it use.
+    pub app_groups: Box<[Box<str>]>,
 }
 
 /// Which app a process belongs to, as far as the probe could establish.
@@ -94,7 +100,8 @@ pub enum App {
     /// own bundle and the app that ships it. Empty for a bare executable, and on systems that
     /// have no bundles.
     Bundles(Box<[Box<str>]>),
-    /// The executable is gone or its bundle cannot be read, so the process may be any app.
+    /// The executable is gone, or its bundle or its code signature cannot be read, so the
+    /// process may be any app.
     /// `mine` says it runs as the user dustpan runs as; another user's process cannot own a
     /// cache in this user's home.
     Unknown { mine: bool },
@@ -122,6 +129,9 @@ pub enum Handles {
 pub enum Owner {
     /// A reverse-DNS id such as `com.google.Chrome`, from a rule or from a cache folder's name.
     BundleId(Box<str>),
+    /// A macOS app group, named by its folder in `Library/Group Containers`, such as
+    /// `2BBY89MBSN.dev.warp` or `group.com.apple.notes`. Several apps can share one.
+    AppGroup(Box<str>),
     /// An executable name such as `Google Chrome`.
     Process(Box<str>),
 }
@@ -313,15 +323,66 @@ fn spells(proc: &Proc, id: &str) -> bool {
     counts(leaf) && segments.iter().any(|segment| counts(segment))
 }
 
+/// Whether `long` is `short` and more segments: `com.example.app.helper` extends
+/// `com.example.app`. A single word extends nothing, so a signing identifier such as `node`
+/// starts no family.
+fn extends(long: &str, short: &str) -> bool {
+    let (long, short) = (long.as_bytes(), short.as_bytes());
+    short.contains(&b'.')
+        && long.get(short.len()) == Some(&b'.')
+        && long[..short.len()].eq_ignore_ascii_case(short)
+}
+
+/// Whether `proc` is the app the bundle id `id` names. With `family`, an id that extends `id`
+/// or that `id` extends also counts, which ties `dev.warp.Warp-Stable` to the group `dev.warp`.
+fn is_app(proc: &Proc, id: &str, family: bool) -> bool {
+    let names = |own: &str| {
+        own.eq_ignore_ascii_case(id) || family && (extends(own, id) || extends(id, own))
+    };
+    if proc.signing_id.as_deref().is_some_and(names) {
+        return true;
+    }
+    match &proc.app {
+        App::Bundles(bundles) if !bundles.is_empty() => bundles.iter().any(|b| names(b)),
+        App::Bundles(_) | App::Unknown { .. } => spells(proc, id),
+    }
+}
+
+/// The ids an app group's folder name can hold, each with a dot in it: the whole name, the
+/// name after a ten-character team id, and that name after `group.` or `groups.`.
+/// `243LU875E5.groups.com.apple.podcasts` yields itself, `groups.com.apple.podcasts` and
+/// `com.apple.podcasts`.
+fn group_ids(folder: &str) -> impl Iterator<Item = &str> {
+    let unteamed = folder.split_once('.').and_then(|(team, rest)| {
+        (team.len() == 10 && team.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(rest)
+    });
+    let base = unteamed.unwrap_or(folder);
+    let ungrouped = ["group.", "groups."].iter().find_map(|prefix| {
+        let head = base.as_bytes().get(..prefix.len())?;
+        head.eq_ignore_ascii_case(prefix.as_bytes())
+            .then(|| &base[prefix.len()..])
+    });
+    [Some(folder), unteamed, ungrouped]
+        .into_iter()
+        .flatten()
+        .filter(|id| id.contains('.'))
+}
+
 impl Owner {
     /// Whether this owner runs, from one process table. Pure, so the rule is tested with no
     /// processes.
     ///
-    /// A bundle id matches a process in a bundle with that id, compared without case. A
-    /// process in a bundle is that bundle's app and no other, so nothing else about it is
-    /// asked. A process in no bundle, which is every process on Linux, matches when its
-    /// command line spells the id ([`spells`]): the only signal there is. A process name
-    /// matches an executable with exactly that file name.
+    /// A bundle id matches a process that carries it, compared without case, as the id of a
+    /// bundle around its executable or as its signing identifier. A process in a bundle is
+    /// that bundle's app and no other, so nothing else about it is asked. A process in no
+    /// bundle, which is every process on Linux, also matches when its command line spells the
+    /// id ([`spells`]): the only signal there is.
+    ///
+    /// An app group matches a process whose entitlements name the group. The system needs no
+    /// entitlement from an app outside the sandbox, so the group also matches the app its
+    /// folder name holds ([`group_ids`]) and that app's family ([`extends`]).
+    ///
+    /// A process name matches an executable with exactly that file name.
     ///
     /// An owner no process matches is idle only when every process of this user was
     /// identified (SAFE-08).
@@ -357,12 +418,12 @@ impl Owner {
             Self::Process(name) => {
                 Path::new(&proc.exe).file_name().and_then(|n| n.to_str()) == Some(&**name)
             }
-            Self::BundleId(id) => match &proc.app {
-                App::Bundles(bundles) if !bundles.is_empty() => {
-                    bundles.iter().any(|b| b.eq_ignore_ascii_case(id))
-                }
-                App::Bundles(_) | App::Unknown { .. } => spells(proc, id),
-            },
+            Self::BundleId(id) => is_app(proc, id, false),
+            Self::AppGroup(folder) => {
+                let mut entitled = proc.app_groups.iter();
+                entitled.any(|group| group.eq_ignore_ascii_case(folder))
+                    || group_ids(folder).any(|id| is_app(proc, id, true))
+            }
         }
     }
 }
@@ -382,6 +443,8 @@ mod tests {
                     exe: OsString::from(exe),
                     args: OsString::new(),
                     app: App::bare(),
+                    signing_id: None,
+                    app_groups: Box::default(),
                 })
                 .collect(),
         })
@@ -467,6 +530,71 @@ mod tests {
         );
     }
 
+    fn first(mut table: Seen<ProcessTable>, change: impl FnOnce(&mut Proc)) -> Seen<ProcessTable> {
+        if let Seen::Found(table) = &mut table {
+            change(&mut table.procs[0]);
+        }
+        table
+    }
+
+    #[test]
+    fn a_signing_identifier_names_a_process_in_no_bundle() {
+        let bird =
+            "/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/Versions/A/Support/bird";
+        let owner = bundle("com.apple.bird");
+        assert_eq!(owner.state_in(&table(true, &[bird])), OwnerState::Idle);
+        let signed = first(table(true, &[bird]), |p| {
+            p.signing_id = Some("com.apple.bird".into());
+        });
+        assert_eq!(owner.state_in(&signed), OwnerState::Running(vec![Pid(1)]));
+        assert_eq!(
+            bundle("com.apple.bird.helper").state_in(&signed),
+            OwnerState::Idle
+        );
+    }
+
+    #[test]
+    fn an_app_group_matches_its_entitled_processes_and_the_app_it_names() {
+        let group = |folder: &str| Owner::AppGroup(folder.into());
+        let daemon = "/System/Library/PrivateFrameworks/DataAccess.framework/Support/dataaccessd";
+        let entitled = first(table(true, &[daemon]), |p| {
+            p.signing_id = Some("com.apple.dataaccessd".into());
+            p.app_groups = Box::new(["group.com.apple.calendar".into()]);
+        });
+        assert_eq!(
+            group("group.com.apple.calendar").state_in(&entitled),
+            OwnerState::Running(vec![Pid(1)])
+        );
+        assert_eq!(
+            group("GROUP.COM.APPLE.CALENDAR").state_in(&entitled),
+            OwnerState::Running(vec![Pid(1)])
+        );
+        assert_eq!(
+            group("group.com.apple.notes").state_in(&entitled),
+            OwnerState::Idle
+        );
+
+        let warp = in_app(
+            table(true, &["/Applications/Warp.app/Contents/MacOS/stable"]),
+            App::Bundles(Box::new(["dev.warp.Warp-Stable".into()])),
+        );
+        for (folder, running) in [
+            ("2BBY89MBSN.dev.warp", true),
+            ("group.dev.warp", true),
+            ("2BBY89MBSN.group.dev.warp.Warp-Stable.shared", true),
+            ("dev.warp.Warp-Stable", true),
+            ("2BBY89MBSN.dev.warpdrive", false),
+            ("2BBY89MBSN.dev", false),
+            ("2BBY89MBSN.Office", false),
+        ] {
+            assert_eq!(
+                group(folder).state_in(&warp) == OwnerState::Running(vec![Pid(1)]),
+                running,
+                "{folder}"
+            );
+        }
+    }
+
     #[test]
     fn only_a_complete_table_proves_an_owner_idle() {
         let owner = bundle("com.example.app");
@@ -487,11 +615,8 @@ mod tests {
         assert!(OwnerState::Idle.permits_removal());
     }
 
-    fn in_app(mut table: Seen<ProcessTable>, app: App) -> Seen<ProcessTable> {
-        if let Seen::Found(table) = &mut table {
-            table.procs[0].app = app;
-        }
-        table
+    fn in_app(table: Seen<ProcessTable>, app: App) -> Seen<ProcessTable> {
+        first(table, |proc| proc.app = app)
     }
 
     #[test]

@@ -117,6 +117,7 @@ static PROTECTION: &[Row] = &[
 /// Inferred from the macOS rules: Mole's Linux branch probes owners per rule, not per path.
 const LIVE: Live = Live {
     user_cache_scopes: &[],
+    group_cache_scopes: &[],
     powerlog_stores: None,
     edr: None,
     sqlite_suffixes: &[".db", ".sqlite", ".sqlite3"],

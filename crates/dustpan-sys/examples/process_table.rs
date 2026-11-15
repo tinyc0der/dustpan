@@ -1,7 +1,7 @@
 //! `cargo run -p dustpan-sys --example process_table`: what one process snapshot holds on
 //! this host. An unidentified process of this user keeps every owned cache (SAFE-08), so this
 //! prints each one. CI runs it on every runner image.
-use dustpan_core::probe::{App, Probe, Seen};
+use dustpan_core::probe::{App, Probe, Proc, Seen};
 use dustpan_sys::LiveProbe;
 use std::time::Instant;
 
@@ -23,13 +23,17 @@ fn main() {
             .iter()
             .filter(move |p| p.app == App::Unknown { mine })
     };
+    let count = |holds: fn(&Proc) -> bool| table.procs.iter().filter(|p| holds(p)).count();
     println!(
         "process table: {} processes in {:.1} ms, complete: {}, in a bundle: {}, \
+         with a signing identifier: {}, entitled to an app group: {}, \
          unidentified: {} of this user, {} of other users",
         table.procs.len(),
         took.as_secs_f64() * 1e3,
         table.complete,
         table.procs.iter().filter(|p| in_bundle(&p.app)).count(),
+        count(|p| p.signing_id.is_some()),
+        count(|p| !p.app_groups.is_empty()),
         unknown(true).count(),
         unknown(false).count(),
     );

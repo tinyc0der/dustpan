@@ -726,8 +726,67 @@ fn a_group_containers_caches_are_kept_while_an_app_of_the_group_runs() {
             "/Users/alice/Library/Group Containers/2BBY89MBSN.dev.warp/Library/Caches"
         )
         .to_string(),
-        "Kept · an app of the group 2BBY89MBSN.dev.warp is running (pid 98087); quit it first"
+        "Kept · a process of the app group 2BBY89MBSN.dev.warp is running (pid 98087); quit it first"
     );
+}
+
+#[test]
+fn a_process_keeps_the_caches_of_the_groups_its_entitlements_name() {
+    // A daemon in no bundle, whose name is not the group's.
+    let daemon = "/System/Library/PrivateFrameworks/DataAccess.framework/Support/dataaccessd";
+    let calendar = "~/Library/Group Containers/group.com.apple.calendar/Library/Caches";
+    let fs = mac()
+        .running(86564, daemon)
+        .signed("com.apple.dataaccessd", &["group.com.apple.calendar"]);
+    assert_outcomes(
+        &fs,
+        &[
+            (calendar, "live/owner-running"),
+            (
+                "~/Library/Group Containers/GROUP.COM.APPLE.CALENDAR/Library/Caches",
+                "live/owner-running",
+            ),
+            (
+                "~/Library/Group Containers/group.com.apple.reminders/Library/Caches",
+                "eligible",
+            ),
+            (
+                "~/Library/Caches/com.apple.dataaccessd",
+                "live/owner-running",
+            ),
+        ],
+    );
+    assert_outcomes(&mac().running(86564, daemon), &[(calendar, "eligible")]);
+
+    let unknown = mac().running_unidentified(78754, "widget", true);
+    assert_eq!(
+        judge(&unknown, &calendar.replace('~', HOME)).to_string(),
+        "Kept · cannot tell whether a process of the app group group.com.apple.calendar is \
+         running: process 78754 cannot be identified; quit it first"
+    );
+}
+
+#[test]
+fn a_rule_can_name_an_app_group_as_its_owner() {
+    let warp = "/Applications/Warp.app/Contents/MacOS/stable";
+    let fs = mac()
+        .dir("/Users/alice/Library/Logs/warp")
+        .running_app(98087, warp, "dev.warp.Warp-Stable")
+        .signed("dev.warp.Warp-Stable", &["2BBY89MBSN.dev.warp"]);
+    let rule = Arc::new(Rule {
+        id: RuleId("test.warp-logs".into()),
+        group: GroupId("test".into()),
+        owners: Box::new([Owner::AppGroup("2BBY89MBSN.dev.warp".into())]),
+        sink: Sink::Delete,
+        default_selected: true,
+    });
+    let guard = guard(&fs);
+    let logs = p("/Users/alice/Library/Logs/warp");
+    let Seen::Found(seen) = fs.node(&logs) else {
+        panic!("fixture");
+    };
+    let candidate = guard.pass(&fs).candidate(logs, seen, &rule);
+    assert_eq!(outcome(candidate.unwrap().verdict()), "live/owner-running");
 }
 
 #[test]

@@ -12,7 +12,7 @@ const COMPANIONS: [&str; 3] = ["-wal", "-shm", "-journal"];
 pub(super) struct LiveRules {
     fold_case: bool,
     home: Vec<u8>,
-    scopes: Vec<Vec<Comp>>,
+    scopes: Vec<(Vec<Comp>, ScopeNames)>,
     powerlog: Option<Vec<u8>>,
     edr: Option<(Vec<u8>, Vec<Vec<u8>>)>,
     sqlite: &'static [&'static str],
@@ -24,12 +24,26 @@ pub(super) struct LiveRules {
 pub(crate) struct LiveChecks<'p> {
     pub powerlog: bool,
     pub edr: bool,
-    /// Bundle id of a user-cache scope, when the path is in one.
-    pub scope_owner: Option<&'p str>,
+    /// Who owns the user-cache scope the path is in, when it is in one.
+    pub scope_owner: Option<ScopeOwner<'p>>,
     /// The SQLite family or partial download to ask `Probe::in_use` about.
     pub family: Option<Vec<AbsPath>>,
     /// A SQLite companion whose name cannot be split, so its family cannot be asked about.
     pub family_unreadable: bool,
+}
+
+/// The owner a user-cache scope names in its `*` component.
+#[derive(Clone, Copy)]
+pub(crate) enum ScopeOwner<'p> {
+    Bundle(&'p str),
+    AppGroup(&'p str),
+}
+
+/// What the `*` component of a user-cache scope names.
+#[derive(Clone, Copy)]
+enum ScopeNames {
+    Bundle,
+    AppGroup,
 }
 
 /// What follows `dir` and one separator in `path`.
@@ -54,14 +68,19 @@ impl LiveRules {
                 suffixes,
             )
         });
-        let scopes = table.live.user_cache_scopes.iter().map(|scope| {
-            let comps = scope.split('/');
-            comps.map(|c| Comp::new(c.as_bytes(), fold_case)).collect()
-        });
+        let scopes = |scopes: &'static [&'static str], names: ScopeNames| {
+            scopes.iter().map(move |scope| {
+                let comps = scope.split('/');
+                let comps = comps.map(|c| Comp::new(c.as_bytes(), fold_case)).collect();
+                (comps, names)
+            })
+        };
+        let bundle_scopes = scopes(table.live.user_cache_scopes, ScopeNames::Bundle);
+        let group_scopes = scopes(table.live.group_cache_scopes, ScopeNames::AppGroup);
         Ok(Self {
             fold_case,
             home: fold(home.bytes(), fold_case),
-            scopes: scopes.collect(),
+            scopes: bundle_scopes.chain(group_scopes).collect(),
             powerlog: table.live.powerlog_stores.map(abs).transpose()?,
             edr: match table.live.edr {
                 Some((root, vendors)) => Some((
@@ -126,10 +145,10 @@ impl LiveRules {
         checks
     }
 
-    /// The owner id when `rest` (home-relative, folded) lies in a user-cache scope. `raw` is the
-    /// same span unfolded, so the id keeps its spelling.
-    fn scope_owner<'p>(&self, rest: &[u8], raw: &'p [u8]) -> Option<&'p str> {
-        self.scopes.iter().find_map(|scope| {
+    /// The owner when `rest` (home-relative, folded) lies in a user-cache scope. `raw` is the
+    /// same span unfolded, so the owner's name keeps its spelling.
+    fn scope_owner<'p>(&self, rest: &[u8], raw: &'p [u8]) -> Option<ScopeOwner<'p>> {
+        self.scopes.iter().find_map(|(scope, names)| {
             let mut owner = None;
             let mut at = 0;
             let mut parts = rest.split(|&b| b == SEP);
@@ -144,7 +163,10 @@ impl LiveRules {
             }
             let owner = std::str::from_utf8(owner?).ok()?;
             // Reverse-DNS names only: `Homebrew` and other named trees have their own probes.
-            (owner.contains('.') && !owner.starts_with('.')).then_some(owner)
+            (owner.contains('.') && !owner.starts_with('.')).then_some(match names {
+                ScopeNames::Bundle => ScopeOwner::Bundle(owner),
+                ScopeNames::AppGroup => ScopeOwner::AppGroup(owner),
+            })
         })
     }
 }

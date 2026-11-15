@@ -5,6 +5,8 @@
 
 mod support;
 
+use std::path::Path;
+use std::process::Command;
 use support::Fixture;
 
 #[test]
@@ -32,13 +34,68 @@ fn a_running_app_keeps_the_caches_of_its_group_containers() {
         assert_eq!(
             fixture.explain(&caches),
             format!(
-                "Kept · an app of the group {group} is running (pid {}); quit it first",
+                "Kept · a process of the app group {group} is running (pid {}); quit it first",
                 app.pid()
             )
         );
     }
     let other = fixture.home_dir("Library/Group Containers/group.com.example.other/Library/Caches");
     assert_eq!(fixture.explain(&other), "Eligible");
+}
+
+/// Signs `exe` ad hoc with a signing identifier and an entitlement to `app_groups`.
+fn sign(exe: &Path, identifier: &str, app_groups: &[&str]) {
+    let groups: String = app_groups
+        .iter()
+        .map(|group| format!("<string>{group}</string>"))
+        .collect();
+    let entitlements = exe.with_extension("entitlements");
+    let text = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>com.apple.security.application-groups</key><array>{groups}</array>
+</dict></plist>
+"#
+    );
+    std::fs::write(&entitlements, text).unwrap();
+    let signed = Command::new("codesign")
+        .args(["--force", "--sign", "-", "--identifier", identifier])
+        .arg("--entitlements")
+        .args([&entitlements, exe])
+        .output()
+        .unwrap();
+    assert!(signed.status.success(), "{signed:?}");
+}
+
+#[test]
+fn a_process_keeps_the_caches_of_the_groups_its_entitlements_name() {
+    let fixture = Fixture::new();
+    let exe = fixture.place("tools/syncd");
+    sign(
+        &exe,
+        "com.dustpan.test.syncd",
+        &["group.com.dustpan.test.shared", "ABCDE12345.dustpan-test"],
+    );
+    let daemon = fixture.start(&exe);
+    for group in ["group.com.dustpan.test.shared", "ABCDE12345.dustpan-test"] {
+        let caches = fixture.home_dir(&format!("Library/Group Containers/{group}/Caches"));
+        assert_eq!(
+            fixture.explain(&caches),
+            format!(
+                "Kept · a process of the app group {group} is running (pid {}); quit it first",
+                daemon.pid()
+            )
+        );
+    }
+    // The daemon sits in no bundle: its signature alone names it.
+    let cache = fixture.home_dir("Library/Caches/com.dustpan.test.syncd");
+    assert_eq!(
+        fixture.explain(&cache),
+        format!(
+            "Kept · com.dustpan.test.syncd is running (pid {}); quit it first",
+            daemon.pid()
+        )
+    );
 }
 
 #[test]

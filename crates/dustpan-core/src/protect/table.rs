@@ -87,6 +87,9 @@ pub(super) struct Live {
     /// Home-relative scopes whose `*` component is an owner bundle id
     /// (`_mole_user_cache_scope`, lib/core/file_ops.sh:206-248). Reverse-DNS names only.
     pub user_cache_scopes: &'static [&'static str],
+    /// Home-relative scopes whose `*` component is an app group's folder, which several apps
+    /// can share.
+    pub group_cache_scopes: &'static [&'static str],
     /// A `Current*` file one level below a store here, with `-wal` and `-shm`, is always live.
     pub powerlog_stores: Option<&'static str>,
     /// Endpoint-security caches: the root, and vendor prefixes matched case-insensitively.

@@ -1,4 +1,5 @@
 use super::bundle::Bundles;
+use super::signature::{self, Signature, Unsigned};
 use dustpan_core::probe::{App, Pid, Proc, ProcessTable, Seen, Unseen};
 use std::ffi::OsString;
 use std::io;
@@ -8,12 +9,13 @@ use std::path::Path;
 /// A listed process the probe could not name: its pid, and the errno of the last attempt.
 type Hidden = (libc::pid_t, Option<i32>);
 
-/// One snapshot of every process's executable path and the bundles it sits in, through
-/// `proc_listallpids`, `proc_pidpath` and each bundle's `Info.plist`. No subprocess runs, so no
-/// deadline or `PATH` lookup is involved.
+/// One snapshot of every process's executable path, the bundles it sits in and its code
+/// signature, through `proc_listallpids`, `proc_pidpath`, each bundle's `Info.plist` and
+/// `csops`. No subprocess runs, so no deadline or `PATH` lookup is involved.
 ///
 /// The bundle id is what ties a process to its cache folder: the path of
 /// `/Applications/Ghostty.app/Contents/MacOS/ghostty` does not spell `com.mitchellh.ghostty`.
+/// The entitlements are what tie it to a group container, which several apps share.
 /// Arguments need `KERN_PROCARGS2`, which answers for the caller's own processes alone; M3 adds
 /// them with the open-file probe.
 pub(crate) fn table() -> Seen<ProcessTable> {
@@ -41,7 +43,14 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
     let me = unsafe { libc::geteuid() };
     // Root reads every process, so none is another user's to set aside.
     let mine = |uid: libc::uid_t| me == 0 || uid == me;
+    // A process that cannot be told apart from any app. `None` when it exited meanwhile.
+    let unidentified = |pid| match short_record(pid) {
+        Short::Found { uid, .. } => Some(App::Unknown { mine: mine(uid) }),
+        Short::Gone => None,
+        Short::Unreadable(_) => Some(App::Unknown { mine: true }),
+    };
     let mut bundles = Bundles::default();
+    let mut scratch = Vec::new();
     let mut procs = Vec::with_capacity(pids.len());
     let mut hidden = Vec::new();
     let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
@@ -54,15 +63,14 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
         let len = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
         let path_errno = io::Error::last_os_error().raw_os_error();
         let path = usize::try_from(len).ok().filter(|&len| len > 0);
-        let (exe, app) = match path {
+        let (exe, mut app) = match path {
             Some(len) => {
                 let exe = OsString::from_vec(buf[..len].to_vec());
                 match bundles.enclosing(Path::new(&exe)) {
                     Ok(ids) => (exe, App::Bundles(ids)),
-                    Err(_) => match short_record(pid) {
-                        Short::Found { uid, .. } => (exe, App::Unknown { mine: mine(uid) }),
-                        Short::Gone => continue,
-                        Short::Unreadable(_) => (exe, App::Unknown { mine: true }),
+                    Err(_) => match unidentified(pid) {
+                        Some(app) => (exe, app),
+                        None => continue,
                     },
                 }
             }
@@ -80,11 +88,25 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
                 }
             },
         };
+        let signature = match signature::of(pid, &mut scratch) {
+            Ok(signature) => signature,
+            Err(Unsigned::Gone) => continue,
+            // The process may hold any group, so it may be any app.
+            Err(Unsigned::Unreadable) => match unidentified(pid) {
+                Some(unknown) => {
+                    app = unknown;
+                    Signature::default()
+                }
+                None => continue,
+            },
+        };
         procs.push(Proc {
             pid: Pid(id),
             exe,
             args: OsString::new(),
             app,
+            signing_id: signature.id,
+            app_groups: signature.app_groups,
         });
     }
     Some((procs, hidden))

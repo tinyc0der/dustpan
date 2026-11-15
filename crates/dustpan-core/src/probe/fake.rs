@@ -211,7 +211,21 @@ impl FakeProbe {
                 exe: OsString::from(exe),
                 args: OsString::new(),
                 app,
+                signing_id: None,
+                app_groups: Box::default(),
             });
+        }
+        self
+    }
+
+    /// Gives the process added last a code signature: its identifier, and the app groups its
+    /// entitlements name.
+    pub fn signed(mut self, signing_id: &str, app_groups: &[&str]) -> Self {
+        if let Seen::Found(table) = &mut self.processes
+            && let Some(proc) = table.procs.last_mut()
+        {
+            proc.signing_id = Some(signing_id.into());
+            proc.app_groups = app_groups.iter().map(|&group| group.into()).collect();
         }
         self
     }

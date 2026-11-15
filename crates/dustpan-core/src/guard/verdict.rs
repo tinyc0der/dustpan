@@ -248,6 +248,7 @@ impl fmt::Display for Owner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BundleId(name) | Self::Process(name) => f.write_str(name),
+            Self::AppGroup(name) => write!(f, "a process of the app group {name}"),
         }
     }
 }

@@ -36,6 +36,8 @@ pub(crate) fn table() -> Seen<ProcessTable> {
                         args: OsString::from_vec(words.collect::<Vec<_>>().join(&b' ')),
                         // Linux has no bundles: the command line is what names an owner.
                         app: App::bare(),
+                        signing_id: None,
+                        app_groups: Box::default(),
                     });
                 }
             }

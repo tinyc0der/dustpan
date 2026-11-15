@@ -538,6 +538,8 @@ const LIVE: Live = Live {
     user_cache_scopes: &[
         "Library/Caches/*",
         "Library/Containers/*/Data/Library/Caches",
+    ],
+    group_cache_scopes: &[
         "Library/Group Containers/*/Caches",
         "Library/Group Containers/*/Library/Caches",
     ],

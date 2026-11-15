@@ -134,6 +134,7 @@ static PROTECTION: &[Row] = &[
 
 const LIVE: Live = Live {
     user_cache_scopes: &[],
+    group_cache_scopes: &[],
     powerlog_stores: None,
     edr: None,
     sqlite_suffixes: &[".db", ".sqlite", ".sqlite3"],

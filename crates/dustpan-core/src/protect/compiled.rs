@@ -847,6 +847,7 @@ mod tests {
         },
         live: Live {
             user_cache_scopes: &[],
+            group_cache_scopes: &[],
             powerlog_stores: None,
             edr: None,
             sqlite_suffixes: &[],

@@ -4,7 +4,7 @@ use crate::candidate::{Candidate, Rule};
 use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
 use crate::probe::{self, Handles, Owner, OwnerState, Probe, ProcessTable, Seen};
-use crate::protect::{Policy, Step};
+use crate::protect::{Policy, ScopeOwner, Step};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,8 +24,9 @@ pub struct Pass<'a> {
     probe: &'a dyn Probe,
     frames: Vec<Frame>,
     processes: Option<Seen<ProcessTable>>,
-    /// Owner states from this pass's one process table.
+    /// Owner states from this pass's one process table, by bundle id and by app group.
     bundles: HashMap<Box<str>, OwnerState>,
+    app_groups: HashMap<Box<str>, OwnerState>,
     scratch: Vec<u8>,
     /// False in the pass that judges a leaf link's target, which is already physical.
     follows_leaf_link: bool,
@@ -92,6 +93,7 @@ impl<'a> Pass<'a> {
             frames: Vec::new(),
             processes: None,
             bundles: HashMap::new(),
+            app_groups: HashMap::new(),
             scratch: Vec::new(),
             follows_leaf_link: true,
             checks_spelling: true,
@@ -229,14 +231,15 @@ impl<'a> Pass<'a> {
         let mut refusal = live.powerlog.then_some(LiveReason::LiveDatabase);
         if refusal.is_none() {
             refusal = owners.iter().find_map(|owner| match owner {
-                Owner::BundleId(id) => self.bundle_refusal(id),
+                Owner::BundleId(id) => self.scope_refusal(ScopeOwner::Bundle(id)),
+                Owner::AppGroup(folder) => self.scope_refusal(ScopeOwner::AppGroup(folder)),
                 Owner::Process(_) => refusal_for(owner, owner.state_in(self.processes())),
             });
         }
         if refusal.is_none()
-            && let Some(id) = live.scope_owner
+            && let Some(owner) = live.scope_owner
         {
-            refusal = self.bundle_refusal(id);
+            refusal = self.scope_refusal(owner);
         }
         if refusal.is_none() && live.family_unreadable {
             refusal = Some(LiveReason::InUseUnknown(probe::Unseen::Failed));
@@ -330,21 +333,31 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// Whether the app with this bundle id keeps the path. Asked once per id in a pass: every
-    /// path in one cache folder shares the answer, and the table behind it does not change.
-    fn bundle_refusal(&mut self, id: &str) -> Option<LiveReason> {
-        if matches!(self.bundles.get(id), Some(OwnerState::Idle)) {
+    /// Whether the app with this bundle id, or an app of this group, keeps the path. Asked
+    /// once per name in a pass: every path in one cache folder shares the answer, and the
+    /// table behind it does not change.
+    fn scope_refusal(&mut self, scope: ScopeOwner<'_>) -> Option<LiveReason> {
+        let (name, states) = match scope {
+            ScopeOwner::Bundle(id) => (id, &self.bundles),
+            ScopeOwner::AppGroup(folder) => (folder, &self.app_groups),
+        };
+        let known = states.get(name).cloned();
+        if matches!(known, Some(OwnerState::Idle)) {
             return None;
         }
-        let owner = Owner::BundleId(id.into());
-        let state = match self.bundles.get(id) {
-            Some(state) => state.clone(),
-            None => {
-                let state = owner.state_in(self.processes());
-                self.bundles.insert(id.into(), state.clone());
-                state
-            }
+        let owner = match scope {
+            ScopeOwner::Bundle(id) => Owner::BundleId(id.into()),
+            ScopeOwner::AppGroup(folder) => Owner::AppGroup(folder.into()),
         };
+        let state = known.unwrap_or_else(|| {
+            let state = owner.state_in(self.processes());
+            let states = match scope {
+                ScopeOwner::Bundle(_) => &mut self.bundles,
+                ScopeOwner::AppGroup(_) => &mut self.app_groups,
+            };
+            states.insert(name.into(), state.clone());
+            state
+        });
         refusal_for(&owner, state)
     }
 

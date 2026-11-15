@@ -76,15 +76,20 @@ impl Fixture {
         dir.to_str().unwrap().to_owned()
     }
 
-    /// Copies this test binary to `exe`, below the fixture, and leaves it running there, asleep.
+    /// Copies this test binary to `exe`, below the fixture.
+    pub fn place(&self, exe: &str) -> PathBuf {
+        let exe = self.root.join(exe);
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+        exe
+    }
+
+    /// Leaves a placed copy of this test binary running, asleep.
     ///
     /// The system checks a binary the first time it runs, and a process snapshot taken during
     /// that check waited 0.5 to 0.9 seconds on the bench host. One untimed `explain` waits it
     /// out, so the timed calls measure dustpan.
-    pub fn run(&self, exe: &str) -> Running {
-        let exe = self.root.join(exe);
-        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-        std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+    pub fn start(&self, exe: &Path) -> Running {
         let child = Command::new(exe)
             .args(["--exact", "helper_sleeps_when_asked"])
             .env(SLEEP, "1")
@@ -100,6 +105,10 @@ impl Fixture {
         );
         assert!(settled.is_some(), "explain did not return in 30 seconds");
         running
+    }
+
+    pub fn run(&self, exe: &str) -> Running {
+        self.start(&self.place(exe))
     }
 
     /// What `explain` says about `path`: the text after the path. Panics when `explain` is

@@ -12,6 +12,7 @@ pub enum Input {
     Jump(u8),
     Help,
     Settings,
+    SwapPane,
     Quit,
     QuitNow,
     Click { column: u16, row: u16 },
@@ -36,6 +37,7 @@ pub struct KeyDoc {
     pub keys: &'static str,
     pub action: &'static str,
     pub hint: Option<Hint>,
+    pub narrow_only: bool,
 }
 
 const fn hint(priority: u8, keys: &'static str, label: &'static str) -> Option<Hint> {
@@ -46,51 +48,69 @@ const fn hint(priority: u8, keys: &'static str, label: &'static str) -> Option<H
     })
 }
 
-pub const HOME: [KeyDoc; 8] = [
+pub const HOME: [KeyDoc; 9] = [
     KeyDoc {
         keys: "{up} {down} j k",
         action: "Move the cursor",
         hint: hint(2, "{up}{down}", "Move"),
+        narrow_only: false,
     },
     KeyDoc {
         keys: "Enter {right} l",
         action: "Open the entry",
         hint: hint(3, "Enter", "Open"),
+        narrow_only: false,
     },
     KeyDoc {
         keys: "1..9",
         action: "Jump to an entry",
         hint: hint(4, "1-9", "Jump"),
+        narrow_only: false,
+    },
+    KeyDoc {
+        keys: "Tab",
+        action: "Swap list and detail below 100 columns",
+        hint: hint(2, "Tab", "Detail"),
+        narrow_only: true,
     },
     KeyDoc {
         keys: ",",
         action: "Settings",
         hint: hint(5, ",", "Settings"),
+        narrow_only: false,
     },
     KeyDoc {
         keys: "?",
         action: "Show or close this help",
         hint: hint(1, "?", "Help"),
+        narrow_only: false,
     },
     KeyDoc {
         keys: "q",
         action: "Quit",
         hint: hint(0, "q", "Quit"),
+        narrow_only: false,
     },
     KeyDoc {
         keys: "Ctrl+C",
         action: "Quit now",
         hint: hint(6, "Ctrl+C", "Quit now"),
+        narrow_only: false,
     },
     KeyDoc {
         keys: "Wheel, click",
         action: "Move, select a row",
         hint: None,
+        narrow_only: false,
     },
 ];
 
-pub fn home_hints() -> Vec<Hint> {
-    HOME.iter().filter_map(|doc| doc.hint).collect()
+pub fn home_hints(width: u16) -> Vec<Hint> {
+    let narrow = super::frame::is_narrow(width);
+    HOME.iter()
+        .filter(|doc| narrow || !doc.narrow_only)
+        .filter_map(|doc| doc.hint)
+        .collect()
 }
 
 pub fn expand(template: &str, glyphs: &Glyphs) -> String {
@@ -129,6 +149,7 @@ fn from_key(key: KeyEvent) -> Option<Input> {
         KeyCode::Char(c @ '1'..='9') => Some(Input::Jump(c as u8 - b'0')),
         KeyCode::Char('?') => Some(Input::Help),
         KeyCode::Char(',') => Some(Input::Settings),
+        KeyCode::Tab => Some(Input::SwapPane),
         KeyCode::Char('q') => Some(Input::Quit),
         _ => None,
     }
@@ -169,6 +190,7 @@ mod tests {
         assert_eq!(plain(KeyCode::Char('0')), None);
         assert_eq!(plain(KeyCode::Char('?')), Some(Input::Help));
         assert_eq!(plain(KeyCode::Char(',')), Some(Input::Settings));
+        assert_eq!(plain(KeyCode::Tab), Some(Input::SwapPane));
         assert_eq!(plain(KeyCode::Char('x')), None);
     }
 

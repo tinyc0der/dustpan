@@ -126,12 +126,15 @@ impl Look {
     }
 }
 
-/// Windows consoles take UTF-8 output.
-pub fn wants_ascii(flag: bool, locale: impl Fn(&str) -> Option<String>) -> bool {
+pub fn wants_ascii(
+    flag: bool,
+    utf8_console: bool,
+    locale: impl Fn(&str) -> Option<String>,
+) -> bool {
     if flag {
         return true;
     }
-    if cfg!(windows) {
+    if utf8_console {
         return false;
     }
     let charset = ["LC_ALL", "LC_CTYPE", "LANG"]
@@ -166,7 +169,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {
             pairs
@@ -176,19 +178,24 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
-    fn locale_decides_ascii_on_unix() {
-        assert!(!wants_ascii(false, env(&[("LANG", "en_US.UTF-8")])));
+    fn locale_decides_ascii_on_a_console_that_follows_the_locale() {
+        assert!(!wants_ascii(false, false, env(&[("LANG", "en_US.UTF-8")])));
         assert!(!wants_ascii(
+            false,
             false,
             env(&[("LC_ALL", "C.utf8"), ("LANG", "C")])
         ));
         assert!(wants_ascii(
             false,
+            false,
             env(&[("LC_ALL", "C"), ("LANG", "en_US.UTF-8")])
         ));
-        assert!(wants_ascii(false, env(&[])));
-        assert!(wants_ascii(true, env(&[("LANG", "en_US.UTF-8")])));
+        assert!(wants_ascii(false, false, env(&[])));
+        assert!(wants_ascii(true, false, env(&[("LANG", "en_US.UTF-8")])));
+        assert!(
+            !wants_ascii(false, true, env(&[])),
+            "a UTF-8 console ignores the locale"
+        );
     }
 }

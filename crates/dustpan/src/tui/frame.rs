@@ -42,19 +42,43 @@ pub fn regions(area: Rect) -> Regions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pane {
+    #[default]
+    List,
+    Detail,
+}
+
+impl Pane {
+    pub fn swapped(self) -> Pane {
+        match self {
+            Pane::List => Pane::Detail,
+            Pane::Detail => Pane::List,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Panes {
-    pub list: Rect,
+    pub list: Option<Rect>,
     pub divider: Option<Rect>,
     pub detail: Option<Rect>,
 }
 
-pub fn panes(body: Rect) -> Panes {
-    if body.width < DETAIL_MIN_WIDTH {
+pub fn is_narrow(width: u16) -> bool {
+    width < DETAIL_MIN_WIDTH
+}
+
+pub fn panes(body: Rect, shown: Pane) -> Panes {
+    if is_narrow(body.width) {
+        let (list, detail) = match shown {
+            Pane::List => (Some(body), None),
+            Pane::Detail => (None, Some(body)),
+        };
         return Panes {
-            list: body,
+            list,
             divider: None,
-            detail: None,
+            detail,
         };
     }
     let [list, divider, detail] = Layout::horizontal([
@@ -64,7 +88,7 @@ pub fn panes(body: Rect) -> Panes {
     ])
     .areas(body);
     Panes {
-        list,
+        list: Some(list),
         divider: Some(divider),
         detail: Some(detail),
     }

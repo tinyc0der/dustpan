@@ -1,4 +1,4 @@
-use super::frame::{self, Header, MIN_HEIGHT, MIN_WIDTH};
+use super::frame::{self, Header, MIN_HEIGHT, MIN_WIDTH, Pane};
 use super::help;
 use super::home::{self, ENTRIES, Facts};
 use super::keys::{self, Input};
@@ -14,6 +14,8 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
+use std::io::Write;
+use std::sync::Mutex;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +49,7 @@ pub struct State {
     pub facts: Facts,
     pub size: Size,
     pub cursor: usize,
+    pub pane: Pane,
     pub help: bool,
     pub toast: Option<String>,
     pub quit: Option<Quit>,
@@ -59,6 +62,7 @@ impl State {
             facts,
             size,
             cursor: 0,
+            pane: Pane::List,
             help: false,
             toast: None,
             quit: None,
@@ -111,11 +115,17 @@ fn update_home(mut state: State, input: Input) -> State {
         }
         Input::Click { column, row } => {
             let body = frame::regions(state.size.rect()).body;
-            if let Some(entry) = home::entry_at(frame::panes(body).list, column, row) {
+            let list = frame::panes(body, state.pane).list;
+            if let Some(entry) = list.and_then(|list| home::entry_at(list, column, row)) {
                 state.cursor = entry;
             }
         }
         Input::Settings => state.toast = Some("Settings: Coming in M3".to_string()),
+        Input::SwapPane => {
+            if frame::is_narrow(state.size.width) {
+                state.pane = state.pane.swapped();
+            }
+        }
         Input::Help => state.help = true,
         Input::Quit => state.quit = Some(Quit::Normal),
         Input::Back | Input::QuitNow | Input::Resize { .. } => {}
@@ -137,9 +147,9 @@ pub fn view(state: &State, frame: &mut Frame) {
         &state.look,
         &header,
         state.toast.as_deref(),
-        &keys::home_hints(),
+        &keys::home_hints(state.size.width),
     );
-    home::render(frame, &state.look, &state.facts, state.cursor, body);
+    home::render(frame, &state.look, state.cursor, state.pane, body);
     if state.mode() == Mode::Help {
         help::render(frame, &state.look);
     }
@@ -177,7 +187,9 @@ pub enum Finish {
 
 pub fn run(options: Options) -> std::io::Result<Finish> {
     let look = Look::new(
-        theme::wants_ascii(options.ascii, |name| std::env::var(name).ok()),
+        theme::wants_ascii(options.ascii, dustpan_sys::console_is_utf8(), |name| {
+            std::env::var(name).ok()
+        }),
         !options.no_color,
     );
     let facts = Facts {
@@ -185,7 +197,7 @@ pub fn run(options: Options) -> std::io::Result<Finish> {
     };
     install_panic_hook();
     let _restore = enter()?;
-    watch_termination_signals(options.interrupted_exit);
+    watch_termination(options.interrupted_exit);
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let (width, height) = crossterm::terminal::size()?;
     let mut state = State::new(look, facts, Size { width, height });
@@ -198,6 +210,9 @@ pub fn run(options: Options) -> std::io::Result<Finish> {
             dirty = true;
         }
         if dirty {
+            let _drawing = DRAWING
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             terminal.draw(|frame| view(&state, frame))?;
             dirty = false;
         }
@@ -221,23 +236,18 @@ pub fn run(options: Options) -> std::io::Result<Finish> {
     }
 }
 
-/// A closed terminal leaves crossterm's `poll` spinning without returning, so no flag the loop checks would ever be read.
-fn watch_termination_signals(exit_code: i32) {
-    #[cfg(unix)]
-    {
-        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
-        let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGHUP, SIGINT]) else {
-            return;
-        };
-        std::thread::spawn(move || {
-            if signals.forever().next().is_some() {
-                restore();
-                std::process::exit(exit_code);
-            }
-        });
-    }
-    #[cfg(not(unix))]
-    let _ = exit_code;
+/// The termination path takes this and never releases it, so a signal cannot land mid-frame and leave the cursor hidden.
+static DRAWING: Mutex<()> = Mutex::new(());
+static RESTORED: Mutex<bool> = Mutex::new(false);
+
+fn watch_termination(exit_code: i32) {
+    let _ = dustpan_sys::on_termination(move || {
+        let _drawing = DRAWING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        restore();
+        std::process::exit(exit_code);
+    });
 }
 
 struct Restore;
@@ -261,7 +271,16 @@ fn enter() -> std::io::Result<Restore> {
 }
 
 fn restore() {
-    let mut out = std::io::stdout();
+    restore_to(&RESTORED, &mut std::io::stdout());
+}
+
+fn restore_to(restored: &Mutex<bool>, out: &mut impl Write) {
+    let mut restored = restored
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if std::mem::replace(&mut *restored, true) {
+        return;
+    }
     let _ = execute!(out, DisableMouseCapture, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
 }
@@ -291,6 +310,17 @@ mod tests {
         inputs
             .iter()
             .fold(state, |state, input| update(state, *input))
+    }
+
+    #[test]
+    fn restoring_twice_leaves_the_alternate_screen_once() {
+        let restored = Mutex::new(false);
+        let mut out = Vec::new();
+        restore_to(&restored, &mut out);
+        restore_to(&restored, &mut out);
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.matches("\x1b[?1049l").count(), 1, "{text:?}");
+        assert_eq!(text.matches("\x1b[?25h").count(), 1, "{text:?}");
     }
 
     #[test]
@@ -422,7 +452,9 @@ mod tests {
     #[test]
     fn a_click_selects_the_row_under_it() {
         let s = state(80, 24);
-        let list = frame::panes(frame::regions(s.size.rect()).body).list;
+        let list = frame::panes(frame::regions(s.size.rect()).body, s.pane)
+            .list
+            .unwrap();
         let s = update(
             s,
             Input::Click {

@@ -25,4 +25,4 @@ expression: "screen(&state(unicode(), 80, 24))"
 
 
 ────────────────────────────────────────────────────────────────────────────────
- ↑↓ Move  Enter Open  1-9 Jump  , Settings  ? Help  q Quit  Ctrl+C Quit now
+ ↑↓ Move  Enter Open  1-9 Jump  Tab Detail  , Settings  ? Help  q Quit

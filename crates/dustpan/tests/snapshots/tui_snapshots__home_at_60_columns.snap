@@ -21,4 +21,4 @@ expression: "screen(&state(unicode(), 60, 20))"
 
 
 ────────────────────────────────────────────────────────────
- ↑↓ Move  Enter Open  1-9 Jump  , Settings  ? Help  q Quit
+ ↑↓ Move  Enter Open  1-9 Jump  Tab Detail  ? Help  q Quit

@@ -331,7 +331,6 @@ dependencies = [
  "insta",
  "predicates",
  "ratatui",
- "signal-hook",
  "tempfile",
  "unicode-width",
 ]
@@ -346,6 +345,7 @@ version = "0.1.0"
 dependencies = [
  "dustpan-core",
  "libc",
+ "signal-hook",
  "windows-sys",
 ]
 

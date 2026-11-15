@@ -25,7 +25,6 @@ pub fn lines(look: &Look, inner: usize) -> Vec<Line<'static>> {
             Span::raw(format!("{pad}  {}", doc.action)),
         ]));
     }
-    lines.push(Line::raw(""));
     lines.push(Line::styled(" Jump keys", look.bold()));
     let jumps: Vec<String> = ENTRIES
         .iter()

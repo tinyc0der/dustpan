@@ -1,4 +1,4 @@
-use super::frame;
+use super::frame::{self, Pane};
 use super::theme::Look;
 use dustpan_sys::BootVolume;
 use ratatui::Frame;
@@ -17,7 +17,6 @@ pub struct Entry {
     pub key: u8,
     pub milestone: u8,
     pub blurb: &'static str,
-    pub fact: fn(&Facts) -> Option<String>,
 }
 
 impl Entry {
@@ -26,73 +25,60 @@ impl Entry {
     }
 }
 
-fn no_fact(_: &Facts) -> Option<String> {
-    None
-}
-
 pub const ENTRIES: [Entry; 9] = [
     Entry {
         label: "Clean",
         key: 1,
         milestone: 3,
         blurb: "Free up disk space",
-        fact: no_fact,
     },
     Entry {
         label: "Uninstall",
         key: 2,
         milestone: 5,
         blurb: "Remove apps completely",
-        fact: no_fact,
     },
     Entry {
         label: "Analyze",
         key: 3,
         milestone: 1,
         blurb: "Explore disk usage",
-        fact: no_fact,
     },
     Entry {
         label: "Optimize",
         key: 4,
         milestone: 4,
         blurb: "Refresh caches and services",
-        fact: no_fact,
     },
     Entry {
         label: "Status",
         key: 5,
         milestone: 2,
         blurb: "Monitor system health",
-        fact: no_fact,
     },
     Entry {
         label: "Purge",
         key: 6,
         milestone: 6,
         blurb: "Remove build artifacts from old projects",
-        fact: no_fact,
     },
     Entry {
         label: "Installers",
         key: 7,
         milestone: 6,
         blurb: "Remove installer files you no longer need",
-        fact: no_fact,
     },
     Entry {
         label: "Slim",
         key: 8,
         milestone: 7,
         blurb: "Trim app bundles you do not use",
-        fact: no_fact,
     },
     Entry {
         label: "History",
         key: 9,
         milestone: 3,
         blurb: "Review what past sessions removed",
-        fact: no_fact,
     },
 ];
 
@@ -120,13 +106,17 @@ pub fn entry_at(list: Rect, column: u16, row: u16) -> Option<usize> {
     (0..ENTRIES.len()).find(|&entry| visual_row(entry) == visual)
 }
 
-pub fn render(frame: &mut Frame, look: &Look, facts: &Facts, cursor: usize, body: Rect) {
-    let panes = frame::panes(body);
-    render_list(frame, look, cursor, panes.list);
-    if let (Some(divider), Some(detail)) = (panes.divider, panes.detail) {
+pub fn render(frame: &mut Frame, look: &Look, cursor: usize, shown: Pane, body: Rect) {
+    let panes = frame::panes(body, shown);
+    if let Some(list) = panes.list {
+        render_list(frame, look, cursor, list);
+    }
+    if let Some(divider) = panes.divider {
         let rule = vec![Line::raw(look.glyphs.vline); divider.height as usize];
         frame.render_widget(Paragraph::new(rule), divider);
-        render_detail(frame, look, facts, cursor, detail);
+    }
+    if let Some(detail) = panes.detail {
+        render_detail(frame, look, cursor, detail);
     }
 }
 
@@ -156,7 +146,7 @@ fn render_list(frame: &mut Frame, look: &Look, cursor: usize, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_detail(frame: &mut Frame, look: &Look, facts: &Facts, cursor: usize, area: Rect) {
+fn render_detail(frame: &mut Frame, look: &Look, cursor: usize, area: Rect) {
     let entry = &ENTRIES[cursor];
     let inner = area.width.saturating_sub(2) as usize;
     let mut lines = vec![
@@ -172,9 +162,6 @@ fn render_detail(frame: &mut Frame, look: &Look, facts: &Facts, cursor: usize, a
     lines.push(Line::raw(""));
     lines.push(Line::raw(format!(" Status  {}", entry.coming_in())));
     lines.push(Line::raw(format!(" Key     {}", entry.key)));
-    if let Some(fact) = (entry.fact)(facts) {
-        lines.push(Line::raw(format!(" Now     {fact}")));
-    }
     frame.render_widget(Paragraph::new(lines), area);
 }
 

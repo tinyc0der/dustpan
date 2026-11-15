@@ -21,6 +21,3 @@ assert_cmd = "2"
 insta = "1"
 predicates = "3"
 tempfile = "3"
-
-[target."cfg(unix)".dependencies]
-signal-hook = "0.3"

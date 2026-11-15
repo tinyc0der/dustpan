@@ -1,0 +1,8 @@
+case	drain
+exit	0
+unsent_steps	0
+alt_screen_enters	2
+alt_screen_leaves	2
+password_echoed	False
+stray_echoed	False
+target_exists_now	False

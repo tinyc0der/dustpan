@@ -1,0 +1,57 @@
+case	drain
+exit	0
+unsent_steps	0
+alt_screen_enters	2
+alt_screen_leaves	2
+password_echoed	False
+stray_echoed	False
+target_exists_now	False
+auth_exit	Some(0)
+helper_reply	OK	deleted	uid=501
+helper_exit	Some(0)
+target_exists_after	false
+drained_bytes	0
+drained_events	0
+stray_keys_after_resume	0
+stray_keys	
+elapsed_ms	344
+
+
+case	no-drain-control
+exit	0
+unsent_steps	0
+alt_screen_enters	2
+alt_screen_leaves	2
+password_echoed	False
+stray_echoed	False
+target_exists_now	False
+auth_exit	Some(0)
+helper_reply	OK	deleted	uid=501
+helper_exit	Some(0)
+target_exists_after	false
+drained_bytes	0
+drained_events	0
+stray_keys_after_resume	3
+stray_keys	Char('x'),Char('y'),Char('z')
+elapsed_ms	340
+
+
+case	refuse-outside-fixture
+exit	0
+unsent_steps	0
+alt_screen_enters	2
+alt_screen_leaves	2
+password_echoed	False
+stray_echoed	False
+target_exists_now	True
+auth_exit	Some(0)
+helper_reply	ERR	refused: not in a dustpan-s3 fixture folder	uid=501
+helper_exit	Some(0)
+target_exists_after	true
+drained_bytes	0
+drained_events	0
+stray_keys_after_resume	0
+stray_keys	
+elapsed_ms	332
+
+

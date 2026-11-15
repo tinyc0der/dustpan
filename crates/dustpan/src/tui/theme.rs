@@ -58,7 +58,7 @@ impl Glyphs {
         bottom_right: "+",
     };
 
-    pub fn border(&self) -> ratatui::symbols::border::Set {
+    pub fn border(&self) -> ratatui::symbols::border::Set<'static> {
         ratatui::symbols::border::Set {
             top_left: self.top_left,
             top_right: self.top_right,
@@ -173,6 +173,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {
             pairs

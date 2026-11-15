@@ -59,6 +59,35 @@ jobs:
           [[ "${lines[0]}" == 'C:\Windows  Kept · critical system path' ]]
           [[ "${lines[1]}" == "$documents  Kept · home folder" ]]
           [[ "${lines[2]}" == "$documents\\dustpan-lane-10.txt  Eligible" ]]
+      # M0-4 live lane 9: the release binary reads %APPDATA%\dustpan\whitelist, written with CRLF
+      # endings, and keeps what both a full path and a `~\` entry name.
+      - name: explain keeps a path the Windows whitelist names
+        if: runner.os == 'Windows'
+        run: |
+          keep="$USERPROFILE\\Projects\\keep"
+          config="$APPDATA\\dustpan"
+          mkdir -p "$(cygpath -u "$keep")" "$(cygpath -u "$config")"
+          printf '%s\r\n' "$keep" '~\Projects\tilde' > "$(cygpath -u "$config")/whitelist"
+          out=$(./target/release/dustpan.exe explain "$keep\\child" "$USERPROFILE\\Projects\\tilde\\child" "$USERPROFILE\\Projects\\keeper")
+          printf '%s\n' "$out"
+          rm "$(cygpath -u "$config")/whitelist"
+          lines=()
+          while IFS= read -r line; do lines+=("${line%$'\r'}"); done <<< "$out"
+          [[ "${lines[0]}" == *'Kept · protected by your whitelist'*"$config\\whitelist"* ]]
+          [[ "${lines[1]}" == *'Kept · protected by your whitelist'* ]]
+          [[ "${lines[2]}" == *'Eligible' ]]
+      # M0-4 live lane 8: XDG_CONFIG_HOME names the folder the whitelist is read from.
+      - name: explain reads the whitelist from XDG_CONFIG_HOME
+        if: runner.os == 'Linux'
+        run: |
+          home="$RUNNER_TEMP/m0-4-home"
+          xdg="$RUNNER_TEMP/m0-4-xdg"
+          bash tests/fixtures/mkhome.sh "$home"
+          mkdir -p "$xdg/dustpan"
+          printf '%s\n' '~/Projects/keep' > "$xdg/dustpan/whitelist"
+          out=$(HOME="$home" XDG_CONFIG_HOME="$xdg" ./target/release/dustpan explain '~/Projects/keep/a')
+          printf '%s\n' "$out"
+          [[ "$out" == *"$xdg/dustpan/whitelist"* ]]
       - uses: actions/upload-artifact@v4
         with:
           name: dustpan-${{ matrix.os }}

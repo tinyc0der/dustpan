@@ -1,6 +1,8 @@
 //! `dustpan explain PATH... [--json]`: the guard's verdict for each path and the layer that
 //! decided it. Read-only. Exit 0 when every path was judged (a `Kept` verdict is an answer, not
-//! a failure), 1 when the guard cannot be built, 2 for usage errors.
+//! a failure), 1 when the whitelist cannot be read or the guard cannot be built, 2 for usage
+//! errors.
+use crate::config;
 use crate::exit::Exit;
 use dustpan_core::guard::{Guard, GuardInputs, KeptReason, ShapeReason, Verdict};
 use dustpan_core::path::{AbsPath, escaped};
@@ -50,11 +52,15 @@ pub fn run(args: &[OsString], json: bool, out: &mut dyn Write) -> Exit {
             );
         }
     };
+    let whitelist = match config::whitelist(os, &env, &home) {
+        Ok(whitelist) => whitelist,
+        Err(e) => return fail(format_args!("{e}"), Exit::Failed),
+    };
     let inputs = GuardInputs {
         os,
         home: home.clone(),
         env: &env,
-        whitelist: dustpan_core::whitelist::Whitelist::defaults(os, &home),
+        whitelist,
     };
     let guard = match Guard::new(inputs, &probe) {
         Ok(guard) => guard,

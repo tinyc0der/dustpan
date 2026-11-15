@@ -30,6 +30,8 @@ fn explain(home: &Path) -> Command {
     let mut cmd = cargo_bin_cmd!("dustpan");
     cmd.env("HOME", home)
         .env("USERPROFILE", home)
+        .env("APPDATA", home.join("AppData"))
+        .env_remove("XDG_CONFIG_HOME")
         .current_dir(home)
         .arg("explain");
     cmd
@@ -223,4 +225,95 @@ fn an_unset_home_stops_the_command() {
         .code(1)
         .stdout("")
         .stderr(predicate::str::contains("home folder is not set"));
+}
+
+fn write_whitelist(home: &Path, body: &str) -> std::path::PathBuf {
+    let dir = home.join(".config").join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("whitelist");
+    std::fs::write(&file, body).unwrap();
+    file
+}
+
+#[cfg(unix)]
+#[test]
+fn a_default_whitelist_entry_keeps_a_gradle_cache() {
+    let home = fixture_home();
+    let out = stdout(explain(home.path()).arg("~/.gradle/caches/x"));
+    assert_eq!(
+        out,
+        format!(
+            "{}  Kept · protected by default whitelist\n",
+            shown(home.path(), "/.gradle/caches/x")
+        )
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_user_entry_keeps_its_children_and_the_output_names_the_file() {
+    let home = fixture_home();
+    let file = write_whitelist(home.path(), "~/Projects/keep\r\n");
+    let out = stdout(explain(home.path()).args(["~/Projects/keep/a", "~/Projects/webapp"]));
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines[0].contains("Kept · protected by your whitelist"),
+        "{out}"
+    );
+    assert!(lines[0].contains(file.to_str().unwrap()), "{out}");
+    assert!(lines[1].ends_with("Eligible"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn json_names_the_whitelist_file_or_default_as_the_source() {
+    let home = fixture_home();
+    let file = write_whitelist(home.path(), "~/Projects/keep\n");
+    let text = stdout(explain(home.path()).args([
+        "--json",
+        "~/Projects/keep/a",
+        "~/Library/Caches/kitty",
+    ]));
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let items = value["items"].as_array().unwrap();
+    assert_eq!(items[0]["layer"], "whitelist");
+    assert_eq!(items[0]["reason"], "whitelisted");
+    assert_eq!(items[0]["source"], file.to_str().unwrap());
+    assert_eq!(items[1]["layer"], "whitelist");
+    assert_eq!(items[1]["source"], "default");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_whitelist_stops_the_command_and_names_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = fixture_home();
+    let file = write_whitelist(home.path(), "~/Projects/keep\n");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    explain(home.path())
+        .arg("~/Projects/keep/a")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::contains("cannot read the whitelist"))
+        .stderr(predicate::str::contains(file.to_str().unwrap()));
+}
+
+#[cfg(unix)]
+#[test]
+fn xdg_config_home_names_the_folder_the_whitelist_is_read_from() {
+    let home = fixture_home();
+    let xdg = fresh_dir();
+    let dir = xdg.path().join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("whitelist"), "~/Projects/keep\n").unwrap();
+    let out = stdout(
+        explain(home.path())
+            .env("XDG_CONFIG_HOME", xdg.path())
+            .arg("~/Projects/keep/a"),
+    );
+    assert!(
+        out.contains(dir.join("whitelist").to_str().unwrap()),
+        "{out}"
+    );
 }

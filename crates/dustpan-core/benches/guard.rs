@@ -35,7 +35,7 @@ fn main() -> std::process::ExitCode {
 mod unix {
     use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
     use dustpan_core::config::Read;
-    use dustpan_core::guard::{Guard, GuardInputs, Verdict};
+    use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Verdict};
     use dustpan_core::identity::Node;
     use dustpan_core::path::AbsPath;
     use dustpan_core::paths::Os;
@@ -253,6 +253,18 @@ mod unix {
         let live = LiveProbe::new();
         let live_guard = Guard::new(inputs(), &live).expect("the policy loads on this host");
         let live_nodes = nodes(&live, &paths);
+        let listed = AbsPath::parse(
+            home.as_path()
+                .join("Projects/app7/node_modules/.cache/x")
+                .as_os_str(),
+        )
+        .expect("the path is absolute");
+        let verdict = live_guard.pass(&live).evaluate(listed);
+        assert!(
+            matches!(verdict.verdict().kept(), Some(KeptReason::Whitelisted(_))),
+            "the bench whitelist keeps the paths it names: {:?}",
+            verdict.verdict()
+        );
 
         let mut fake = FakeProbe::new();
         for (path, node) in found.iter().zip(&live_nodes) {

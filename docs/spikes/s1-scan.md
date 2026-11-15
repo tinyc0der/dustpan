@@ -19,7 +19,7 @@ Spike S1 asks whether a native parallel walk (`jwalk`, plus `getattrlistbulk`) i
 | `jwalk` | A `jwalk` walk on 10 threads with one `lstat` per entry. |
 | `bulk` | A `rayon` walk on 10 threads that lists each folder with `getattrlistbulk` and reads `ATTR_FILE_ALLOCSIZE`. |
 
-The three native methods count allocated bytes (`st_blocks * 512` or `ATTR_FILE_ALLOCSIZE`). They count a file with more than one hard link once per `(dev, inode)`, and they do not enter a folder on another device. A single scan of `~` took under 3 minutes for every method, so the spike scanned all of `~` and not a subtree. The home folder holds about 6.4 million files and 745 GB (`run1/totals.tsv`).
+The three native methods count allocated bytes (`st_blocks * 512` or `ATTR_FILE_ALLOCSIZE`). They count a file with more than one hard link once per `(dev, inode)`, and they do not enter a folder on another device. A single scan of `~` took under 3 minutes for every method, so the spike scanned all of `~` and not a subtree. The slowest scan was a Mole run at 130.0 s (`run1/times.tsv`). The home folder holds about 6.4 million files and 745 GB (`run1/totals.tsv`).
 
 `summarize.py` replaces each top-level entry name, except common macOS and toolchain folders, with a keyed label, because the repository is public.
 

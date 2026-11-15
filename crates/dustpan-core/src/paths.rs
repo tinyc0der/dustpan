@@ -37,15 +37,34 @@ pub fn home_dir(os: Os, env: Env) -> Option<PathBuf> {
     )
 }
 
+/// A folder an XDG variable names when it holds an absolute path, else `fallback` under home.
+fn xdg(os: Os, env: Env, key: &str, fallback: &str) -> Option<PathBuf> {
+    var(env, key)
+        .filter(|p| p.starts_with("/"))
+        .or_else(|| Some(home_dir(os, env)?.join(fallback)))
+}
+
+/// Where `whitelist` and other user settings live. macOS and Linux share `~/.config/dustpan`,
+/// as Mole shares `~/.config/mole`, so one dotfiles entry covers both.
+pub fn config_dir(os: Os, env: Env) -> Option<PathBuf> {
+    match os {
+        Os::MacOs | Os::Linux => Some(xdg(os, env, "XDG_CONFIG_HOME", ".config")?.join("dustpan")),
+        Os::Windows => Some(var(env, "APPDATA")?.join("dustpan")),
+    }
+}
+
+/// Rebuildable state. Never under `~/Library/Caches`, which the clean command sweeps.
+pub fn cache_dir(os: Os, env: Env) -> Option<PathBuf> {
+    match os {
+        Os::MacOs | Os::Linux => Some(xdg(os, env, "XDG_CACHE_HOME", ".cache")?.join("dustpan")),
+        Os::Windows => Some(var(env, "LOCALAPPDATA")?.join("dustpan").join("cache")),
+    }
+}
+
 pub fn log_dir(os: Os, env: Env) -> Option<PathBuf> {
     match os {
         Os::MacOs => Some(home_dir(os, env)?.join("Library/Logs/dustpan")),
-        Os::Linux => {
-            let state = var(env, "XDG_STATE_HOME")
-                .filter(|p| p.starts_with("/"))
-                .or_else(|| Some(home_dir(os, env)?.join(".local/state")))?;
-            Some(state.join("dustpan"))
-        }
+        Os::Linux => Some(xdg(os, env, "XDG_STATE_HOME", ".local/state")?.join("dustpan")),
         Os::Windows => Some(var(env, "LOCALAPPDATA")?.join("dustpan").join("logs")),
     }
 }
@@ -110,6 +129,61 @@ mod tests {
                     .join("logs")
             )
         );
+    }
+
+    #[test]
+    fn config_follows_xdg_config_home_on_unix_and_ignores_relative_values() {
+        for os in [Os::MacOs, Os::Linux] {
+            let set = env(&[("HOME", "/h"), ("XDG_CONFIG_HOME", "/x")]);
+            assert_eq!(config_dir(os, &set), Some(PathBuf::from("/x/dustpan")));
+            let relative = env(&[("HOME", "/h"), ("XDG_CONFIG_HOME", "x")]);
+            let unset = env(&[("HOME", "/h")]);
+            let expected = Some(PathBuf::from("/h/.config/dustpan"));
+            assert_eq!(config_dir(os, &relative), expected);
+            assert_eq!(config_dir(os, &unset), expected);
+        }
+    }
+
+    #[test]
+    fn windows_config_lives_under_app_data() {
+        let e = env(&[("APPDATA", r"C:\Users\a\AppData\Roaming")]);
+        assert_eq!(
+            config_dir(Os::Windows, &e),
+            Some(PathBuf::from(r"C:\Users\a\AppData\Roaming").join("dustpan"))
+        );
+        assert_eq!(config_dir(Os::Windows, &env(&[])), None);
+    }
+
+    #[test]
+    fn cache_follows_xdg_cache_home_on_unix() {
+        for os in [Os::MacOs, Os::Linux] {
+            let set = env(&[("HOME", "/h"), ("XDG_CACHE_HOME", "/c")]);
+            assert_eq!(cache_dir(os, &set), Some(PathBuf::from("/c/dustpan")));
+            let unset = env(&[("HOME", "/h")]);
+            assert_eq!(
+                cache_dir(os, &unset),
+                Some(PathBuf::from("/h/.cache/dustpan"))
+            );
+        }
+    }
+
+    #[test]
+    fn windows_cache_lives_under_local_app_data() {
+        let e = env(&[("LOCALAPPDATA", r"C:\Users\a\AppData\Local")]);
+        assert_eq!(
+            cache_dir(Os::Windows, &e),
+            Some(
+                PathBuf::from(r"C:\Users\a\AppData\Local")
+                    .join("dustpan")
+                    .join("cache")
+            )
+        );
+    }
+
+    #[test]
+    fn no_home_means_no_config_or_cache_dir_on_unix() {
+        assert_eq!(config_dir(Os::Linux, &env(&[])), None);
+        assert_eq!(cache_dir(Os::MacOs, &env(&[])), None);
     }
 
     #[test]

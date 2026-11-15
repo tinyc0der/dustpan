@@ -294,8 +294,8 @@ The checklist names six core files and one identity file per OS. The shipped lay
 
 ### Probes
 
-- The macOS process table holds executable paths only. Arguments need `KERN_PROCARGS2`, which answers for the caller's own processes alone. M3 adds them with the open-file probe (SAFE-08's first milestone).
-- A macOS process whose path the kernel will not give is named by its short record (`PROC_PIDT_SHORTBSDINFO`). The table is incomplete only when a listed process has neither. GitHub's macOS runners have such a process, and without this every cache there was `owner-unknown`.
+- The macOS process table holds each executable path and the id of every bundle that encloses it. It holds no arguments: they need `KERN_PROCARGS2`, which answers for the caller's own processes alone. M3 adds them with the open-file probe (SAFE-08's first milestone).
+- A macOS process whose path the kernel will not give is listed by its short record (`PROC_PIDT_SHORTBSDINFO`) and marked unidentified. The table is incomplete only when a listed process has neither. See "Fix round 1" for what an unidentified process means for owners.
 - Linux marks the table incomplete when a `cmdline` cannot be read or when pid 1 is not listed, which is what `hidepid` looks like.
 - Windows answers `Unsupported` for the process table. No Windows rule asks for it in M0.
 - Windows falls back to the 64-bit file index when a volume does not answer `FileIdInfo` (FAT, exFAT).
@@ -313,6 +313,36 @@ The checklist names six core files and one identity file per OS. The shipped lay
 - The bench carries one `expect(clippy::disallowed_methods)`, because it builds and walks a real tree.
 - `crates/dustpan-core/tests/guard_windows.rs` holds the section 2.9 cases. They run on the Windows runners only, because `AbsPath` is host syntax.
 
+### Fix round 1: aliases, volfs and running owners
+
+An adversarial review at `c964f04` broke the guard's intent in three ways. Each fix below names the root cause, the shape chosen and the reason.
+
+**Alias spellings (F3).** `recheck` approved a Kelvin-sign spelling of `Library/Keychains/login.keychain-db` for `Delete`. Layer 4 matched rows by spelling with ASCII folding, and file identity covered anchored rows only. A floating row (`Library/Keychains`), a bundle glob and a keyword have no anchor to bind, so any spelling the volume resolves to the same file passed. Bundle globs were also matched with case, so `COM.MICROSOFT.VSCODE` passed with no Unicode at all.
+
+- `Probe::spelling` is a fifth probe question: the spelling the file system stores for an existing path, last component not followed. macOS answers with one `getattrlist(ATTR_CMN_FULLPATH, FSOPT_NOFOLLOW)`. Windows answers with `GetFinalPathNameByHandleW` on the handle `node` already opens. Linux answers with the path itself.
+- `getattrlist` was chosen over `open` plus `fcntl(F_GETPATH)`. It needs no permission on the file, so a mode-000 file and `/private/etc/sudoers` still answer, and it opens no descriptor on a FIFO or a device. Measured on this host, both calls gave the same answer for case, case-fold, normalization, firmlink and volfs spellings. They differ for `/.nofollow/System`: `getattrlist` echoes it back. The `/.nofollow` row below covers that.
+- `Pass::judge` judges a path that every layer passed a second time, under its stored spelling, when the two differ. The second judgment can only refuse. The refusal is `ShapeReason::AliasOfKept { stored, layer }`, code `alias-of-kept`. A stored spelling that cannot be read keeps the path as `unreadable`.
+- `evaluate` and `recheck` always ask. `candidate` asks only when the path holds a byte outside ASCII. A scanner's names come from a directory read, so they are stored spellings already. An all-ASCII name has one kind of alias on a case-insensitive volume, ASCII case, and folding covers it. A case fold or a normalization form needs a byte outside ASCII. This keeps the scan shape at zero extra syscalls for ASCII names. `recheck` asks for every candidate regardless, so an alias the scan could not tell apart is still refused at the sink.
+- Bundle globs are folded like every other name when the table folds case. A bundle id names one app on a case-insensitive volume however it is spelled. This can keep more than Mole does and never less.
+- Not covered: a hard link to a protected file under another name. Removing it leaves the protected name and its data in place.
+
+**volfs (F4).** `/.vol/<device>/<inode>` names any file by number. `lstat /.vol/<device>` is `ENOENT`, so the pass recorded the ancestor as missing and judged the leaf by spelling alone.
+
+- A leaf that exists under a folder the pass recorded as missing is kept. If its stored spelling is kept, the reason is `alias-of-kept` and names that spelling. Otherwise it is `ShapeReason::ParentNotFound`, code `parent-not-found`: no ancestor of the path was inspected, so what it names is unknown. `Pass::candidate` hands back a `Judgment` for such a path, so no candidate exists for `recheck` to see.
+- `/.vol`, `/.nofollow` and `/.resolve` are critical system trees on macOS. All three reach every file by another route, and none holds anything to clean. The lookup of these names is case-sensitive (`/.VOL/...` is `ENOENT`).
+
+**Running owners (F1).** Ghostty ran and its cache read `Eligible`. The macOS table held executable paths only, and `Owner::matches` looked for the bundle id's words in the path. `/Applications/Ghostty.app/Contents/MacOS/ghostty` does not spell `com.mitchellh.ghostty`. A process whose binary was deleted fell back to a 16-byte short name, which can never spell an id, and the table still counted as complete.
+
+- `Proc` gains `app: App`. `App::Bundles` holds the id of every bundle that encloses the executable, innermost first, so a helper names its own bundle and the app that ships it. `App::Unknown { mine }` is a process the probe could not identify.
+- The macOS table reads `CFBundleIdentifier` from each enclosing bundle's `Info.plist`: `X/Contents/Info.plist`, and `X.app/Info.plist` for an iOS app on a Mac. Core Foundation parses the bytes (`CFPropertyListCreateWithData`), so XML and binary lists both work. Each folder is read once per snapshot. No subprocess runs. `core-foundation-sys` is the one new dependency, on macOS only. LaunchServices through `objc2` was not needed.
+- A bundle owner matches a process whose bundle ids include the owner's id, compared without ASCII case. The path-word match stays as a second signal. It is the only signal on Linux, and anywhere it can only add a refusal.
+- A process is unidentified when its executable path is gone, or when an enclosing `Info.plist` exists and cannot be read or parsed. An unidentified process of the current user makes every owner that no process matches `Unknown`, which keeps the path (SAFE-08). The refusal names the pid: `process 78754 cannot be identified; quit it first`. Another user's unidentified process is set aside: it cannot own a cache in this user's home. When dustpan runs as root, every process counts as its own.
+- A missing `Info.plist` is not an unreadable one. A folder named `Contents` with no `Info.plist` is not a bundle, and the process in it has no bundle id.
+- Cost: a snapshot of 764 processes took 12.6 ms on the bench host (median of seven in one process; the first took 34 to 37 ms), up from 3.2 ms, because about 170 property lists are read and parsed. A pass takes one snapshot. `recheck` takes one per candidate that asks about an owner. M0-5 must decide how a batch of rechecks shares one table without reopening SAFE-10; see the open question below.
+- Not covered: a bare executable (no bundle) whose cache folder is named by a bundle id that its path does not spell. An embedded `__info_plist` section is not read.
+
+**Tests.** The live alias and volfs tests are in `crates/dustpan/tests/aliases.rs`, not in core's `tests/recheck.rs`: core's `clippy.toml` bans OS calls in every core target, and which names are one file is the volume's decision, so the fake cannot stand in. `FakeProbe::alias` now also models an alias below a folder that is missing, as volfs has. `crates/dustpan-sys/tests/process_identity.rs` spawns a copy of the test binary from a fake `.app`, not a copy of `/bin/sleep`: macOS kills a system binary that runs from another place.
+
 ### SAFE rules this code governs
 
 Each test fails when its guard is removed. The owner ran one mutation per rule marked with a star and saw the named test go red.
@@ -321,12 +351,12 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 |---|---|
 | SAFE-01 | `crates/dustpan-core/clippy.toml` repeats the four bans; a temporary `remove_file` in core failed clippy |
 | SAFE-02* | `path::tests::malformed_paths_are_refused_with_their_cause`, `a_name_with_two_dots_inside_is_valid`, `explain.rs::a_control_byte_is_refused_and_printed_escaped` |
-| SAFE-03* | `path::tests::equivalent_spellings_normalize_to_one`, `guard.rs::a_data_volume_spelling_is_judged_as_its_root_spelling` |
+| SAFE-03* | `path::tests::equivalent_spellings_normalize_to_one`, `guard.rs::a_data_volume_spelling_is_judged_as_its_root_spelling`, `an_alias_of_a_path_kept_by_name_is_kept_under_its_stored_spelling`, `a_scanned_name_outside_ascii_is_judged_under_its_stored_spelling`, `a_path_under_a_folder_that_is_not_there_is_kept`, `recheck.rs::an_alias_the_scan_could_not_tell_apart_is_refused_at_the_sink`, `crates/dustpan/tests/aliases.rs` (real volume, macOS) |
 | SAFE-04* | `guard.rs::critical_roots_are_kept_and_their_children_are_judged_on_their_own`, `every_account_root_is_kept_and_the_empty_variable_collapse_is_caught`, `an_alias_that_folding_misses_is_kept_by_file_identity`, `path::tests::join_with_a_name_never_yields_the_parent` |
 | SAFE-05* | `guard.rs::a_symlinked_ancestor_is_kept_at_layer_one`, `a_redirected_cache_root_refuses_everything_below_it`, `a_leaf_link_is_judged_by_its_target_and_only_ever_refused`, `an_alias_never_grants_what_its_own_spelling_lacks` |
 | SAFE-06* | `guard.rs::a_live_powerlog_store_is_kept_inside_the_allowlisted_tree`, `an_endpoint_security_cache_is_kept_inside_the_allowlisted_tree`, `layers_decide_in_order` |
 | SAFE-07* | `guard.rs::an_unreadable_protected_anchor_means_no_guard`, `a_home_that_is_a_system_root_means_no_guard`, the third compile-fail doctest on `Approved`, `explain.rs::a_home_that_is_a_system_root_stops_the_command` |
-| SAFE-08 | `probe::tests::only_a_complete_table_proves_an_owner_idle`, `guard.rs::a_running_or_unknown_owner_keeps_its_cache` (the tri-state; the open-file probe is M3) |
+| SAFE-08 | `probe::tests::only_a_complete_table_proves_an_owner_idle`, `a_bundle_id_matches_the_bundle_a_process_runs_in`, `an_unidentified_process_of_this_user_leaves_every_owner_unknown`, `guard.rs::a_running_or_unknown_owner_keeps_its_cache`, `an_app_keeps_its_cache_when_only_its_bundle_names_the_id`, `an_unidentified_process_of_this_user_keeps_every_owned_cache`, `crates/dustpan-sys/tests/process_identity.rs` (real processes, macOS) (the tri-state; the open-file probe is M3) |
 | SAFE-09 | `guard.rs::an_open_sqlite_companion_keeps_the_whole_family`, `an_unanswered_open_file_probe_keeps_the_family` (the family rule; the probe is M3) |
 | SAFE-10* | `recheck.rs`: `a_swapped_inode_is_refused`, `a_swapped_parent_is_refused`, `a_parent_replaced_by_a_symlink_is_refused`, `a_target_swapped_during_the_owner_probe_is_refused` |
 | SAFE-17* | `crates/dustpan/tests/seams.rs` |
@@ -343,7 +373,8 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 - Does the operator accept the SAFE-05 deviation, refusing every linked ancestor, given that `explain /tmp/x` on macOS prints `Kept · symlinked ancestor /tmp` with the physical path as a hint?
 - Should `explain --json` follow PLAN's envelope (`schema_version`, `command`, `items[]`), with lane 8 reading `.items[0]`? Or should it print one bare object, as lane 8's wording suggests?
 - Is the scan-shaped number the right gate for the 200,000 per second budget? The `explain`-shaped number depends on the machine's vnode cache and swung tenfold between runs here.
-- `recheck` takes one process table per candidate whose rule has owners. Is a few milliseconds per owned candidate at the sink acceptable, or should M3 measure it before choosing a narrower probe? A cache across candidates would reopen SAFE-10.
+- `recheck` takes one process table per candidate that asks about an owner. Since fix round 1 a macOS table costs about 13 ms on 764 processes (3 ms before), because it reads each running bundle's `Info.plist`. That is 13 seconds per thousand owned candidates. M0-5 must choose: one table per recheck batch with the identity check still per candidate, or a table that reads only the bundles the batch's owners could match. A cache across batches would reopen SAFE-10.
+- The `HOME` variable alone decides which home's rows apply. `HOME=<fixture>` makes the real home's `Documents` eligible. Should home rows anchor at both `$HOME` and the account's home from the user database? Recorded as a hardening follow-up from the adversarial review.
 - Should the binary resolve `HOME` physically before building the guard? On a host where `/home` is a symlink (Fedora Silverblue), every literal home path is otherwise refused as below a linked ancestor.
 - The Linux table is inference, since the inventory did not read Mole's Linux lists. Who confirms it before M9?
 - Bind mounts on Linux share `st_dev`, so `MountPoint` misses them. Does M0-5's sink need a mount-table check as well?

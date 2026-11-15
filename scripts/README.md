@@ -23,3 +23,14 @@ cp -R docs/inventory /tmp/inv-control
 sed -i '' 's/--with-data/--REMOVED/g' /tmp/inv-control/*.md
 INV=/tmp/inv-control ./scripts/inventory-gate.sh   # expect MISSING macos --with-data and exit 1
 ```
+
+## Bundle-id list generator
+
+`scripts/gen-bundle-globs.sh` writes `crates/dustpan-core/src/protect/macos_bundles.rs` from Mole's `SYSTEM_CRITICAL_BUNDLES` and `DATA_PROTECTED_BUNDLES`. It reads `lib/core/app_protection_data.sh` at the SHA named in the script, with `git show`, from a Mole checkout (default `../mole`).
+
+```sh
+scripts/gen-bundle-globs.sh            # write the file
+scripts/gen-bundle-globs.sh --check    # exit 1 when the committed file is stale
+```
+
+To take a newer Mole, change `MOLE_SHA` in the script and run it again. The script stops on a pattern that uses glob syntax other than `*`.

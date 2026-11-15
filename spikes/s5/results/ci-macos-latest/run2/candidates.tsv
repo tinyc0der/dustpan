@@ -1,0 +1,38 @@
+command	source	candidate	detail	in_fixture
+clean	clean-list.txt	$FIXTURE/home/Library/Caches/Google	1.0MB	True
+clean	clean-list.txt	$FIXTURE/home/Library/Logs/DiagnosticReports/ExampleApp-2026-10-01.ips	66KB	True
+clean	clean-list.txt	$FIXTURE/home/Library/Logs/ExampleApp	1.0MB	True
+clean	clean-list.txt	$FIXTURE/home/Library/Logs/trap-logs	0B	True
+clean	clean-list.txt	$FIXTURE/home/.Trash/old-report.pdf	131KB	True
+clean	clean-list.txt	$FIXTURE/home/Library/Caches/Google/Chrome/Default	1.0MB, counted under $FIXTURE/home/Library/Caches/Google	True
+clean	clean-list.txt	$FIXTURE/home/Library/Application Support/Google/Chrome/Default/Code Cache/js	524KB	True
+clean	clean-list.txt	$FIXTURE/home/Library/Application Support/Google/Chrome/Default/GPUCache/data_1	524KB	True
+clean	clean-list.txt	$FIXTURE/home/Library/Caches/Firefox/Profiles	1.0MB	True
+clean	clean-list.txt	$FIXTURE/home/.npm/_logs/2026-11-15T15_07_47_335Z-debug-0.log	4KB	True
+clean	clean-list.txt	/var/folders/h5/t85nd63d71x27_8gl5gw3l_w0000gn/C/clang/ModuleCache	93.6MB	False
+purge	stdout [DRY RUN]	~/Projects/oldrust/target	2.1MB	True
+purge	stdout [DRY RUN]	~/Projects/oldweb/node_modules	1.1MB	True
+installer	stdout menu row	Example-1.0.dmg	1.0MB | Downloads	basename only
+installer	stdout menu row	ExampleInstaller.zip	543B | Downloads	basename only
+installer	stdout menu row	Setup.pkg	524KB | Downloads	basename only
+
+expectation	command	needle	want_listed	listed	match
+expect	clean	Library/Caches/com.example.notes	True	False	False
+expect	clean	Library/Caches/Google/Chrome	True	True	True
+expect	clean	Library/Caches/Firefox	True	True	True
+expect	clean	Library/Logs/ExampleApp	True	True	True
+expect	clean	.Trash	True	True	True
+expect	clean	Bookmarks	False	False	True
+expect	clean	Documents/notes.txt	False	False	True
+expect	clean	com.trap.victim/	False	False	True
+expect	clean	com.trap.realhome/	False	False	True
+expect	clean	victim/canary.txt	False	False	True
+expect	purge	Projects/oldweb/node_modules	True	True	True
+expect	purge	Projects/oldrust/target	True	True	True
+expect	purge	Projects/freshweb/node_modules	False	False	True
+expect	purge	Projects/trapweb/node_modules	False	False	True
+expect	installer	Example-1.0.dmg	True	True	True
+expect	installer	Setup.pkg	True	True	True
+expect	installer	ExampleInstaller.zip	True	True	True
+expect	installer	photos.zip	False	False	True
+expect	installer	trap.dmg	False	False	True

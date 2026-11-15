@@ -1,0 +1,9 @@
+==> Downloading bottle manifests
+✔︎ Bottle Manifest mole (1.67.0)
+==> Fetching downloads for: mole
+✔︎ Bottle mole (1.67.0)
+==> Pouring mole--1.67.0.arm64_tahoe.bottle.tar.gz
+🍺  /opt/homebrew/Cellar/mole/1.67.0: 68 files, 11.6MB
+==> Caveats
+Bash completion has been installed to:
+  /opt/homebrew/etc/bash_completion.d

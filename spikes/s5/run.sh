@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Usage: run.sh OUTDIR
-# Runs mo clean/purge/installer in dry-run mode against a fixture HOME inside a
-# sandbox that denies writes outside temp dirs, and records proof that the real
-# home's Mole state did not change.
+# Runs mo clean/purge/installer in dry-run mode against a fixture HOME inside
+# the deny-writes.sb sandbox, and records whether the real home's Mole state
+# changed.
 set -euo pipefail
 
 out=${1:?outdir}

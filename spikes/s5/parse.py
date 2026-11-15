@@ -1,10 +1,6 @@
 """Parse candidate lists from mo dry runs against the S5 fixture.
 
 Usage: python3 parse.py OUTDIR
-
-Reads clean-list.txt for mo clean, the [DRY RUN] rows of mo purge stdout, and
-the installer rows of mo installer stdout. Prints one TSV row per candidate,
-then one row per fixture expectation with whether the parsed list matches it.
 """
 
 import re

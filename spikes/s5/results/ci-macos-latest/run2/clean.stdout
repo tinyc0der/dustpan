@@ -1,0 +1,69 @@
+
+Clean Your Mac
+
+Dry Run Mode, Preview only, no deletions
+
+◎ System caches need sudo, run sudo -v && mo clean --dry-run for full preview
+
+⚙ Apple Silicon | Free space: 104.60GB
+⚙ Whitelist: 22 core patterns active
+
+➤ User essentials
+  ○ User app cache · 1.0MB dry
+  ○ User app logs · 3 items, 1.1MB dry
+  ○ Trash · would empty, 1 item
+
+➤ App caches
+  ✓ Nothing to clean
+
+➤ Browsers
+  ○ Chrome cache · 1.0MB dry
+  ○ Chrome code cache · 524KB dry
+  ○ Chrome GPU cache · 524KB dry
+  ○ Firefox cache · 1.0MB dry
+
+➤ Cloud & Office
+  ✓ Nothing to clean
+
+➤ Developer tools
+  ○ npm cache · would clean
+  ○ npm logs · 4KB dry
+  ○ Corepack cache · would clean
+  ○ pip cache · would clean
+  ○ Clang module cache · 93.6MB dry
+  ○ Homebrew · would cleanup
+
+➤ Apps & utilities
+  ✓ Nothing to clean
+
+➤ Virtualization
+  ✓ Nothing to clean
+
+➤ Application Support
+  ✓ Nothing to clean
+
+➤ App leftovers
+  ✓ Nothing to clean
+
+➤ Apple Silicon updates
+  ✓ Nothing to clean
+
+➤ Device backups & firmware
+  ✓ Nothing to clean
+
+➤ Time Machine
+  ✓ Nothing to clean
+
+➤ Large files
+  ✓ Nothing to clean
+
+➤ Project artifacts
+  ⊙ Build artifacts · 4 dirs, 4.2MB+ · mo purge
+
+
+======================================================================
+Dry run complete - no changes made
+Potential space: 98.0MB · 10 items
+Detailed file list: $FIXTURE/home/.config/mole/clean-list.txt
+======================================================================
+

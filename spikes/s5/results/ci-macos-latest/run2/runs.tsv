@@ -1,0 +1,4 @@
+command	exit	wall_s	real_home_changed
+clean	0	18.225	no
+purge	0	2.983	no
+installer	0	1.485	no

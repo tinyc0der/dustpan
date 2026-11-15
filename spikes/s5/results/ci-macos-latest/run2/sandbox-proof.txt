@@ -1,0 +1,7 @@
+/bin/sh: ~/.s5-sandbox-probe.4401: Operation not permitted
+write under /Users exit=1
+probe file absent
+sandbox-exec: execvp() of '/usr/bin/sudo' failed: Operation not permitted
+exec /usr/bin/sudo exit=71
+ok
+write under fixture exit=0

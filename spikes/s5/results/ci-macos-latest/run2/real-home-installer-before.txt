@@ -1,0 +1,5 @@
+1794755234 128 ~/Library/Logs/mole
+1794755265 0 ~/Library/Logs/mole/mole.log
+1794755265 0 ~/Library/Logs/mole/operations.log
+absent ~/.cache/mole
+absent ~/.config/mole

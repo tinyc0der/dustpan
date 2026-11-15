@@ -1,0 +1,15 @@
+ProductName:		macOS
+ProductVersion:		26.7.2
+BuildVersion:		25G332
+Homebrew 7.0.11
+brew install exit=0 seconds=7
+
+Mole version 1.67.0
+macOS: 26.7.2
+Architecture: arm64
+Kernel: 25.6.0
+SIP: Disabled
+Disk Free: 104.63GB
+Install: Homebrew
+Shell: /bin/bash
+

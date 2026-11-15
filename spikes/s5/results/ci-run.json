@@ -1,0 +1,1 @@
+{"jobs":[{"completedAt":"2026-11-15T15:07:01Z","conclusion":"cancelled","name":"parity (macos-14)","startedAt":"2026-11-15T15:07:00Z"},{"completedAt":"2026-11-15T15:08:13Z","conclusion":"success","name":"parity (macos-latest)","startedAt":"2026-11-15T15:07:04Z"}],"url":"https://github.com/tinyc0der/dustpan/actions/runs/43728054338"}

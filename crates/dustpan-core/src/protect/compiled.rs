@@ -379,10 +379,16 @@ impl Policy {
         let Some(anchor) = Self::anchor(row, inputs)?.filter(|a| !has_glob(a)) else {
             return Ok(());
         };
-        let node = match probe::physical(probe, &anchor) {
-            Seen::Found(real) => probe.node(&real),
-            Seen::Missing => Seen::Missing,
-            Seen::Unknown(why) => Seen::Unknown(why),
+        // The folders above the anchor are resolved, the anchor itself is not. An anchor that is a
+        // link (`C:\Documents and Settings` to `C:\Users`, `/etc` to `/private/etc`) binds the
+        // link, so its row never spreads to the folder behind it. That folder has its own rows.
+        let node = match (anchor.parent(), anchor.name()) {
+            (Some(parent), Some(name)) => match probe::physical(probe, &parent) {
+                Seen::Found(real) => probe.node(&AbsPath::trusted(real.as_path().join(name))),
+                Seen::Missing => Seen::Missing,
+                Seen::Unknown(why) => Seen::Unknown(why),
+            },
+            _ => probe.node(&anchor),
         };
         match node {
             Seen::Found(node) => {

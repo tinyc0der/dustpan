@@ -22,6 +22,8 @@ fn windows() -> FakeProbe {
         .dir(r"C:\Users\alice\AppData\Local\Temp")
         .file(r"C:\Users\alice\Documents\report.txt")
         .dir(r"D:\work\project")
+        // As Windows ships it. The profiles behind the junction stay judged by their own rows.
+        .symlink(r"C:\Documents and Settings", r"C:\Users")
 }
 
 fn env(key: &str) -> Option<String> {

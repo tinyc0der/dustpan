@@ -272,6 +272,24 @@ fn an_alias_never_grants_what_its_own_spelling_lacks() {
 }
 
 #[test]
+fn a_protected_anchor_that_is_a_link_does_not_protect_its_target() {
+    // Windows ships `C:\Documents and Settings` as a junction to `C:\Users`. Binding the
+    // anchor to the folder behind such a link would keep every file in every profile.
+    let fs = mac()
+        .file("/Users/Shared/guest-data/file")
+        .symlink("/Users/Guest", "/Users/Shared/guest-data");
+    assert_outcomes(
+        &fs,
+        &[
+            ("/Users/Shared/guest-data/file", "eligible"),
+            ("/Users/Shared/guest-data", "eligible"),
+            ("/Users/Guest", "critical/critical-system-path"),
+            ("/Users/Guest/file", "shape/symlink-ancestor"),
+        ],
+    );
+}
+
+#[test]
 fn a_symlinked_ancestor_is_kept_at_layer_one() {
     let fs = mac().symlink("/Users/alice/link", "/System");
     let v = judge(&fs, "/Users/alice/link/Library");

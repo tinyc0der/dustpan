@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub fn os_facts() -> OsFacts {
     let env = |key: &str| std::env::var(key).ok();
-    let cargo_bin = paths::cargo_bin_dir(Os::current(), &env);
+    let cargo_bin = paths::cargo_bin_dir(Os::current(), &env).map(resolve);
     let install = match exe_path() {
         Some(exe) => InstallMethod::classify(&exe, cargo_bin.as_deref()),
         None => InstallMethod::Manual,
@@ -19,12 +19,16 @@ pub fn os_facts() -> OsFacts {
 }
 
 fn exe_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    // Homebrew links bin/dustpan into the Cellar. Windows would add a \\?\ prefix.
+    std::env::current_exe().ok().map(resolve)
+}
+
+/// Homebrew links bin/dustpan into the Cellar, and a cargo home can sit behind a symlink.
+/// The exe and the cargo bin folder both go through here. Windows would add a \\?\ prefix.
+fn resolve(path: PathBuf) -> PathBuf {
     if cfg!(windows) {
-        Some(exe)
+        path
     } else {
-        Some(std::fs::canonicalize(&exe).unwrap_or(exe))
+        std::fs::canonicalize(&path).unwrap_or(path)
     }
 }
 

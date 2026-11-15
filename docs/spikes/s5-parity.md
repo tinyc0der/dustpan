@@ -58,7 +58,7 @@ The runner installed 1.67.0 while this Mac has 1.63.0, so a gate has to pin the 
 ## What M0-7 needs
 
 1. Run on `macos-latest` and install a pinned Mole version.
-2. Run every `mo` command with `--dry-run`, stdin from `/dev/null`, a fresh fixture `HOME`, a scrubbed environment (`env -i` with `PATH`, `HOME` and `TMPDIR`), and `deny-writes.sb`.
+2. Run every `mo` command with `--dry-run`, stdin from `/dev/null`, a fresh fixture `HOME`, a scrubbed environment (`env -i` with `PATH`, `HOME` and `TMPDIR`), and `deny-writes.sb`. This spike did not run with a scrubbed environment, so M0-7 must check that `mo` still runs with one.
 3. Compare only candidates inside the fixture, and treat other rows as host noise.
 4. Keep a known-difference list. It starts with `com.example.notes`.
 

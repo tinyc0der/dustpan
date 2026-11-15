@@ -14,7 +14,7 @@ Each run moves five kinds of item to the Trash with each of the four methods, fi
 
 ## Results
 
-Every move succeeded in both runs. In all 200 moves the source was gone and the item was in `~/.Trash`. Finder listed 120 items per run, which is the 100 moves plus the 20 items that the collision cases put there first. `cleanup.tsv` shows `left_in_trash 0` after both runs.
+Every move succeeded in both runs. In all 200 moves the source was gone and the item was in `~/.Trash`. Finder listed 120 items per run (`# finder_listed` in `suite.tsv`), which is the 100 moves plus the 20 items that the collision cases put there first. `cleanup.tsv` shows `left_in_trash 0` after both runs.
 
 | Method | Median latency, run 1 | Median latency, run 2 | Reports where the item landed | Name on collision |
 |---|---|---|---|---|

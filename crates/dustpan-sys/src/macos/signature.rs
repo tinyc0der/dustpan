@@ -31,7 +31,7 @@ pub(crate) struct Signature {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Unsigned {
+pub(crate) enum Unanswered {
     /// The process exited.
     Gone,
     /// The kernel would not say, or said something that cannot be read: the process could
@@ -40,11 +40,11 @@ pub(crate) enum Unsigned {
 }
 
 /// Asks the kernel about one process. `buf` is scratch space kept between calls.
-pub(crate) fn of(pid: libc::pid_t, buf: &mut Vec<u8>) -> Result<Signature, Unsigned> {
+pub(crate) fn of(pid: libc::pid_t, buf: &mut Vec<u8>) -> Result<Signature, Unanswered> {
     let id = match answer(pid, CS_OPS_IDENTITY, buf)? {
         Some(id) => {
             let id = id.split(|&b| b == 0).next().unwrap_or_default();
-            let id = std::str::from_utf8(id).map_err(|_| Unsigned::Unreadable)?;
+            let id = std::str::from_utf8(id).map_err(|_| Unanswered::Unreadable)?;
             (!id.is_empty()).then(|| id.into())
         }
         None => None,
@@ -62,7 +62,7 @@ fn answer(
     pid: libc::pid_t,
     op: libc::c_uint,
     buf: &mut Vec<u8>,
-) -> Result<Option<&[u8]>, Unsigned> {
+) -> Result<Option<&[u8]>, Unanswered> {
     let whole = |buf: &[u8]| u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
     buf.resize(ROOM, 0);
     loop {
@@ -72,36 +72,36 @@ fn answer(
             break;
         }
         match io::Error::last_os_error().raw_os_error() {
-            Some(libc::ESRCH) => return Err(Unsigned::Gone),
+            Some(libc::ESRCH) => return Err(Unanswered::Gone),
             // An unsigned process, and a signature with no identifier.
             Some(libc::EINVAL | libc::ENOENT) => return Ok(None),
             // The header was written and says how much room the answer needs.
             Some(libc::ERANGE) if whole(buf) > buf.len() && whole(buf) <= MAX_ROOM => {
                 buf.resize(whole(buf), 0);
             }
-            _ => return Err(Unsigned::Unreadable),
+            _ => return Err(Unanswered::Unreadable),
         }
     }
     match whole(buf) {
         // A zeroed header: the signature has no entitlements.
         0 | HEADER => Ok(None),
-        len => buf.get(HEADER..len).map(Some).ok_or(Unsigned::Unreadable),
+        len => buf.get(HEADER..len).map(Some).ok_or(Unanswered::Unreadable),
     }
 }
 
 /// The app groups an entitlements property list names.
-fn app_groups(entitlements: &[u8]) -> Result<Box<[Box<str>]>, Unsigned> {
+fn app_groups(entitlements: &[u8]) -> Result<Box<[Box<str>]>, Unanswered> {
     // Most processes name no group, and their list is not parsed at all.
     let key = GROUPS_KEY.as_bytes();
     if !entitlements.windows(key.len()).any(|at| at == key) {
         return Ok(Box::default());
     }
-    let dict = Dict::parse(entitlements).map_err(|_| Unsigned::Unreadable)?;
+    let dict = Dict::parse(entitlements).map_err(|_| Unanswered::Unreadable)?;
     match dict.get(GROUPS_KEY) {
         Ok(Value::Texts(groups)) => Ok(groups),
         Ok(Value::Text(group)) => Ok(Box::new([group])),
         Ok(Value::Absent) => Ok(Box::default()),
-        Ok(Value::Other) | Err(_) => Err(Unsigned::Unreadable),
+        Ok(Value::Other) | Err(_) => Err(Unanswered::Unreadable),
     }
 }
 
@@ -140,10 +140,13 @@ mod tests {
     #[test]
     fn entitlements_that_name_groups_and_cannot_be_read_are_unreadable() {
         let not_texts = entitlements("<true/>");
-        assert_eq!(app_groups(not_texts.as_bytes()), Err(Unsigned::Unreadable));
+        assert_eq!(
+            app_groups(not_texts.as_bytes()),
+            Err(Unanswered::Unreadable)
+        );
         let whole = entitlements("<array><string>group.one</string></array>");
         let cut = &whole.as_bytes()[..whole.len() - 20];
-        assert_eq!(app_groups(cut), Err(Unsigned::Unreadable));
+        assert_eq!(app_groups(cut), Err(Unanswered::Unreadable));
     }
 
     #[test]
@@ -153,6 +156,6 @@ mod tests {
         let mine = of(me, &mut buf).expect("the kernel answers for this process");
         assert_eq!(mine.app_groups, Box::default());
         // No pid is this large: `kern.maxproc` caps them far below.
-        assert_eq!(of(libc::pid_t::MAX, &mut buf), Err(Unsigned::Gone));
+        assert_eq!(of(libc::pid_t::MAX, &mut buf), Err(Unanswered::Gone));
     }
 }

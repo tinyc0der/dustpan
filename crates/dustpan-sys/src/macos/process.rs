@@ -1,5 +1,5 @@
 use super::bundle::Bundles;
-use super::signature::{self, Signature, Unsigned};
+use super::signature::{self, Signature, Unanswered};
 use dustpan_core::probe::{App, Pid, Proc, ProcessTable, Seen, Unseen};
 use std::ffi::OsString;
 use std::io;
@@ -90,9 +90,9 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
         };
         let signature = match signature::of(pid, &mut scratch) {
             Ok(signature) => signature,
-            Err(Unsigned::Gone) => continue,
+            Err(Unanswered::Gone) => continue,
             // The process may hold any group, so it may be any app.
-            Err(Unsigned::Unreadable) => match unidentified(pid) {
+            Err(Unanswered::Unreadable) => match unidentified(pid) {
                 Some(unknown) => {
                     app = unknown;
                     Signature::default()

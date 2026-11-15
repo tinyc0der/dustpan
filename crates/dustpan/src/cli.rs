@@ -1,4 +1,4 @@
-use clap::{ColorChoice, Command, CommandFactory, FromArgMatches, Parser};
+use clap::{ColorChoice, Command, CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::ffi::OsString;
 
 #[derive(Parser, Debug)]
@@ -20,6 +20,21 @@ pub struct Cli {
     /// Turn off color
     #[arg(long = "no-color", global = true)]
     pub no_color: bool,
+    #[command(subcommand)]
+    pub command: Option<Cmd>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Cmd {
+    /// Show whether dustpan would keep each path, and the rule that decides
+    Explain {
+        /// Print one JSON object instead of text
+        #[arg(long)]
+        json: bool,
+        /// A path to judge; `~` is the home folder
+        #[arg(required = true, value_name = "PATH")]
+        paths: Vec<OsString>,
+    },
 }
 
 /// `--help` prints while clap parses, so color must be decided before parsing.

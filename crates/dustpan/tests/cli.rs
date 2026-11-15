@@ -89,7 +89,7 @@ fn debug_version_survives_a_closed_stderr_pipe() {
 }
 
 #[test]
-fn help_lists_the_global_flags_and_no_commands() {
+fn help_lists_the_global_flags_and_the_explain_command() {
     dustpan()
         .arg("--help")
         .assert()
@@ -97,7 +97,8 @@ fn help_lists_the_global_flags_and_no_commands() {
         .stdout(predicate::str::contains("--debug"))
         .stdout(predicate::str::contains("--ascii"))
         .stdout(predicate::str::contains("--no-color"))
-        .stdout(predicate::str::contains("Commands:").not());
+        .stdout(predicate::str::contains("Commands:"))
+        .stdout(predicate::str::contains("explain"));
 }
 
 #[test]

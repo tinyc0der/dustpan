@@ -681,6 +681,86 @@ fn every_user_cache_scope_asks_for_its_owner() {
 }
 
 #[test]
+fn a_group_containers_caches_are_kept_while_an_app_of_the_group_runs() {
+    let widget = "/Applications/Widget.app/Contents/MacOS/widget";
+    let warp = "/Applications/Warp.app/Contents/MacOS/stable";
+    let fs = mac()
+        .running_app(7, widget, "com.example.widgetapp")
+        .running_app(98087, warp, "dev.warp.Warp-Stable");
+    assert_outcomes(
+        &fs,
+        &[
+            (
+                "~/Library/Group Containers/ABCDE12345.com.example.widgetapp/Library/Caches",
+                "live/owner-running",
+            ),
+            (
+                "~/Library/Group Containers/group.com.example.widgetapp/Library/Caches/x",
+                "live/owner-running",
+            ),
+            (
+                "~/Library/Group Containers/ABCDE12345.group.com.example.widgetapp/Caches",
+                "live/owner-running",
+            ),
+            (
+                "~/Library/Group Containers/group.com.example.widgetapp.shared/Caches",
+                "live/owner-running",
+            ),
+            (
+                "~/Library/Group Containers/2BBY89MBSN.dev.warp/Library/Caches",
+                "live/owner-running",
+            ),
+            (
+                "~/Library/Group Containers/group.com.example.other/Library/Caches",
+                "eligible",
+            ),
+            (
+                "~/Library/Group Containers/ABCDE12345.com.example.widget/Library/Caches",
+                "eligible",
+            ),
+        ],
+    );
+    assert_eq!(
+        judge(
+            &fs,
+            "/Users/alice/Library/Group Containers/2BBY89MBSN.dev.warp/Library/Caches"
+        )
+        .to_string(),
+        "Kept · an app of the group 2BBY89MBSN.dev.warp is running (pid 98087); quit it first"
+    );
+}
+
+#[test]
+fn the_words_of_a_bundle_layout_name_no_owner() {
+    // Neither Raycast nor an app named `example` runs: these are other apps' processes.
+    let media = "/System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/\
+                 com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/\
+                 com.apple.accessibility.mediaaccessibilityd";
+    let brave = "/Applications/Brave Browser.app/Contents/Frameworks/\
+                 Brave Browser Framework.framework/Versions/157.1.99.57/Helpers/\
+                 Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)";
+    let fs = mac()
+        .running_app(87192, media, "com.apple.accessibility.mediaaccessibilityd")
+        .running_app(19463, brave, "com.brave.Browser.helper.renderer")
+        .running(5, "/opt/tools/Contents/MacOS/helper");
+    assert_outcomes(
+        &fs,
+        &[
+            // Raycast's data is kept by name, which is the true reason now that no owner runs.
+            (
+                "~/Library/Caches/com.raycast.macos.accessibility",
+                "protection/protected-bundle",
+            ),
+            ("~/Library/Caches/com.example.macos.helper", "eligible"),
+            (
+                "~/Library/Caches/com.brave.Browser.helper.renderer",
+                "live/owner-running",
+            ),
+        ],
+    );
+}
+
+#[test]
 fn a_named_cache_tree_has_no_owner_to_ask() {
     let fs = mac().process_table_unknown();
     assert_eq!(

@@ -41,6 +41,21 @@ jobs:
         run: cargo test --workspace
       - name: build
         run: cargo build --release
+      # M0-3 live lane 10: the release binary judges a real Windows profile.
+      - name: explain keeps Windows and Documents, and not a file in Documents
+        if: runner.os == 'Windows'
+        run: |
+          documents="$USERPROFILE\\Documents"
+          mkdir -p "$(cygpath -u "$documents")"
+          echo lane-10 > "$(cygpath -u "$documents")/dustpan-lane-10.txt"
+          out=$(./target/release/dustpan.exe explain 'C:\Windows' "$documents" "$documents\\dustpan-lane-10.txt")
+          printf '%s\n' "$out"
+          rm "$(cygpath -u "$documents")/dustpan-lane-10.txt"
+          lines=()
+          while IFS= read -r line; do lines+=("${line%$'\r'}"); done <<< "$out"
+          [[ "${lines[0]}" == 'C:\Windows  Kept · critical system path' ]]
+          [[ "${lines[1]}" == "$documents  Kept · home folder" ]]
+          [[ "${lines[2]}" == "$documents\\dustpan-lane-10.txt  Eligible" ]]
       - uses: actions/upload-artifact@v4
         with:
           name: dustpan-${{ matrix.os }}

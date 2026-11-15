@@ -4,6 +4,7 @@ use dustpan_core::time::rfc3339_utc;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Writes the session log and returns its home-redacted path.
@@ -20,7 +21,17 @@ pub fn start_session(facts: &OsFacts, args: &[OsString]) -> io::Result<String> {
         .map_or(0, |d| d.as_secs());
     fs::create_dir_all(&dir)?;
     let file = dir.join(format!("session-{secs}-{}.log", std::process::id()));
-    let argv: Vec<String> = args.iter().map(|a| redact(&a.to_string_lossy())).collect();
+    let program = args.first().map(|a| {
+        Path::new(a)
+            .file_name()
+            .unwrap_or(a)
+            .to_string_lossy()
+            .into_owned()
+    });
+    let argv: Vec<String> = program
+        .into_iter()
+        .chain(args.iter().skip(1).map(|a| redact(&a.to_string_lossy())))
+        .collect();
 
     let mut log = OpenOptions::new()
         .write(true)

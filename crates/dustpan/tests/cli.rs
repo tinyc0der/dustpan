@@ -145,5 +145,6 @@ fn debug_writes_a_session_log_that_names_no_home() {
     let log = std::fs::read_to_string(&logs[0]).unwrap();
     assert!(log.starts_with("dustpan 0.1.0\n"), "{log}");
     assert!(!log.contains(home.to_str().unwrap()), "{log}");
+    assert!(log.contains("argv: dustpan"), "{log}");
     assert!(log.contains("started: 20"), "{log}");
 }

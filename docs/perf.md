@@ -10,7 +10,7 @@ Each section records one budget from `docs/M0-checklist.md`: the probe, the mach
 
 | Shape | What it times | Gated |
 |---|---|---|
-| `scan` | `Pass::candidate` with the real probe. The walker supplies each entry's node, so the guard calls `lstat` for directories only. | Yes |
+| `scan` | `Pass::candidate` with the real probe. The walker supplies each entry's node, so the guard calls `lstat` for directories only. One process snapshot per round. | Yes |
 | `explain` | `Pass::evaluate` with the real probe: one more `lstat` per path, and one stored-spelling question (`getattrlist`) per path since fix round 1. | No |
 | `cpu` | `Pass::candidate` with the in-memory probe: policy matching alone. | No |
 
@@ -52,6 +52,30 @@ Three runs of each side, alternated (before, after, before, after, before, after
 - `cpu` is 9% to 13% faster after. It has no processes and no syscalls, so this is policy CPU alone: bundle patterns now match the folded name the pass already holds. The gap is larger than the spread between runs of one side (2%), but no profile was taken to confirm the cause, so treat the cause as inferred.
 - `explain` fell from about 360,000 to about 196,000 per second: it now makes two syscalls per path, `lstat` and `getattrlist`, and both asked 1.000 times per path. It is not the gated shape. `explain` and `recheck` always ask, because they are the two places where a spelling arrives from outside a directory read.
 - The work happened: every side reports 99,998 of 100,000 eligible for `scan` and `explain`, and 99,999 for `cpu`, the same two kept paths as the baseline.
+
+**After fix round 2 (bounded bundle reads, app groups, layout words).** No measurable difference for `scan`: 795,105 before and 783,809 after, medians of five runs each, and the two ranges overlap (770,352 to 824,369 before, 766,467 to 822,719 after). It passes at 3.9 times the budget.
+
+Five runs of each side, alternated (before, after, and so on), 2026-11-16, same machine, load average 2.5 to 2.9. "Before" is an export of `1f8c9f9` and "after" an export of `23b1c8c`, in two sibling folders whose paths have the same length. Each cell is the median of five rounds in paths per second. The last column is the median of seven process snapshots in one process, taken right after the run.
+
+| Run | Side | Load | `scan` | `explain` | `cpu` | Snapshot (ms) |
+|---|---|---|---|---|---|---|
+| 1 | before | 2.81 | 796,992 | 198,282 | 925,433 | 15.8 |
+| 1 | after | 2.67 | 822,719 | 194,722 | 964,799 | 39.2 |
+| 2 | before | 2.81 | 795,105 | 192,090 | 942,708 | 15.6 |
+| 2 | after | 2.74 | 766,467 | 184,047 | 933,754 | 35.6 |
+| 3 | before | 2.70 | 789,501 | 193,776 | 952,637 | 12.9 |
+| 3 | after | 2.90 | 779,808 | 188,056 | 963,113 | 32.9 |
+| 4 | before | 2.92 | 770,352 | 192,220 | 949,738 | 11.7 |
+| 4 | after | 2.86 | 812,259 | 194,058 | 961,043 | 33.2 |
+| 5 | before | 2.65 | 824,369 | 200,883 | 952,594 | 12.0 |
+| 5 | after | 2.52 | 783,809 | 187,892 | 940,248 | 32.8 |
+
+- Two fixed costs per pass moved in opposite directions, and both were measured inside the bench with a temporary timer (`/tmp/swarm-m0-3/fix2/bench-explain.txt`). The process snapshot grew from 14 ms to 36 ms: it now asks the kernel for each of about 800 processes' signing identifier and entitlements (two `csops` calls each). Owner matching for the fixture's 100 cache folders fell from 37 ms to 16 ms per round: a process in a bundle is compared by id and no longer has its path lowercased and searched for the id's words. The sum is 51 ms before and 52 ms after, which is why `scan` did not move.
+- On a longer scan both costs shrink toward nothing per path. At the sink the snapshot is paid per owned candidate, and it is now 36 ms (see the design's open questions).
+- `explain` is 3% slower (193,776 to 188,056, medians), and its ranges touch (192,090 to 200,883 before, 184,047 to 194,722 after), so treat it as at most a small loss. It is not the gated shape.
+- `cpu` did not change: 949,738 and 961,043, inside each side's range. It has no processes.
+- The work happened: every run of both sides reports 99,998 of 100,000 eligible for `scan` and `explain` and 99,999 for `cpu`, with 0.022 `lstat` calls per path for `scan`. No run failed the budget.
+- Where the fixture sits changes every number. A first set of five alternated runs had "before" in a folder with a longer path than "after" (`bench-ab-confounded.txt`): `cpu` read 964,482 against 1,125,649, a 17% gap that the side-by-side runs do not show. The cause is inferred, not profiled: the in-memory probe and the policy both hash and compare whole path strings, and the paths of that folder are 45 bytes longer. Fix round 1's comparison above had the same layout, so its "9% slower" for `scan` and "9% to 13% faster" for `cpu` both carry that bias. Compare two sides only from folders whose paths have the same length.
 
 **History.** The first working build measured 415,627 for `scan` at a load average near 7. Two changes followed: `*x*` bundle patterns are grouped by first byte, and a cache folder's owner is looked up without building an owner value per file. The same fixture then measured 874,594 at the same load.
 

@@ -2,6 +2,8 @@
 //! `dustpan-core` does no I/O. The binary uses portable `std` I/O and no `unsafe`.
 mod os;
 mod privilege;
+mod volume;
 
 pub use os::os_facts;
 pub use privilege::is_root;
+pub use volume::{BootVolume, boot_volume};

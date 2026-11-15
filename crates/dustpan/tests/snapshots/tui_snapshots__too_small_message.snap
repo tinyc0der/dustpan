@@ -1,0 +1,8 @@
+---
+source: crates/dustpan/tests/tui_snapshots.rs
+expression: "screen(&state(unicode(), 50, 12))"
+---
+dustpan needs 60 by 16
+This window is 50 by 12
+Resize to continue
+q quits

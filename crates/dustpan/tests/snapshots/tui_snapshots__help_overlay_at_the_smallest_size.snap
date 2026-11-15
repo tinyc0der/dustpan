@@ -1,0 +1,20 @@
+---
+source: crates/dustpan/tests/tui_snapshots.rs
+expression: "screen(&after(state(unicode(), 60, 16), &[Input::Help]))"
+---
+ dustpan › Home                    Macintosh HD  88 GB free
+──┌ 🧹 Help for Home ────────────────────────────────────┐──
+  │ ↑ ↓ j k       Move the cursor                        │
+ ➤│ Enter → l     Open the entry                         │
+  │ 1..9          Jump to an entry                       │
+  │ ,             Settings                               │
+  │ ?             Show or close this help                │
+  │ q             Quit                                   │
+  │ Ctrl+C        Quit now                               │
+  │ Wheel, click  Move, select a row                     │
+  │                                                      │
+  │ Jump keys                                            │
+  │ 1 Clean  2 Uninstall  3 Analyze  4 Optimize          │
+  │ 5 Status  6 Purge  7 Installers  8 Slim  9 History   │
+──└ ? or Esc closes ─────────────────────────────────────┘──
+ ↑↓ Move  Enter Open  1-9 Jump  , Settings  ? Help  q Quit

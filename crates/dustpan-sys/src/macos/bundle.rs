@@ -9,7 +9,9 @@ use core_foundation_sys::string::{
 };
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::io::ErrorKind;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Read as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
 const ID_KEY: &str = "CFBundleIdentifier";
@@ -63,11 +65,35 @@ impl Bundles {
     }
 }
 
+/// The most of an `Info.plist` that is read. The largest of 5,930 on the bench host is 357 KB.
+const MAX_PLIST: u64 = 1 << 20;
+
+/// Any user can put any file next to a process they run, so the read is bounded: a link is not
+/// followed, a FIFO does not block the open, and only a regular file within the cap is read.
+/// Anything else is unreadable, which leaves the process unidentified.
 fn read(file: &Path) -> Plist {
-    match std::fs::read(file) {
-        Ok(bytes) => bundle_id(&bytes),
-        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => Plist::NoId,
-        Err(_) => Plist::Unreadable,
+    let opened = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(file);
+    let file = match opened {
+        Ok(file) => file,
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            return Plist::NoId;
+        }
+        Err(_) => return Plist::Unreadable,
+    };
+    if !file
+        .metadata()
+        .is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_PLIST)
+    {
+        return Plist::Unreadable;
+    }
+    // The file can grow after the size was read.
+    let mut bytes = Vec::new();
+    match file.take(MAX_PLIST + 1).read_to_end(&mut bytes) {
+        Ok(len) if len as u64 <= MAX_PLIST => bundle_id(&bytes),
+        Ok(_) | Err(_) => Plist::Unreadable,
     }
 }
 
@@ -201,5 +227,33 @@ mod tests {
     #[test]
     fn a_binary_property_list_is_read_too() {
         assert_eq!(id(&bundle_id(BINARY)), Some("com.example.app"));
+    }
+
+    #[test]
+    fn only_a_small_regular_file_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name);
+
+        std::fs::write(at("plain"), XML).unwrap();
+        assert_eq!(id(&read(&at("plain"))), Some("com.example.app"));
+        assert!(matches!(read(&at("absent")), Plist::NoId));
+        assert!(matches!(read(&at("plain/below")), Plist::NoId));
+
+        let padded = |len: u64| format!("{XML}{}", " ".repeat(len as usize - XML.len()));
+        std::fs::write(at("at-the-cap"), padded(MAX_PLIST)).unwrap();
+        assert_eq!(id(&read(&at("at-the-cap"))), Some("com.example.app"));
+        std::fs::write(at("over-the-cap"), padded(MAX_PLIST + 1)).unwrap();
+        assert!(matches!(read(&at("over-the-cap")), Plist::Unreadable));
+
+        std::os::unix::fs::symlink(at("plain"), at("link")).unwrap();
+        assert!(matches!(read(&at("link")), Plist::Unreadable));
+        std::os::unix::fs::symlink("/dev/zero", at("endless")).unwrap();
+        assert!(matches!(read(&at("endless")), Plist::Unreadable));
+        assert!(matches!(read(Path::new("/dev/zero")), Plist::Unreadable));
+
+        let fifo = std::ffi::CString::new(at("fifo").as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `fifo` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        assert!(matches!(read(&at("fifo")), Plist::Unreadable));
     }
 }

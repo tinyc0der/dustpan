@@ -307,6 +307,17 @@ impl fmt::Display for KeptReason {
                 }
                 f.write_str("); quit it first")
             }
+            Self::Live(LiveReason::OwnerUnknown {
+                owner,
+                why: Unseen::Unidentified(pid),
+            }) => {
+                write!(
+                    f,
+                    "cannot tell whether {owner} is running: process {} cannot be identified; \
+                     quit it first",
+                    pid.0
+                )
+            }
             Self::Live(LiveReason::OwnerUnknown { owner, why }) => {
                 write!(
                     f,

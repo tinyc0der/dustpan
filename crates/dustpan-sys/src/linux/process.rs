@@ -1,5 +1,5 @@
 use crate::probe::unseen;
-use dustpan_core::probe::{Pid, Proc, ProcessTable, Seen};
+use dustpan_core::probe::{App, Pid, Proc, ProcessTable, Seen};
 use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::os::unix::ffi::OsStringExt as _;
@@ -34,6 +34,8 @@ pub(crate) fn table() -> Seen<ProcessTable> {
                         pid: Pid(pid),
                         exe: OsString::from_vec(exe),
                         args: OsString::from_vec(words.collect::<Vec<_>>().join(&b' ')),
+                        // Linux has no bundles: the command line is what names an owner.
+                        app: App::bare(),
                     });
                 }
             }

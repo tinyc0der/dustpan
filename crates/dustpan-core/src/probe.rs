@@ -53,6 +53,8 @@ pub enum Unseen {
     /// This build has no implementation yet (for example `in_use` before M3).
     Unsupported,
     Failed,
+    /// This process runs, and the probe could not tell which app it is (SAFE-08).
+    Unidentified(Pid),
 }
 
 impl Unseen {
@@ -62,6 +64,7 @@ impl Unseen {
             Self::TimedOut => "the check timed out",
             Self::Unsupported => "this build cannot check it yet",
             Self::Failed => "the check failed",
+            Self::Unidentified(_) => "a running process cannot be identified",
         }
     }
 }
@@ -81,6 +84,27 @@ pub struct Proc {
     pub exe: OsString,
     /// The arguments after the executable, joined by spaces, where the OS exposes them.
     pub args: OsString,
+    pub app: App,
+}
+
+/// Which app a process belongs to, as far as the probe could establish.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum App {
+    /// The id of every bundle that encloses the executable, innermost first: a helper names its
+    /// own bundle and the app that ships it. Empty for a bare executable, and on systems that
+    /// have no bundles.
+    Bundles(Box<[Box<str>]>),
+    /// The executable is gone or its bundle cannot be read, so the process may be any app.
+    /// `mine` says it runs as the user dustpan runs as; another user's process cannot own a
+    /// cache in this user's home.
+    Unknown { mine: bool },
+}
+
+impl App {
+    /// A process with a readable executable that sits in no bundle.
+    pub fn bare() -> Self {
+        Self::Bundles(Box::new([]))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -220,10 +244,15 @@ fn has_token(hay: &[u8], needle: &[u8]) -> bool {
 
 impl Owner {
     /// Whether this owner runs, from one process table. Pure, so the rule is tested with no
-    /// processes. A bundle id matches a process whose command line contains the id, or contains
-    /// the id's last segment and one earlier segment as whole tokens (Mole's
-    /// `_mole_user_cache_owner_process_state`, lib/core/file_ops.sh:459-540). A process name
+    /// processes. A bundle id matches a process in a bundle with that id, compared without
+    /// case. It also matches a process whose command line contains the id, or contains the
+    /// id's last segment and one earlier segment as whole tokens (Mole's
+    /// `_mole_user_cache_owner_process_state`, lib/core/file_ops.sh:459-540): the only signal
+    /// where no bundle id exists, and one that can only add a refusal elsewhere. A process name
     /// matches an executable with exactly that file name.
+    ///
+    /// An owner no process matches is idle only when every process of this user was
+    /// identified (SAFE-08).
     pub fn state_in(&self, table: &Seen<ProcessTable>) -> OwnerState {
         let table = match table {
             Seen::Found(table) => table,
@@ -236,12 +265,18 @@ impl Owner {
             .filter(|p| self.matches(p))
             .map(|p| p.pid)
             .collect();
+        let mut unidentified = table
+            .procs
+            .iter()
+            .filter(|p| matches!(p.app, App::Unknown { mine: true }));
         if !pids.is_empty() {
             OwnerState::Running(pids)
-        } else if table.complete {
-            OwnerState::Idle
-        } else {
+        } else if !table.complete {
             OwnerState::Unknown(Unseen::Denied)
+        } else if let Some(proc) = unidentified.next() {
+            OwnerState::Unknown(Unseen::Unidentified(proc.pid))
+        } else {
+            OwnerState::Idle
         }
     }
 
@@ -251,6 +286,11 @@ impl Owner {
                 Path::new(&proc.exe).file_name().and_then(|n| n.to_str()) == Some(&**name)
             }
             Self::BundleId(id) => {
+                if let App::Bundles(bundles) = &proc.app
+                    && bundles.iter().any(|b| b.eq_ignore_ascii_case(id))
+                {
+                    return true;
+                }
                 let mut line = lower(proc.exe.as_encoded_bytes());
                 line.push(b' ');
                 line.extend(lower(proc.args.as_encoded_bytes()));
@@ -287,6 +327,7 @@ mod tests {
                     pid: Pid(i as u32 + 1),
                     exe: OsString::from(exe),
                     args: OsString::new(),
+                    app: App::bare(),
                 })
                 .collect(),
         })
@@ -345,6 +386,53 @@ mod tests {
         assert!(!OwnerState::Unknown(Unseen::Denied).permits_removal());
         assert!(!OwnerState::Running(vec![Pid(1)]).permits_removal());
         assert!(OwnerState::Idle.permits_removal());
+    }
+
+    fn in_app(mut table: Seen<ProcessTable>, app: App) -> Seen<ProcessTable> {
+        if let Seen::Found(table) = &mut table {
+            table.procs[0].app = app;
+        }
+        table
+    }
+
+    #[test]
+    fn a_bundle_id_matches_the_bundle_a_process_runs_in() {
+        // Nothing in the path names the id: only the bundle's `Info.plist` does.
+        let ghostty = "/Applications/Ghostty.app/Contents/MacOS/ghostty";
+        let owner = bundle("com.mitchellh.ghostty");
+        assert_eq!(owner.state_in(&table(true, &[ghostty])), OwnerState::Idle);
+        let ids = |ids: &[&str]| App::Bundles(ids.iter().map(|&id| id.into()).collect());
+        for app in [
+            ids(&["com.mitchellh.ghostty"]),
+            ids(&["COM.MITCHELLH.GHOSTTY"]),
+            ids(&["com.mitchellh.ghostty.helper", "com.mitchellh.ghostty"]),
+        ] {
+            assert_eq!(
+                owner.state_in(&in_app(table(true, &[ghostty]), app)),
+                OwnerState::Running(vec![Pid(1)])
+            );
+        }
+        let other = ids(&["com.mitchellh.ghostty.helper"]);
+        assert_eq!(
+            owner.state_in(&in_app(table(true, &[ghostty]), other)),
+            OwnerState::Idle
+        );
+    }
+
+    #[test]
+    fn an_unidentified_process_of_this_user_leaves_every_owner_unknown() {
+        let mine = in_app(table(true, &["ghostty"]), App::Unknown { mine: true });
+        for owner in [bundle("com.example.app"), Owner::Process("tool".into())] {
+            assert_eq!(
+                owner.state_in(&mine),
+                OwnerState::Unknown(Unseen::Unidentified(Pid(1)))
+            );
+        }
+        let theirs = in_app(table(true, &["ghostty"]), App::Unknown { mine: false });
+        assert_eq!(
+            bundle("com.example.app").state_in(&theirs),
+            OwnerState::Idle
+        );
     }
 
     #[test]

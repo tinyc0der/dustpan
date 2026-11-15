@@ -1,16 +1,21 @@
-use dustpan_core::probe::{Pid, Proc, ProcessTable, Seen, Unseen};
+use super::bundle::Bundles;
+use dustpan_core::probe::{App, Pid, Proc, ProcessTable, Seen, Unseen};
 use std::ffi::OsString;
 use std::io;
 use std::os::unix::ffi::OsStringExt as _;
+use std::path::Path;
 
 /// A listed process the probe could not name: its pid, and the errno of the last attempt.
 type Hidden = (libc::pid_t, Option<i32>);
 
-/// One snapshot of every process's executable path, through `proc_listallpids` and
-/// `proc_pidpath`. No subprocess runs, so no deadline or `PATH` lookup is involved.
+/// One snapshot of every process's executable path and the bundles it sits in, through
+/// `proc_listallpids`, `proc_pidpath` and each bundle's `Info.plist`. No subprocess runs, so no
+/// deadline or `PATH` lookup is involved.
 ///
-/// The table holds executable paths only. Arguments need `KERN_PROCARGS2`, which answers for the
-/// caller's own processes alone; M3 adds them with the open-file probe.
+/// The bundle id is what ties a process to its cache folder: the path of
+/// `/Applications/Ghostty.app/Contents/MacOS/ghostty` does not spell `com.mitchellh.ghostty`.
+/// Arguments need `KERN_PROCARGS2`, which answers for the caller's own processes alone; M3 adds
+/// them with the open-file probe.
 pub(crate) fn table() -> Seen<ProcessTable> {
     match snapshot() {
         Some((procs, hidden)) => Seen::Found(ProcessTable {
@@ -32,6 +37,11 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
     let filled = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
     pids.truncate(usize::try_from(filled).ok().filter(|&n| n > 0)?);
 
+    // SAFETY: `geteuid` has no preconditions.
+    let me = unsafe { libc::geteuid() };
+    // Root reads every process, so none is another user's to set aside.
+    let mine = |uid: libc::uid_t| me == 0 || uid == me;
+    let mut bundles = Bundles::default();
     let mut procs = Vec::with_capacity(pids.len());
     let mut hidden = Vec::new();
     let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
@@ -42,43 +52,51 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
         };
         // SAFETY: `buf` is writable for its whole length.
         let len = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
-        let exe = match usize::try_from(len) {
-            Ok(len) if len > 0 => Some(OsString::from_vec(buf[..len].to_vec())),
-            _ => match short_name(pid) {
-                Named::Yes(name) => Some(name),
+        let path_errno = io::Error::last_os_error().raw_os_error();
+        let path = usize::try_from(len).ok().filter(|&len| len > 0);
+        let (exe, app) = match path {
+            Some(len) => {
+                let exe = OsString::from_vec(buf[..len].to_vec());
+                match bundles.enclosing(Path::new(&exe)) {
+                    Ok(ids) => (exe, App::Bundles(ids)),
+                    Err(_) => match short_record(pid) {
+                        Short::Found { uid, .. } => (exe, App::Unknown { mine: mine(uid) }),
+                        Short::Gone => continue,
+                        Short::Unreadable(_) => (exe, App::Unknown { mine: true }),
+                    },
+                }
+            }
+            None if path_errno == Some(libc::ESRCH) => continue,
+            // The kernel cannot rebuild the path of a deleted or replaced binary, but the
+            // process still runs. Its short record is readable for every user's processes and
+            // gives a name cut to 16 bytes: enough to list it, not to say which app it is.
+            None => match short_record(pid) {
+                Short::Found { name, uid } => (name, App::Unknown { mine: mine(uid) }),
                 // A process that exited since the listing, or a zombie, holds nothing open.
-                Named::Gone => None,
-                Named::No(errno) => {
-                    hidden.push((pid, errno));
-                    None
+                Short::Gone => continue,
+                Short::Unreadable(errno) => {
+                    hidden.push((pid, errno.or(path_errno)));
+                    continue;
                 }
             },
         };
-        if let Some(exe) = exe {
-            procs.push(Proc {
-                pid: Pid(id),
-                exe,
-                args: OsString::new(),
-            });
-        }
+        procs.push(Proc {
+            pid: Pid(id),
+            exe,
+            args: OsString::new(),
+            app,
+        });
     }
     Some((procs, hidden))
 }
 
-enum Named {
-    Yes(OsString),
+enum Short {
+    Found { name: OsString, uid: libc::uid_t },
     Gone,
-    No(Option<i32>),
+    Unreadable(Option<i32>),
 }
 
-/// The kernel's short name for a process whose executable path it will not give: the path of a
-/// deleted or replaced binary cannot be rebuilt, but the process still runs. The short record
-/// is readable for every user's processes.
-fn short_name(pid: libc::pid_t) -> Named {
-    let path_errno = io::Error::last_os_error().raw_os_error();
-    if path_errno == Some(libc::ESRCH) {
-        return Named::Gone;
-    }
+fn short_record(pid: libc::pid_t) -> Short {
     // SAFETY: a zeroed `proc_bsdshortinfo` is a valid value to overwrite.
     let mut info: libc::proc_bsdshortinfo = unsafe { std::mem::zeroed() };
     let size = size_of::<libc::proc_bsdshortinfo>() as libc::c_int;
@@ -95,16 +113,19 @@ fn short_name(pid: libc::pid_t) -> Named {
     if got != size {
         let errno = io::Error::last_os_error().raw_os_error();
         return if errno == Some(libc::ESRCH) {
-            Named::Gone
+            Short::Gone
         } else {
-            Named::No(errno.or(path_errno))
+            Short::Unreadable(errno)
         };
     }
     if info.pbsi_status == libc::SZOMB {
-        return Named::Gone;
+        return Short::Gone;
     }
     let name = info.pbsi_comm.iter().take_while(|&&c| c != 0);
-    Named::Yes(OsString::from_vec(name.map(|&c| c as u8).collect()))
+    Short::Found {
+        name: OsString::from_vec(name.map(|&c| c as u8).collect()),
+        uid: info.pbsi_uid,
+    }
 }
 
 #[cfg(test)]
@@ -116,8 +137,9 @@ mod tests {
         let (procs, hidden) = snapshot().expect("the process list is readable");
         assert!(hidden.is_empty(), "processes with no name: {hidden:?}");
         let me = std::process::id();
-        let this = procs.iter().find(|p| p.pid == Pid(me));
+        let this = procs.iter().find(|p| p.pid == Pid(me)).unwrap();
         let exe = std::env::current_exe().unwrap().canonicalize().unwrap();
-        assert_eq!(this.map(|p| p.exe.as_os_str()), Some(exe.as_os_str()));
+        assert_eq!(this.exe.as_os_str(), exe.as_os_str());
+        assert_eq!(this.app, App::bare());
     }
 }

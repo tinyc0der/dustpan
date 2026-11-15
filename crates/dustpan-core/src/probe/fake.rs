@@ -2,7 +2,7 @@
 //! tests and with the `testkit` feature, which no shipped crate enables; a source test fails if
 //! `FakeProbe` or `testkit` appears under `crates/dustpan/src` or `crates/dustpan-sys/src`
 //! (SAFE-17).
-use super::{Handles, Pid, Probe, Proc, ProcessTable, Seen, Unseen};
+use super::{App, Handles, Pid, Probe, Proc, ProcessTable, Seen, Unseen};
 use crate::identity::{FileId, Node, NodeKind};
 use crate::path::AbsPath;
 use std::collections::{BTreeMap, BTreeSet};
@@ -188,12 +188,29 @@ impl FakeProbe {
         self
     }
 
-    pub fn running(mut self, pid: u32, exe: &str) -> Self {
+    /// A process with a bare executable: in no bundle.
+    pub fn running(self, pid: u32, exe: &str) -> Self {
+        self.process(pid, exe, App::bare())
+    }
+
+    /// A process whose executable sits in the bundle `bundle_id`.
+    pub fn running_app(self, pid: u32, exe: &str, bundle_id: &str) -> Self {
+        self.process(pid, exe, App::Bundles(Box::new([bundle_id.into()])))
+    }
+
+    /// A process the probe could not identify, such as one whose executable was deleted. Only
+    /// its short name is known. `mine` says it runs as the user dustpan runs as.
+    pub fn running_unidentified(self, pid: u32, short_name: &str, mine: bool) -> Self {
+        self.process(pid, short_name, App::Unknown { mine })
+    }
+
+    fn process(mut self, pid: u32, exe: &str, app: App) -> Self {
         if let Seen::Found(table) = &mut self.processes {
             table.procs.push(Proc {
                 pid: Pid(pid),
                 exe: OsString::from(exe),
                 args: OsString::new(),
+                app,
             });
         }
         self

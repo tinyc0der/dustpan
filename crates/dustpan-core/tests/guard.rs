@@ -10,7 +10,7 @@ use dustpan_core::guard::{
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
-use dustpan_core::probe::{Owner, Probe, Seen, Unseen};
+use dustpan_core::probe::{Owner, Pid, Probe, Seen, Unseen};
 use std::sync::Arc;
 
 const HOME: &str = "/Users/alice";
@@ -593,6 +593,57 @@ fn a_running_or_unknown_owner_keeps_its_cache() {
             "Kept · cannot tell whether com.google.Chrome is running: permission denied"
         );
     }
+}
+
+#[test]
+fn an_app_keeps_its_cache_when_only_its_bundle_names_the_id() {
+    let cache = "/Users/alice/Library/Caches/com.mitchellh.ghostty";
+    let ghostty = "/Applications/Ghostty.app/Contents/MacOS/ghostty";
+    let fs = mac()
+        .dir(cache)
+        .running_app(42516, ghostty, "com.mitchellh.ghostty");
+    assert_eq!(
+        judge(&fs, cache).to_string(),
+        "Kept · com.mitchellh.ghostty is running (pid 42516); quit it first"
+    );
+    assert_eq!(
+        outcome(&judge(
+            &fs,
+            "/Users/alice/Library/Caches/COM.MITCHELLH.GHOSTTY"
+        )),
+        "live/owner-running"
+    );
+    let quit = mac().dir(cache);
+    assert_eq!(judge(&quit, cache), Verdict::Eligible);
+}
+
+#[test]
+fn an_unidentified_process_of_this_user_keeps_every_owned_cache() {
+    // A process whose binary was deleted still runs, and only its short name is left.
+    let cache = "/Users/alice/Library/Caches/com.example.widget";
+    let mine = mac().dir(cache).running_unidentified(78754, "widget", true);
+    let v = judge(&mine, cache);
+    assert!(
+        matches!(&v, Verdict::Kept(KeptReason::Live(LiveReason::OwnerUnknown { owner, why }))
+            if *owner == Owner::BundleId("com.example.widget".into())
+                && *why == Unseen::Unidentified(Pid(78754))),
+        "{v:?}"
+    );
+    assert_eq!(
+        v.to_string(),
+        "Kept · cannot tell whether com.example.widget is running: \
+         process 78754 cannot be identified; quit it first"
+    );
+    // A named cache tree has no owner to ask, so it stays eligible.
+    assert_eq!(
+        judge(&mine, "/Users/alice/Library/Caches/Homebrew/x"),
+        Verdict::Eligible
+    );
+
+    let theirs = mac()
+        .dir(cache)
+        .running_unidentified(78754, "widget", false);
+    assert_eq!(judge(&theirs, cache), Verdict::Eligible);
 }
 
 #[test]

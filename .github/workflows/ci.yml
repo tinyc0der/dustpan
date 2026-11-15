@@ -41,6 +41,9 @@ jobs:
         run: cargo test --workspace
       - name: build
         run: cargo build --release
+      # An unidentified process of the runner's user keeps every owned cache, so the log shows them.
+      - name: process table on this runner
+        run: cargo run --release -p dustpan-sys --example process_table
       # M0-3 live lane 10: the release binary judges a real Windows profile.
       - name: explain keeps Windows and Documents, and not a file in Documents
         if: runner.os == 'Windows'

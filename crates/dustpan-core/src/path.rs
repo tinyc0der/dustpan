@@ -96,13 +96,6 @@ impl AbsPath {
         })
     }
 
-    /// The root (`/`, or `C:\`) and every ancestor down to `self`, shortest first.
-    pub(crate) fn lineage(&self) -> Vec<AbsPath> {
-        let mut out: Vec<AbsPath> = self.0.ancestors().map(|p| Self(p.to_path_buf())).collect();
-        out.reverse();
-        out
-    }
-
     /// Wraps a path that is already known to be absolute and normalized: a prefix of an
     /// `AbsPath`, or one joined with names taken from another `AbsPath`.
     pub(crate) fn trusted(path: PathBuf) -> Self {

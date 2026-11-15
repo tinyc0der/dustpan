@@ -59,11 +59,12 @@ impl Tree {
     }
 
     fn ensure_dirs(&mut self, path: &AbsPath) {
-        for dir in path.lineage() {
-            if !self.nodes.contains_key(dir.as_path()) {
+        let mut lineage: Vec<&Path> = path.as_path().ancestors().collect();
+        lineage.reverse();
+        for dir in lineage {
+            if !self.nodes.contains_key(dir) {
                 let node = self.fresh(NodeKind::Dir, VOLUME);
-                self.nodes
-                    .insert(dir.as_path().to_path_buf(), Entry::Node(node));
+                self.nodes.insert(dir.to_path_buf(), Entry::Node(node));
             }
         }
     }

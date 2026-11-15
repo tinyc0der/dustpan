@@ -1,17 +1,81 @@
-//! Who owns a cache, judged by the release path: real processes, the real process table and
-//! `explain`. A running app keeps its group container's caches, and the folder names of a
-//! bundle make no process an owner (SAFE-08).
+//! Who keeps a cache, judged by the release path: real processes, the real process table, the
+//! real open files and `explain`. A process keeps the folder it holds a file open in, whatever
+//! the folder is named. A running app keeps its group container's caches, and the folder names
+//! of a bundle make no process an owner (SAFE-08, SAFE-09).
 #![cfg(target_os = "macos")]
 
 mod support;
 
+use std::io::{BufRead as _, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use support::Fixture;
 
 #[test]
 fn helper_sleeps_when_asked() {
     support::sleep_if_asked();
+}
+
+const HOLD: &str = "DUSTPAN_TEST_HOLD";
+
+/// What this binary runs as a child of the test below: it opens the file, says `held`, closes
+/// the file when its input ends, says `closed`, and stays alive.
+#[test]
+fn helper_holds_a_file_when_asked() {
+    let Some(path) = std::env::var_os(HOLD) else {
+        return;
+    };
+    let held = std::fs::File::open(path).unwrap();
+    println!("held");
+    std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
+    drop(held);
+    println!("closed");
+    std::thread::sleep(std::time::Duration::from_secs(120));
+}
+
+fn wait_for(lines: &mut impl Iterator<Item = std::io::Result<String>>, word: &str) {
+    assert!(
+        lines.any(|line| line.unwrap() == word),
+        "the helper never said {word}"
+    );
+}
+
+#[test]
+fn a_process_keeps_the_folder_it_holds_a_file_open_in() {
+    let fixture = Fixture::new();
+    let vendor = fixture.home_dir("Library/Caches/BraveSoftware");
+    let profile = fixture.home_dir("Library/Caches/BraveSoftware/Brave-Browser");
+    let (db, wal) = (
+        format!("{profile}/state.db"),
+        format!("{profile}/state.db-wal"),
+    );
+    std::fs::write(&db, "x").unwrap();
+    std::fs::write(&wal, "x").unwrap();
+
+    let mut holder = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "helper_holds_a_file_when_asked", "--nocapture"])
+        .env(HOLD, &db)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = BufReader::new(holder.stdout.take().unwrap()).lines();
+    wait_for(&mut said, "held");
+    let kept = format!(
+        "Kept · process {} has {db} open; quit it first",
+        holder.id()
+    );
+    // The folder is named for a vendor: no bundle id, app group or process name leads to it.
+    let while_open = [&vendor, &profile, &db, &wal].map(|path| fixture.explain(path));
+
+    drop(holder.stdin.take());
+    wait_for(&mut said, "closed");
+    let once_closed = [&vendor, &profile, &db, &wal].map(|path| fixture.explain(path));
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+
+    assert_eq!(while_open, [(); 4].map(|()| kept.clone()));
+    assert_eq!(once_closed, [(); 4].map(|()| "Eligible".to_owned()));
 }
 
 /// Writes an `Info.plist` that names `bundle_id` into the folder `contents` of the fixture.

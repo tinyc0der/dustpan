@@ -59,6 +59,7 @@ fn main() -> ExitCode {
         let options = tui::Options {
             ascii: cli.ascii,
             no_color: cli::wants_no_color(&args, std::env::var_os("NO_COLOR")),
+            interrupted_exit: Exit::Interrupted as i32,
         };
         return match tui::run(options) {
             Ok(tui::Finish::Quit) => Exit::Done,

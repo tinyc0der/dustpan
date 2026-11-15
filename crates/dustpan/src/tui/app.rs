@@ -167,6 +167,7 @@ fn too_small(state: &State, frame: &mut Frame) {
 pub struct Options {
     pub ascii: bool,
     pub no_color: bool,
+    pub interrupted_exit: i32,
 }
 
 /// How the session ended, for the caller to turn into an exit code.
@@ -184,32 +185,34 @@ pub fn run(options: Options) -> std::io::Result<Finish> {
     let facts = Facts {
         volume: dustpan_sys::boot_volume(),
     };
-    let terminated = termination_flag();
-
     install_panic_hook();
     let _restore = enter()?;
+    watch_termination_signals(options.interrupted_exit);
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let (width, height) = crossterm::terminal::size()?;
     let mut state = State::new(look, facts, Size { width, height });
 
+    let mut dirty = true;
     loop {
         let (width, height) = crossterm::terminal::size()?;
         if (width, height) != (state.size.width, state.size.height) {
             state = update(state, Input::Resize { width, height });
+            dirty = true;
         }
-        terminal.draw(|frame| view(&state, frame))?;
+        if dirty {
+            terminal.draw(|frame| view(&state, frame))?;
+            dirty = false;
+        }
 
-        while !event::poll(Duration::from_millis(100))? {
-            if terminated.load(std::sync::atomic::Ordering::Relaxed) {
-                return Ok(Finish::Interrupted);
-            }
-        }
-        loop {
-            if let Some(input) = keys::from_event(event::read()?) {
-                state = update(state, input);
-            }
-            if !event::poll(Duration::ZERO)? {
-                break;
+        if event::poll(Duration::from_millis(100))? {
+            dirty = true;
+            loop {
+                if let Some(input) = keys::from_event(event::read()?) {
+                    state = update(state, input);
+                }
+                if !event::poll(Duration::ZERO)? {
+                    break;
+                }
             }
         }
         match state.quit {
@@ -217,24 +220,27 @@ pub fn run(options: Options) -> std::io::Result<Finish> {
             Some(Quit::Now) => return Ok(Finish::Interrupted),
             None => {}
         }
-        if terminated.load(std::sync::atomic::Ordering::Relaxed) {
-            return Ok(Finish::Interrupted);
-        }
     }
 }
 
-/// SIGTERM, SIGHUP and SIGINT set a flag the loop checks, so the guard restores the terminal before exit.
-fn termination_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+/// A closed terminal leaves crossterm's `poll` spinning without returning, so no flag the loop checks would ever be read.
+/// A watcher thread restores the terminal and exits as soon as SIGTERM, SIGHUP or SIGINT arrives.
+fn watch_termination_signals(exit_code: i32) {
     #[cfg(unix)]
-    for signal in [
-        signal_hook::consts::SIGTERM,
-        signal_hook::consts::SIGHUP,
-        signal_hook::consts::SIGINT,
-    ] {
-        let _ = signal_hook::flag::register(signal, flag.clone());
+    {
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+        let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGHUP, SIGINT]) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if signals.forever().next().is_some() {
+                restore();
+                std::process::exit(exit_code);
+            }
+        });
     }
-    flag
+    #[cfg(not(unix))]
+    let _ = exit_code;
 }
 
 /// Puts the terminal back on every way out of `run`, including an unwinding panic.

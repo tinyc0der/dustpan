@@ -28,7 +28,6 @@ impl Size {
     }
 }
 
-/// What the screen shows. The overlay and the size decide it, so no two flags can disagree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Home,
@@ -133,7 +132,7 @@ pub fn view(state: &State, frame: &mut Frame) {
         volume: state.facts.volume.as_ref(),
         admin: false,
     };
-    let body = frame::draw(
+    let body = frame::draw_chrome(
         frame,
         &state.look,
         &header,
@@ -170,7 +169,6 @@ pub struct Options {
     pub interrupted_exit: i32,
 }
 
-/// How the session ended, for the caller to turn into an exit code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Finish {
     Quit,
@@ -224,7 +222,6 @@ pub fn run(options: Options) -> std::io::Result<Finish> {
 }
 
 /// A closed terminal leaves crossterm's `poll` spinning without returning, so no flag the loop checks would ever be read.
-/// A watcher thread restores the terminal and exits as soon as SIGTERM, SIGHUP or SIGINT arrives.
 fn watch_termination_signals(exit_code: i32) {
     #[cfg(unix)]
     {
@@ -243,7 +240,6 @@ fn watch_termination_signals(exit_code: i32) {
     let _ = exit_code;
 }
 
-/// Puts the terminal back on every way out of `run`, including an unwinding panic.
 struct Restore;
 
 impl Drop for Restore {

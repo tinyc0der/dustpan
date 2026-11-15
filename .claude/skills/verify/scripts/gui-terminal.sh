@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Show a program in its own Terminal.app window and screenshot that window. The window shows what the program drew on start;
 # keys need focus (agent-desktop --headed press), because macOS refuses TIOCSTI injection from another process.
-# Never touches Warp or Ghostty, and closes only windows it opened.
 # Usage: gui-terminal.sh <command> NAME [args]
 #   open   NAME COLS ROWS -- CMD...   new window titled NAME at COLS x ROWS running CMD, window closes when CMD exits
 #   resize NAME COLS ROWS             resize the window with the xterm 8;rows;cols t sequence

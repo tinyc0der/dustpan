@@ -19,7 +19,6 @@ import time
 
 
 def reap(pid, fd):
-    """Read and discard the pty output while the program exits. A program cannot exit with unread output, so waiting without reading hangs."""
     kill_at = time.time() + 2
     killed = False
     while True:

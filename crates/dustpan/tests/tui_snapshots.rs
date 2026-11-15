@@ -33,7 +33,7 @@ fn draw(state: &State) -> Buffer {
     terminal.backend().buffer().clone()
 }
 
-/// One string per row. A wide glyph owns two cells, so the cell after it adds nothing.
+/// A wide glyph owns two cells, so the cell after it adds nothing.
 fn rows(buffer: &Buffer) -> Vec<String> {
     let width = buffer.area.width as usize;
     (0..buffer.area.height as usize)
@@ -228,8 +228,6 @@ fn box_corner(buffer: &Buffer, symbol: &str) -> (u16, u16) {
     panic!("no {symbol} on screen");
 }
 
-/// The S4 capture showed a right border one cell left of its corners. Walk every box row and check
-/// that the border cell sits in the column of the corners, with the wide broom in the title row.
 fn assert_borders_align(look: Look, width: u16, height: u16) {
     let s = after(state(look, width, height), &[Input::Help]);
     let buffer = draw(&s);

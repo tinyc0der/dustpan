@@ -12,7 +12,6 @@ pub const MIN_HEIGHT: u16 = 16;
 pub const DETAIL_MIN_WIDTH: u16 = 100;
 const DETAIL_WIDTH: u16 = 44;
 
-/// The four bands every screen shares, with a rule above the body and one above the footer.
 #[derive(Clone, Copy, Debug)]
 pub struct Regions {
     pub header: Rect,
@@ -43,7 +42,6 @@ pub fn regions(area: Rect) -> Regions {
     }
 }
 
-/// The list takes the whole width below 100 columns. At 100 or more a detail pane sits to its right.
 #[derive(Clone, Copy, Debug)]
 pub struct Panes {
     pub list: Rect,
@@ -78,8 +76,7 @@ pub struct Header<'a> {
     pub admin: bool,
 }
 
-/// Draws header, rules, toast and footer, and returns the body for the screen to fill.
-pub fn draw(
+pub fn draw_chrome(
     frame: &mut Frame,
     look: &Look,
     header: &Header,
@@ -135,7 +132,6 @@ pub fn header_line<'a>(look: &Look, header: &Header, width: usize) -> Line<'a> {
     ])
 }
 
-/// Longest first, so a narrower terminal drops the volume name before the free space.
 fn right_candidates(glyphs: &Glyphs, volume: &BootVolume) -> Vec<String> {
     let free = format!("{} free ", format_size(volume.free_bytes));
     let name = cut_middle(&volume.name, 24, glyphs.ellipsis);
@@ -155,7 +151,6 @@ pub fn toast_line<'a>(look: &Look, toast: Option<&str>, width: usize) -> Line<'a
     }
 }
 
-/// Hints drop by priority, least important first, until the rest fit in one line.
 pub fn visible_hints<'a>(hints: &'a [Hint], glyphs: &Glyphs, width: usize) -> Vec<&'a Hint> {
     let mut shown: Vec<&Hint> = hints.iter().collect();
     while hints_width(&shown, glyphs) > width {
@@ -195,7 +190,6 @@ pub fn footer_line<'a>(look: &Look, hints: &[Hint], width: usize) -> Line<'a> {
     Line::from(spans)
 }
 
-/// Decimal units, as macOS Finder reports them. One decimal below 10.
 pub fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
@@ -213,7 +207,6 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Keeps the start and end of a long name and replaces the middle, measured in display cells.
 pub fn cut_middle(text: &str, max: usize, ellipsis: &str) -> String {
     if text.width() <= max {
         return text.to_string();
@@ -250,7 +243,6 @@ fn take_cells(chars: impl Iterator<Item = char>, budget: usize) -> String {
     out
 }
 
-/// Greedy word wrap by display cells. A word longer than the width is cut.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();

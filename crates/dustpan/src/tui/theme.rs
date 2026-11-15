@@ -1,14 +1,11 @@
 use ratatui::style::{Color, Modifier, Style};
 
-/// Every non-ASCII character the frame draws, in two sets. Both sets give each glyph the same cell width,
-/// so a screen lays out the same in either one. Spike S4 measured these widths in Terminal.app and iTerm2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Glyphs {
     pub sep: &'static str,
     pub admin: &'static str,
     pub broom: &'static str,
     pub cursor: &'static str,
-    pub dot: &'static str,
     pub ellipsis: &'static str,
     pub up: &'static str,
     pub down: &'static str,
@@ -27,7 +24,6 @@ impl Glyphs {
         admin: "⚙ admin",
         broom: "🧹",
         cursor: "➤",
-        dot: "·",
         ellipsis: "…",
         up: "↑",
         down: "↓",
@@ -45,7 +41,6 @@ impl Glyphs {
         admin: "* admin",
         broom: "~~",
         cursor: ">",
-        dot: "-",
         ellipsis: "~",
         up: "^",
         down: "v",
@@ -72,13 +67,12 @@ impl Glyphs {
     }
 
     #[cfg(test)]
-    fn all(&self) -> [&'static str; 15] {
+    fn all(&self) -> [&'static str; 14] {
         [
             self.sep,
             self.admin,
             self.broom,
             self.cursor,
-            self.dot,
             self.ellipsis,
             self.up,
             self.down,
@@ -93,7 +87,6 @@ impl Glyphs {
     }
 }
 
-/// How the screen is drawn. Chosen once at startup from the flags, `NO_COLOR` and the locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Look {
     pub glyphs: Glyphs,
@@ -133,7 +126,7 @@ impl Look {
     }
 }
 
-/// ASCII is used when asked for, and when the locale does not say UTF-8. Windows consoles take UTF-8 output.
+/// Windows consoles take UTF-8 output.
 pub fn wants_ascii(flag: bool, locale: impl Fn(&str) -> Option<String>) -> bool {
     if flag {
         return true;

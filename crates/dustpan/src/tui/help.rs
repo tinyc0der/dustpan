@@ -9,7 +9,6 @@ use unicode_width::UnicodeWidthStr;
 
 const MAX_WIDTH: u16 = 64;
 
-/// The help for the Home screen: every key in the table, then the jump key of each entry.
 pub fn lines(look: &Look, inner: usize) -> Vec<Line<'static>> {
     let key_width = HOME
         .iter()

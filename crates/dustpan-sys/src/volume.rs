@@ -1,4 +1,3 @@
-/// The volume the user boots from, as the header of every screen shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BootVolume {
     pub name: String,

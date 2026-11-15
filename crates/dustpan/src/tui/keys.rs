@@ -3,7 +3,6 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 
-/// What the user did, with every terminal detail removed. `update` reads nothing else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
     Up,
@@ -19,7 +18,6 @@ pub enum Input {
     Resize { width: u16, height: u16 },
 }
 
-/// A footer hint. A lower priority number survives a narrower terminal longer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hint {
     pub priority: u8,
@@ -33,7 +31,6 @@ impl Hint {
     }
 }
 
-/// One row of the key table. The footer and the help overlay both read it.
 #[derive(Clone, Copy, Debug)]
 pub struct KeyDoc {
     pub keys: &'static str,
@@ -103,7 +100,6 @@ pub fn expand(template: &str, glyphs: &Glyphs) -> String {
         .replace("{right}", glyphs.right)
 }
 
-/// Every terminal event lands here, so a wheel tick or a stray escape sequence can never reach `update` as text.
 pub fn from_event(event: Event) -> Option<Input> {
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => from_key(key),

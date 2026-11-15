@@ -5,7 +5,6 @@ Usage: home-lanes.py OUTDIR [--bin PATH] [--only 1,2,...]
 
 Lanes follow docs/M0-checklist.md "Draw the TUI frame, Home and help overlay (M0-6)". Each lane prints PASS or FAIL
 with the reason and writes OUTDIR/<slug>.txt. The exit status is 1 when any lane fails.
-Lane 11 is the closed-terminal regression: the process must not outlive its terminal. Lanes 1 to 5 and 8 check the screen text tmux reads back. Lanes 6, 7 and 10 check the real shell and pipes.
 """
 import argparse
 import os
@@ -38,7 +37,6 @@ def start(binary, cols, rows, *extra, env=None):
 
 
 def box_borders_align(screen):
-    """Every row between a box's top corners and bottom corners has its border cell in the corners' column."""
     lines = screen.split("\n")
     for top, line in enumerate(lines):
         left_corner, right_corner = ("┌", "┐") if "┌" in line else ("+", "+") if line.count("+") == 2 else (None, None)

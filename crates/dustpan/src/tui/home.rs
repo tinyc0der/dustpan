@@ -7,13 +7,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-/// What Home knows that can change between runs. Each entry's live fact reads it.
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
     pub volume: Option<BootVolume>,
 }
 
-/// One Home entry. The list, the detail pane, the jump keys and the help overlay all read this table.
 pub struct Entry {
     pub label: &'static str,
     pub key: u8,
@@ -28,7 +26,6 @@ impl Entry {
     }
 }
 
-/// M0 caches nothing yet, so no entry has a fact to show.
 fn no_fact(_: &Facts) -> Option<String> {
     None
 }
@@ -99,21 +96,18 @@ pub const ENTRIES: [Entry; 9] = [
     },
 ];
 
-/// The divider sits after this many entries, between the daily tasks and the rest.
 const DIVIDER_AFTER: usize = 5;
 
 pub fn entry_for_key(key: u8) -> Option<usize> {
     ENTRIES.iter().position(|entry| entry.key == key)
 }
 
-/// Screen row of an entry inside the list, counting the divider.
 fn visual_row(entry: usize) -> u16 {
     (entry + usize::from(entry >= DIVIDER_AFTER)) as u16
 }
 
 const LIST_TOP_PADDING: u16 = 1;
 
-/// The entry under a click, if any.
 pub fn entry_at(list: Rect, column: u16, row: u16) -> Option<usize> {
     let inside = column >= list.x
         && column < list.x + list.width

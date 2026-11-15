@@ -7,7 +7,8 @@
 //! each can be explained:
 //! - `scan` (the gated number): `Pass::candidate` with `LiveProbe` and walker nodes, so it counts
 //!   core CPU plus the ancestor `lstat`s a scan really adds
-//! - `explain`: `Pass::evaluate` with `LiveProbe`, one leaf `lstat` each
+//! - `explain`: `Pass::evaluate` with `LiveProbe`, one leaf `lstat` and one stored-spelling
+//!   question each
 //! - `cpu`: `Pass::candidate` with `FakeProbe`, core CPU alone
 //!
 //! Each line also prints how many paths came back eligible, so a run that judged nothing, or
@@ -54,10 +55,11 @@ mod unix {
     const FOLDERS: usize = 20;
     const FILES: usize = 50;
 
-    /// Counts the `lstat`s a shape costs, so a regression is traced to syscalls or to policy.
+    /// Counts the syscalls a shape costs, so a regression is traced to them or to policy.
     struct Counting<'a> {
         inner: &'a dyn Probe,
         nodes: AtomicUsize,
+        spellings: AtomicUsize,
     }
 
     impl Probe for Counting<'_> {
@@ -68,6 +70,11 @@ mod unix {
 
         fn link_target(&self, link: &AbsPath) -> Seen<PathBuf> {
             self.inner.link_target(link)
+        }
+
+        fn spelling(&self, path: &AbsPath) -> Seen<AbsPath> {
+            self.spellings.fetch_add(1, Ordering::Relaxed);
+            self.inner.spelling(path)
         }
 
         fn processes(&self) -> Seen<ProcessTable> {
@@ -150,6 +157,7 @@ mod unix {
             // The scanner owns each path it hands over, so the copies are made before timing.
             let owned: Vec<AbsPath> = paths.to_vec();
             self.probe.nodes.store(0, Ordering::Relaxed);
+            self.probe.spellings.store(0, Ordering::Relaxed);
             let mut eligible = 0;
             let start = Instant::now();
             let mut pass = self.guard.pass(&self.probe);
@@ -174,7 +182,7 @@ mod unix {
             let per_second = paths as f64 / median.as_secs_f64();
             println!(
                 "{:>8}: {:>10.0} paths/s  median {:6.1} ms of {} rounds (min {:.1}, max {:.1})  \
-                 {:.3} lstat per path  {} of {} eligible",
+                 {:.3} lstat and {:.3} spelling calls per path  {} of {} eligible",
                 self.name,
                 per_second,
                 median.as_secs_f64() * 1e3,
@@ -182,6 +190,7 @@ mod unix {
                 self.times[0].as_secs_f64() * 1e3,
                 self.times[self.times.len() - 1].as_secs_f64() * 1e3,
                 self.probe.nodes.load(Ordering::Relaxed) as f64 / paths as f64,
+                self.probe.spellings.load(Ordering::Relaxed) as f64 / paths as f64,
                 self.eligible,
                 paths,
             );
@@ -240,6 +249,7 @@ mod unix {
             probe: Counting {
                 inner: probe,
                 nodes: AtomicUsize::new(0),
+                spellings: AtomicUsize::new(0),
             },
             nodes,
             times: Vec::new(),

@@ -94,9 +94,10 @@ fn bind(path: &AbsPath, probe: &dyn Probe) -> Result<PathIdentity, Rejection> {
 }
 
 impl Guard {
-    /// Runs every layer again on the candidate's path with a fresh pass, re-probes its owners, and
-    /// compares the live parent and target identity with discovery's, both before the live probes
-    /// and after them (SAFE-10, SAFE-11). Never refreshes the identity to approve a replacement.
+    /// Runs every layer again on the candidate's path with a fresh pass, re-probes its owners,
+    /// judges the spelling the file system stores for the path, and compares the live parent and
+    /// target identity with discovery's, both before the live probes and after them (SAFE-03,
+    /// SAFE-10, SAFE-11). Never refreshes the identity to approve a replacement.
     /// Dry run and real run both call this; only the sink call differs (SAFE-18).
     #[expect(
         clippy::result_large_err,

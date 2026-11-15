@@ -17,8 +17,9 @@ pub(super) struct Table {
     /// (`/usr/share/firmlinks`). Each is mapped only after the guard verifies that the root
     /// entry and the data-volume entry are one directory.
     pub data_volume: Option<(&'static str, &'static [&'static str])>,
-    /// Compare names case-insensitively when matching by spelling. File identity catches what
-    /// folding misses (Unicode normalization, 8.3 names, case-sensitive volumes).
+    /// Compare names without ASCII case when matching by spelling. What folding misses (case
+    /// folds outside ASCII, Unicode normalization, 8.3 names) is caught by the anchor's file
+    /// identity and by the stored spelling of the path.
     pub fold_case: bool,
 }
 
@@ -70,7 +71,8 @@ pub(super) enum Effect {
 
 /// Rules that match a name, not a place (layer 4).
 pub(super) struct Names {
-    /// Bundle-id globs, case-sensitive. A match on the last component refuses that path. A match
+    /// Bundle-id globs, folded like every other name when `fold_case` is set. A match on the
+    /// last component refuses that path. A match
     /// on a folder below one of `bundle_parents` refuses the whole folder. A `*x*` glob refuses
     /// every path with a component that contains `x`.
     pub bundle_globs: &'static [&'static [&'static str]],

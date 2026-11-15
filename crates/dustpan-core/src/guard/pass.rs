@@ -29,6 +29,8 @@ pub struct Pass<'a> {
     scratch: Vec<u8>,
     /// False in the pass that judges a leaf link's target, which is already physical.
     follows_leaf_link: bool,
+    /// False while the stored spelling of a path is judged, which has no other spelling.
+    checks_spelling: bool,
 }
 
 /// What the pass learned about one ancestor directory.
@@ -92,6 +94,7 @@ impl<'a> Pass<'a> {
             bundles: HashMap::new(),
             scratch: Vec::new(),
             follows_leaf_link: true,
+            checks_spelling: true,
         }
     }
 
@@ -133,6 +136,10 @@ impl<'a> Pass<'a> {
     }
 
     /// Layers 1 to 4 in order; the first refusal decides. `seen` skips the leaf `lstat`.
+    ///
+    /// A path that every layer passes is then judged under the spelling the file system stores
+    /// for it, which can only refuse (SAFE-03). A scanned entry was named by a directory read,
+    /// so it pays for that question only when its spelling could be an alias.
     pub(super) fn judge(
         &mut self,
         path: &AbsPath,
@@ -141,19 +148,45 @@ impl<'a> Pass<'a> {
     ) -> (Verdict, Option<PathIdentity>) {
         let canonical = self.policy.canonical(path);
         let path = &*canonical;
+        let (verdict, identity) = self.judge_as_spelled(path, seen, owners);
+        let asks = seen.is_none() || self.policy.may_be_alias(path);
+        if verdict == Verdict::Eligible
+            && identity.is_some()
+            && asks
+            && let Some(reason) = self.judge_stored_spelling(path)
+        {
+            return (Verdict::Kept(KeptReason::Shape(reason)), identity);
+        }
+        (verdict, identity)
+    }
+
+    fn judge_as_spelled(
+        &mut self,
+        path: &AbsPath,
+        seen: Option<Node>,
+        owners: &[Owner],
+    ) -> (Verdict, Option<PathIdentity>) {
         let kept = |reason| (Verdict::Kept(reason), None);
 
         let parent = path.as_path().parent().map(|dir| self.enter(dir));
-        let parent_node = match parent.map(|at| &self.frames[at].state) {
+        let (parent_node, parent_missing) = match parent.map(|at| &self.frames[at].state) {
             Some(Dir::Refused(reason)) => return kept(KeptReason::Shape(reason.clone())),
-            Some(Dir::Found(node)) => Some(*node),
-            Some(Dir::Missing) | None => None,
+            Some(Dir::Found(node)) => (Some(*node), false),
+            Some(Dir::Missing) => (None, true),
+            None => (None, false),
         };
-        let leaf = match (seen, parent.map(|at| &self.frames[at].state)) {
-            (_, Some(Dir::Missing)) => Seen::Missing,
-            (Some(node), _) => Seen::Found(node),
-            (None, _) => self.probe.node(path),
+        let leaf = match seen {
+            Some(node) => Seen::Found(node),
+            None => self.probe.node(path),
         };
+        // volfs (`/.vol/<device>/<inode>`) names a file through folders `lstat` cannot see.
+        if parent_missing && matches!(leaf, Seen::Found(_)) {
+            let reason = self.judge_stored_spelling(path).unwrap_or_else(|| {
+                let parent = path.parent().unwrap_or_else(|| path.clone());
+                ShapeReason::ParentNotFound { parent }
+            });
+            return kept(KeptReason::Shape(reason));
+        }
         let node = match leaf {
             Seen::Found(node) => Some(node),
             Seen::Missing => None,
@@ -263,6 +296,37 @@ impl<'a> Pass<'a> {
                 at: link.clone(),
                 why,
             }),
+        }
+    }
+
+    /// The refusal the stored spelling of `path` earns, when it has another one. An alias can
+    /// refuse a path and never grant it.
+    fn judge_stored_spelling(&mut self, path: &AbsPath) -> Option<ShapeReason> {
+        if !self.checks_spelling {
+            return None;
+        }
+        let unreadable = |why| ShapeReason::Unreadable {
+            at: path.clone(),
+            why,
+        };
+        let stored = match self.probe.spelling(path) {
+            Seen::Found(stored) => self.policy.canonical(&stored).into_owned(),
+            // `lstat` found it a moment ago, so the two answers disagree.
+            Seen::Missing => return Some(unreadable(probe::Unseen::Failed)),
+            Seen::Unknown(why) => return Some(unreadable(why)),
+        };
+        if stored == *path {
+            return None;
+        }
+        self.checks_spelling = false;
+        let verdict = self.judge_as_spelled(&stored, None, &[]).0;
+        self.checks_spelling = true;
+        match verdict {
+            Verdict::Kept(reason) => Some(ShapeReason::AliasOfKept {
+                stored,
+                layer: reason.layer(),
+            }),
+            Verdict::Eligible => None,
         }
     }
 

@@ -5,10 +5,10 @@
 //! - [`Guard::recheck`] judges one candidate again at the sink with a fresh pass, compares its
 //!   identity before and after the live probes, and is the only code that builds an [`Approved`].
 //!
-//! Layers: 1 shape (spelling, linked ancestors, leaf links, mount points), 2 critical roots,
-//! 3 live state, 4 protection policy, 5 whitelist (M0-4). The first layer that refuses decides,
-//! and its reason is data ([`KeptReason`]), never a string a caller parses. Identity refusals
-//! come only from `recheck`.
+//! Layers: 1 shape (spelling, aliases, linked ancestors, leaf links, mount points), 2 critical
+//! roots, 3 live state, 4 protection policy, 5 whitelist (M0-4). The first layer that refuses
+//! decides, and its reason is data ([`KeptReason`]), never a string a caller parses. Identity
+//! refusals come only from `recheck`.
 mod approved;
 mod pass;
 mod verdict;

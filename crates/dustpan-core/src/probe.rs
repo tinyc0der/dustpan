@@ -1,6 +1,6 @@
 //! The read-only window core has onto the live system.
 //!
-//! `Probe` has four primitive questions and no policy. Core decides what to ask and what the
+//! `Probe` has five primitive questions and no policy. Core decides what to ask and what the
 //! answers mean, so every rule that depends on them runs against `fake::FakeProbe` in a unit
 //! test. An implementation keeps nothing between calls: each answer is a fresh observation.
 //! Sharing answers is the job of a `guard::Pass`, which is visible, bounded and never reaches
@@ -21,6 +21,12 @@ pub trait Probe: Sync {
     /// One `readlink` of a path that [`Probe::node`] reported as `NodeKind::Link`.
     /// The target is raw: relative targets are resolved by core.
     fn link_target(&self, link: &AbsPath) -> Seen<PathBuf>;
+
+    /// The spelling the file system stores for an existing path, last component not followed.
+    /// A case, case-fold, normalization or volfs alias answers with the stored name of every
+    /// component, so the guard can judge the name the file really has (SAFE-03). On a
+    /// case-sensitive file system the path is its own stored spelling.
+    fn spelling(&self, path: &AbsPath) -> Seen<AbsPath>;
 
     /// One snapshot of the process table. Owner matching happens in core
     /// ([`Owner::state_in`]), so the rule that says who owns a cache is tested without processes.

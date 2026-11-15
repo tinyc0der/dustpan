@@ -229,7 +229,7 @@ impl Policy {
             fold_case: table.fold_case,
             critical: Trie::new(),
             protection: Trie::new(),
-            names: NamePatterns::default(),
+            names: NamePatterns::new(table.fold_case),
             identity: HashMap::new(),
             id_rows: Vec::new(),
             data_volume: None,
@@ -486,6 +486,13 @@ impl Policy {
         Cow::Owned(AbsPath::trusted(out))
     }
 
+    /// Whether a name read from a directory can still be an alias that folding misses. ASCII
+    /// case is the only alias an all-ASCII name has on a case-insensitive volume, and folding
+    /// covers it; a case fold or a normalization form needs a byte outside ASCII.
+    pub(crate) fn may_be_alias(&self, path: &AbsPath) -> bool {
+        self.fold_case && !path.bytes().is_ascii()
+    }
+
     fn trie(&self, which: Which) -> &Trie {
         match which {
             Which::Critical => &self.critical,
@@ -554,15 +561,13 @@ impl Policy {
         id: Option<FileId>,
         scratch: &mut Vec<u8>,
     ) -> Step {
-        let raw = name.as_encoded_bytes();
-        self.fold_into(raw, scratch);
+        self.fold_into(name.as_encoded_bytes(), scratch);
         let mut critical = Position::default();
         let mut protection = Position::default();
         let (_, inherit) = self.look(
             Which::Critical,
             parent,
             scratch,
-            raw,
             id,
             Some(&mut critical.nodes),
             None,
@@ -572,7 +577,6 @@ impl Policy {
             Which::Protection,
             parent,
             scratch,
-            raw,
             id,
             Some(&mut protection.nodes),
             None,
@@ -588,16 +592,11 @@ impl Policy {
 
     /// The contest for the entry `name` under `parent`, in one layer. Returns the winner for the
     /// entry itself and the winner its descendants inherit.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one call site per caller, all positional facts"
-    )]
     fn look<'p>(
         &'p self,
         which: Which,
         parent: &Step,
         folded: &[u8],
-        raw: &[u8],
         id: Option<FileId>,
         mut next: Option<&mut Vec<u32>>,
         mut inside: Option<&mut Vec<&'p Inside>>,
@@ -692,7 +691,7 @@ impl Policy {
             }
             if !bundles_off(position.inherit) {
                 let won = name(Kind::ProtectedBundle, Via::Bundle);
-                match self.names.bundle(raw) {
+                match self.names.bundle(folded) {
                     BundleMatch::No => {}
                     BundleMatch::Name => {
                         enter(&mut at, won);
@@ -720,14 +719,12 @@ impl Policy {
         scratch: &mut Vec<u8>,
     ) -> Ruling<'p> {
         let mut inside = Vec::new();
-        let raw = name.as_encoded_bytes();
-        self.fold_into(raw, scratch);
-        let (critical, _) = self.look(Which::Critical, parent, scratch, raw, id, None, None);
+        self.fold_into(name.as_encoded_bytes(), scratch);
+        let (critical, _) = self.look(Which::Critical, parent, scratch, id, None, None);
         let (mut protection, _) = self.look(
             Which::Protection,
             parent,
             scratch,
-            raw,
             id,
             None,
             Some(&mut inside),

@@ -1,16 +1,18 @@
 use crate::probe::unseen;
 use dustpan_core::identity::{FileId, Node, NodeKind};
 use dustpan_core::path::AbsPath;
-use dustpan_core::probe::Seen;
+use dustpan_core::probe::{Seen, Unseen};
+use std::ffi::OsString;
 use std::io;
-use std::os::windows::ffi::OsStrExt as _;
+use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_DIRECTORY,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FileAttributeTagInfo, FileIdInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, OPEN_EXISTING,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_NAME_NORMALIZED, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, FileIdInfo,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+    OPEN_EXISTING, VOLUME_NAME_DOS,
 };
 
 /// Set in the reparse tag of a symlink, a junction and every other link-like reparse point
@@ -131,5 +133,68 @@ pub(crate) fn node(path: &AbsPath) -> Seen<Node> {
     match seen {
         Ok(node) => Seen::Found(node),
         Err(e) => unseen(&e),
+    }
+}
+
+/// The path the system builds for the file `path` names, from the names stored on disk
+/// (`GetFinalPathNameByHandleW`). A case alias or an 8.3 short name answers with the long,
+/// stored name of every component. The handle is the one `node` opens, so a link at the last
+/// component is named, not followed.
+pub(crate) fn stored(path: &AbsPath) -> Seen<AbsPath> {
+    let handle = match open(path) {
+        Ok(handle) => handle,
+        Err(e) => return unseen(&e),
+    };
+    let mut wide = vec![0u16; 512];
+    loop {
+        // SAFETY: `wide` is writable for the length passed with it.
+        let len = unsafe {
+            GetFinalPathNameByHandleW(
+                handle.0,
+                wide.as_mut_ptr(),
+                wide.len() as u32,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+            )
+        } as usize;
+        if len == 0 {
+            return unseen(&io::Error::last_os_error());
+        }
+        // A buffer that is too small answers with the size it needs, NUL included.
+        if len < wide.len() {
+            wide.truncate(len);
+            break;
+        }
+        wide.resize(len + 1, 0);
+    }
+    // The answer is in the `\\?\C:\` form. A `\\?\UNC\` answer is a network path, which
+    // `AbsPath` refuses.
+    let prefix: Vec<u16> = r"\\?\".encode_utf16().collect();
+    let spelled = wide.strip_prefix(&prefix[..]).unwrap_or(&wide);
+    match AbsPath::parse(&OsString::from_wide(spelled)) {
+        Ok(stored) => Seen::Found(stored),
+        Err(_) => Seen::Unknown(Unseen::Failed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_case_alias_answers_with_the_stored_name() {
+        let dir = tempfile::Builder::new()
+            .prefix("dustpan-Spelling-")
+            .tempdir()
+            .unwrap();
+        let long = dir.path().canonicalize().unwrap();
+        let text = long.to_str().unwrap().trim_start_matches(r"\\?\");
+        let parse = |s: &str| AbsPath::parse(s.as_ref()).unwrap();
+        let as_stored = stored(&parse(text));
+        let alias = stored(&parse(&text.to_ascii_uppercase()));
+        assert_eq!(alias, as_stored);
+        let Seen::Found(found) = alias else {
+            panic!("{alias:?}");
+        };
+        assert!(found.to_string().contains("dustpan-Spelling-"), "{found}");
     }
 }

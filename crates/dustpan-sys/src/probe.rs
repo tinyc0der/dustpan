@@ -41,6 +41,17 @@ impl Probe for LiveProbe {
         }
     }
 
+    fn spelling(&self, path: &AbsPath) -> Seen<AbsPath> {
+        #[cfg(target_os = "macos")]
+        return crate::macos::spelling::stored(path);
+        #[cfg(windows)]
+        return identity::stored(path);
+        // A name is its own spelling on a case-sensitive file system, and the guard refuses a
+        // linked ancestor before it asks this.
+        #[cfg(not(any(target_os = "macos", windows)))]
+        return Seen::Found(path.clone());
+    }
+
     fn processes(&self) -> Seen<ProcessTable> {
         process::table()
     }

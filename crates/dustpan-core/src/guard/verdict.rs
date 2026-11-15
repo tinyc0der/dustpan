@@ -52,6 +52,17 @@ pub enum ShapeReason {
         target: AbsPath,
         layer: Layer,
     },
+    /// The file system stores this file under another spelling, which another layer refuses
+    /// (SAFE-03, deny only). Case, case-fold, normalization and volfs aliases end here.
+    AliasOfKept {
+        stored: AbsPath,
+        layer: Layer,
+    },
+    /// The path exists although its folder does not, so no ancestor of it was inspected and
+    /// what it names is unknown.
+    ParentNotFound {
+        parent: AbsPath,
+    },
     /// The path is the root of another volume than its parent's: a mount point (SAFE-38).
     /// Decided from the two `FileId`s the pass already holds; no extra syscall.
     MountPoint,
@@ -169,6 +180,8 @@ impl KeptReason {
             Self::Shape(ShapeReason::LinkedAncestor { .. }) => "symlink-ancestor",
             Self::Shape(ShapeReason::Unreadable { .. }) => "unreadable",
             Self::Shape(ShapeReason::LinkToProtected { .. }) => "link-to-protected",
+            Self::Shape(ShapeReason::AliasOfKept { .. }) => "alias-of-kept",
+            Self::Shape(ShapeReason::ParentNotFound { .. }) => "parent-not-found",
             Self::Shape(ShapeReason::MountPoint) => "mount-point",
             Self::Critical(hit) | Self::Protected(hit) => match hit.how {
                 How::Contains { .. } => "contains-protected",
@@ -274,6 +287,15 @@ impl fmt::Display for KeptReason {
             }
             Self::Shape(ShapeReason::LinkToProtected { target, .. }) => {
                 write!(f, "link to a kept path {target}")
+            }
+            Self::Shape(ShapeReason::AliasOfKept { stored, .. }) => {
+                write!(f, "another spelling of a kept path {stored}")
+            }
+            Self::Shape(ShapeReason::ParentNotFound { parent }) => {
+                write!(
+                    f,
+                    "cannot tell what it names: its folder {parent} is not there"
+                )
             }
             Self::Shape(ShapeReason::MountPoint) => {
                 f.write_str("mount point of another volume; eject it instead")

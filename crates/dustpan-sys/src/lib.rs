@@ -11,6 +11,7 @@ mod linux {
 #[cfg(target_os = "macos")]
 mod macos {
     pub(crate) mod process;
+    pub(crate) mod spelling;
 }
 #[cfg(unix)]
 mod unix {

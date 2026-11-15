@@ -144,6 +144,27 @@ fn a_path_that_is_gone_is_reported_as_gone_not_as_kept() {
 }
 
 #[test]
+fn an_alias_the_scan_could_not_tell_apart_is_refused_at_the_sink() {
+    // An all-ASCII name that the file system stores under a kept spelling. A scan trusts its
+    // directory read for such a name; `recheck` asks the file system.
+    let keychain = "/Users/alice/Library/Keychains/login.keychain-db";
+    let alias = "/Users/alice/Library/Caches/com.example.app/alias";
+    let fs = fixture().file(keychain).alias(alias, keychain);
+    let guard = guard(&fs);
+    let candidate = guard
+        .pass(&fs)
+        .candidate(p(alias), seen(&fs, alias), &rule())
+        .unwrap();
+    assert_eq!(candidate.verdict(), &Verdict::Eligible);
+    let rejection = refusal(&guard, &fs, candidate);
+    assert!(
+        matches!(&rejection, Rejection::Kept(reason @ KeptReason::Shape(ShapeReason::AliasOfKept { stored, .. }))
+            if *stored == p(keychain) && reason.code() == "alias-of-kept"),
+        "{rejection:?}"
+    );
+}
+
+#[test]
 fn an_owner_that_started_after_discovery_is_refused() {
     let fs = fixture();
     let guard = guard(&fs);

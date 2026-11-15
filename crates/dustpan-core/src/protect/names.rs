@@ -36,6 +36,11 @@ pub(super) struct Glob(pub Box<[u8]>);
 
 impl Glob {
     pub(super) fn matches(&self, name: &[u8]) -> bool {
+        self.matches_by(name, |b| b)
+    }
+
+    /// Matches `name` after `map` is applied to each of its bytes.
+    fn matches_by(&self, name: &[u8], map: impl Fn(u8) -> u8) -> bool {
         let pattern = &*self.0;
         let (mut p, mut n) = (0, 0);
         let mut retry: Option<(usize, usize)> = None;
@@ -43,7 +48,7 @@ impl Glob {
             if p < pattern.len() && pattern[p] == b'*' {
                 retry = Some((p, n));
                 p += 1;
-            } else if p < pattern.len() && pattern[p] == name[n] {
+            } else if p < pattern.len() && pattern[p] == map(name[n]) {
                 p += 1;
                 n += 1;
             } else if let Some((star, at)) = retry {
@@ -70,6 +75,8 @@ pub(super) struct NamePatterns {
     /// `*a*b` patterns. Mole matches a pattern that starts with `*` against the whole path, and
     /// these can match across a separator, so they keep that meaning.
     whole_path: Vec<Glob>,
+    /// The patterns are folded, and so is every name they are asked about.
+    fold_case: bool,
     keywords: Vec<(Box<[u8]>, Kind)>,
 }
 
@@ -82,20 +89,32 @@ pub(super) enum BundleMatch {
 }
 
 impl NamePatterns {
+    /// A bundle id names one app on a case-insensitive volume however it is spelled, so the
+    /// patterns are folded there. On a case-sensitive one they match as written.
+    pub(super) fn new(fold_case: bool) -> Self {
+        Self {
+            fold_case,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn add_bundle(&mut self, pattern: &'static str) -> Result<(), PolicyError> {
-        let bytes = pattern.as_bytes();
-        let inner = pattern.trim_matches('*');
-        if inner.is_empty() {
+        let folded = fold(pattern.as_bytes(), self.fold_case);
+        let bytes = &folded[..];
+        let trimmed = pattern.trim_matches('*').len();
+        if trimmed == 0 {
             return Err(PolicyError::BadAnchor(pattern));
         }
+        let start = bytes.iter().take_while(|&&b| b == b'*').count();
+        let inner = &bytes[start..start + trimmed];
         let (lead, trail) = (bytes[0] == b'*', bytes[bytes.len() - 1] == b'*');
-        match (inner.contains('*'), lead, trail) {
+        match (inner.contains(&b'*'), lead, trail) {
             (true, true, _) => self.whole_path.push(Glob(bytes.into())),
             (true, false, _) => self.general.push(Glob(bytes.into())),
             (false, false, false) => drop(self.exact.insert(bytes.into())),
-            (false, false, true) => self.prefixes.insert(inner.as_bytes()),
-            (false, true, false) => self.suffixes.push(inner.as_bytes().into()),
-            (false, true, true) => self.contains.insert(inner.as_bytes()),
+            (false, false, true) => self.prefixes.insert(inner),
+            (false, true, false) => self.suffixes.push(inner.into()),
+            (false, true, true) => self.contains.insert(inner),
         }
         Ok(())
     }
@@ -104,6 +123,7 @@ impl NamePatterns {
         self.keywords.push((folded.into(), kind));
     }
 
+    /// `name` is folded when the patterns are.
     pub(super) fn bundle(&self, name: &[u8]) -> BundleMatch {
         if self.contains.any_in(name) {
             BundleMatch::Anywhere
@@ -118,8 +138,16 @@ impl NamePatterns {
         }
     }
 
+    /// `path` is as spelled; it is folded here, one byte at a time.
     pub(super) fn whole_path(&self, path: &[u8]) -> bool {
-        self.whole_path.iter().any(|g| g.matches(path))
+        let fold = |b: u8| {
+            if self.fold_case {
+                b.to_ascii_lowercase()
+            } else {
+                b
+            }
+        };
+        self.whole_path.iter().any(|g| g.matches_by(path, fold))
     }
 
     pub(super) fn keyword(&self, folded: &[u8]) -> Option<Kind> {

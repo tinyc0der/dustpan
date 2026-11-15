@@ -3,13 +3,15 @@
 //! The macOS table runs on every Unix host, because it is selected by value.
 #![cfg(unix)]
 
+use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
 use dustpan_core::guard::{
     Guard, GuardInputs, How, KeptReason, Kind, Layer, LiveReason, PolicyError, ShapeReason, Verdict,
 };
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
-use dustpan_core::probe::{Owner, Unseen};
+use dustpan_core::probe::{Owner, Probe, Seen, Unseen};
+use std::sync::Arc;
 
 const HOME: &str = "/Users/alice";
 
@@ -56,6 +58,17 @@ fn guard(fs: &FakeProbe) -> Guard {
 
 fn judge(fs: &FakeProbe, path: &str) -> Verdict {
     guard(fs).pass(fs).evaluate(p(path)).verdict().clone()
+}
+
+/// A rule with no owners, as a scanner would hold for a plain cache row.
+fn any_rule() -> Arc<Rule> {
+    Arc::new(Rule {
+        id: RuleId("test.any".into()),
+        group: GroupId("test".into()),
+        owners: Box::new([]),
+        sink: Sink::Delete,
+        default_selected: true,
+    })
 }
 
 fn layer(v: &Verdict) -> Option<Layer> {
@@ -267,6 +280,88 @@ fn an_alias_never_grants_what_its_own_spelling_lacks() {
     assert_eq!(
         outcome(&judge(&fs, "/Üsr/local/bin/tool")),
         "critical/critical-system-path"
+    );
+}
+
+#[test]
+fn an_alias_of_a_path_kept_by_name_is_kept_under_its_stored_spelling() {
+    // No row is anchored on these paths, so no file identity was recorded for them.
+    let claude = "/Users/alice/Library/Application Support/Claude";
+    let chat = "/Users/alice/Library/Caches/com.example.chat";
+    let idle = "/Users/alice/Library/Caches/com.example.app";
+    let fs = mac()
+        .dir(claude)
+        .dir(chat)
+        .dir(idle)
+        .alias(
+            "/Users/alice/Library/Application Support/Cl\u{e4}ude",
+            claude,
+        )
+        .alias("/Users/alice/Library/Caches/com.example.ch\u{e4}t", chat)
+        .alias("/Users/alice/Library/Caches/com.example.\u{e4}pp", idle)
+        .running(7, "/Applications/Chat.app/Contents/MacOS/com.example.chat");
+
+    let alias = "/Users/alice/Library/Application Support/Cl\u{e4}ude";
+    let verdict = judge(&fs, alias);
+    assert!(
+        matches!(&verdict, Verdict::Kept(KeptReason::Shape(ShapeReason::AliasOfKept { stored, layer }))
+            if *stored == p(claude) && *layer == Layer::Protection),
+        "{verdict:?}"
+    );
+    assert_eq!(
+        verdict.to_string(),
+        format!("Kept · another spelling of a kept path {claude}")
+    );
+    assert_outcomes(
+        &fs,
+        &[
+            (alias, "shape/alias-of-kept"),
+            (
+                "~/Library/Caches/com.example.ch\u{e4}t",
+                "shape/alias-of-kept",
+            ),
+            ("~/Library/Caches/com.example.\u{e4}pp", "eligible"),
+        ],
+    );
+}
+
+#[test]
+fn a_scanned_name_outside_ascii_is_judged_under_its_stored_spelling() {
+    let claude = "/Users/alice/Library/Application Support/Claude";
+    let alias = "/Users/alice/Library/Application Support/Cl\u{e4}ude";
+    let fs = mac().dir(claude).alias(alias, claude);
+    let guard = guard(&fs);
+    let Seen::Found(seen) = fs.node(&p(alias)) else {
+        panic!("fixture");
+    };
+    let candidate = guard.pass(&fs).candidate(p(alias), seen, &any_rule());
+    assert_eq!(outcome(candidate.unwrap().verdict()), "shape/alias-of-kept");
+}
+
+#[test]
+fn a_path_under_a_folder_that_is_not_there_is_kept() {
+    // volfs: `/.vol/<device>/<inode>` names a file, and `/.vol/<device>` does not exist.
+    let cache = "/Users/alice/Library/Caches/com.example.app";
+    let fs = mac()
+        .file("/Library/Keychains/System.keychain")
+        .dir(cache)
+        .alias("/.vol/1/22", "/Library/Keychains")
+        .alias("/data/1/33", cache);
+    assert_outcomes(
+        &fs,
+        &[
+            ("/.vol/1/22/System.keychain", "shape/alias-of-kept"),
+            ("/.vol/1/22", "shape/alias-of-kept"),
+            ("/.vol/1/99", "critical/critical-system-path"),
+            ("/.nofollow/x", "critical/critical-system-path"),
+            ("/.resolve/1/x", "critical/critical-system-path"),
+            ("/data/1/33", "shape/parent-not-found"),
+            ("/data/1/99", "eligible"),
+        ],
+    );
+    assert_eq!(
+        judge(&fs, "/data/1/33").to_string(),
+        "Kept · cannot tell what it names: its folder /data/1 is not there"
     );
 }
 
@@ -1073,6 +1168,13 @@ fn every_reason_has_a_stable_code_a_layer_and_a_sentence() {
         .unreadable("/Users/alice/locked")
         .mount("/Volumes/USB", 9)
         .symlink("/Users/alice/link", "/System")
+        .dir("/Users/alice/Library/Application Support/Claude")
+        .alias(
+            "/Users/alice/Library/Application Support/Cl\u{e4}ude",
+            "/Users/alice/Library/Application Support/Claude",
+        )
+        .dir("/Users/alice/Library/Caches/com.example.idle")
+        .alias("/data/1/2", "/Users/alice/Library/Caches/com.example.idle")
         .open_file("/Users/alice/x.db");
     let guard = guard(&fs);
     let mut pass = guard.pass(&fs);
@@ -1091,6 +1193,8 @@ fn every_reason_has_a_stable_code_a_layer_and_a_sentence() {
         "/Users/alice/link/x",
         "/Users/alice/link",
         "/Users/alice/locked/x",
+        "/Users/alice/Library/Application Support/Cl\u{e4}ude",
+        "/data/1/2",
         "/Volumes/USB",
         "/Users/alice/Library/Caches/com.google.Chrome",
         "/Users/alice/x.db",
@@ -1125,6 +1229,8 @@ fn every_reason_has_a_stable_code_a_layer_and_a_sentence() {
             "symlink-ancestor",
             "link-to-protected",
             "unreadable",
+            "alias-of-kept",
+            "parent-not-found",
             "mount-point",
             "owner-running",
             "file-open",

@@ -91,6 +91,11 @@ static CRITICAL: &[Row] = &[
     system_tree("/Applications/Finder.app"),
     system_tree("/Applications/Safari.app"),
     system_tree("/Users/Guest"),
+    // Kernel namespaces that reach every file by another route: by device and inode, with
+    // links switched off, and with a resolve flag. None holds anything to clean.
+    system_tree("/.vol"),
+    system_tree("/.nofollow"),
+    system_tree("/.resolve"),
     // Read-only surfaces: age and process lists cannot prove them idle (SAFE-37).
     system_tree("/Library/Updates"),
     system_tree("/macOS Install Data"),

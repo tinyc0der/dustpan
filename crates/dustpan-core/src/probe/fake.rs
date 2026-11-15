@@ -111,6 +111,8 @@ impl Tree {
                 }
                 Some(Entry::Node(node)) if node.kind == NodeKind::Dir || last => {}
                 Some(Entry::Unreadable) => return Err(Lost::Unknown(Unseen::Denied)),
+                // An alias below a folder that is not there, as volfs has: the walk goes on.
+                None if self.aliases.keys().any(|alias| alias.starts_with(&cur)) => {}
                 Some(Entry::Node(_)) | None => return Err(Lost::Missing),
             }
         }
@@ -163,6 +165,8 @@ impl FakeProbe {
     }
 
     /// `alias` names the same object as `existing` (same `FileId`), as `/SYSTEM` does `/System`.
+    /// The folders above `alias` need not exist: `/.vol/1/2` names a file although
+    /// `/.vol/1` is missing.
     pub fn alias(self, alias: &str, existing: &str) -> Self {
         self.tree().aliases.insert(
             abs(alias).as_path().to_path_buf(),
@@ -303,6 +307,19 @@ impl Probe for FakeProbe {
             Ok(key) => match tree.nodes.get(&key) {
                 Some(Entry::Link(_, target)) => Seen::Found(target.clone()),
                 Some(_) => Seen::Unknown(Unseen::Failed),
+                None => Seen::Missing,
+            },
+        }
+    }
+
+    fn spelling(&self, path: &AbsPath) -> Seen<AbsPath> {
+        let tree = self.tree();
+        match tree.locate(path.as_path(), false, 0) {
+            Err(Lost::Missing) => Seen::Missing,
+            Err(Lost::Unknown(why)) => Seen::Unknown(why),
+            Ok(key) => match tree.nodes.get(&key) {
+                Some(Entry::Node(_) | Entry::Link(..)) => Seen::Found(AbsPath::trusted(key)),
+                Some(Entry::Unreadable) => Seen::Unknown(Unseen::Denied),
                 None => Seen::Missing,
             },
         }

@@ -1,5 +1,7 @@
 //! File identity. Two spellings name the same object exactly when their `FileId`s are equal,
-//! which is how the guard defeats case, Unicode-normalization, 8.3 and firmlink aliases.
+//! which is how the guard knows an alias of a protected anchor, however it is spelled. A path
+//! that no anchor names is judged again under the spelling the file system stores for it
+//! (`Probe::spelling`).
 
 /// Device and inode on Unix. Volume serial and the 128-bit `FILE_ID_INFO` id on Windows, because
 /// ReFS (Dev Drive, where build caches live) needs all 128 bits to stay unique.

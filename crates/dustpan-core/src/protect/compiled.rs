@@ -169,32 +169,30 @@ impl Trie {
         }
     }
 
-    /// The nodes from `start` down to the one `comps` names, created as needed.
-    fn insert(&mut self, start: u32, comps: Vec<Comp>) -> Vec<u32> {
-        let mut path = vec![start];
-        let mut at = start as usize;
+    /// The node `comps` names below `start`, created as needed, and the nodes passed on the way
+    /// to it, `start` first.
+    fn insert(&mut self, start: u32, comps: Vec<Comp>) -> (u32, Vec<u32>) {
+        let mut above = Vec::with_capacity(comps.len());
+        let mut at = start;
         for comp in comps {
+            let node = &self.nodes[at as usize];
             let found = match &comp {
-                Comp::Lit(name) => self.nodes[at].exact.get(name).copied(),
-                Comp::Glob(glob) => self.nodes[at]
-                    .globs
-                    .iter()
-                    .find(|(g, _)| g.0 == glob.0)
-                    .map(|e| e.1),
+                Comp::Lit(name) => node.exact.get(name).copied(),
+                Comp::Glob(glob) => node.globs.iter().find(|(g, _)| g.0 == glob.0).map(|e| e.1),
             };
             let next = found.unwrap_or_else(|| {
                 self.nodes.push(TrieNode::default());
                 let new = (self.nodes.len() - 1) as u32;
                 match comp {
-                    Comp::Lit(name) => drop(self.nodes[at].exact.insert(name, new)),
-                    Comp::Glob(glob) => self.nodes[at].globs.push((glob, new)),
+                    Comp::Lit(name) => drop(self.nodes[at as usize].exact.insert(name, new)),
+                    Comp::Glob(glob) => self.nodes[at as usize].globs.push((glob, new)),
                 }
                 new
             });
-            path.push(next);
-            at = next as usize;
+            above.push(at);
+            at = next;
         }
-        path
+        (at, above)
     }
 
     fn each_child<'t>(&'t self, at: u32, name: &[u8], mut visit: impl FnMut(&'t TrieNode, u32)) {
@@ -259,8 +257,8 @@ impl Policy {
                 .iter()
                 .map(|s| Comp::new(s.as_bytes(), table.fold_case))
                 .collect();
-            let path = policy.protection.insert(FLOATING, comps);
-            policy.protection.nodes[path[path.len() - 1] as usize].bundle_parent = true;
+            let (node, _) = policy.protection.insert(FLOATING, comps);
+            policy.protection.nodes[node as usize].bundle_parent = true;
         }
         for pattern in table.names.bundle_globs.iter().flat_map(|list| list.iter()) {
             policy.names.add_bundle(pattern)?;
@@ -346,8 +344,7 @@ impl Policy {
             Which::Critical => &mut self.critical,
             Which::Protection => &mut self.protection,
         };
-        let path = trie.insert(start, comps);
-        let (&at, ancestors) = path.split_last().unwrap_or((&start, &[]));
+        let (at, ancestors) = trie.insert(start, comps);
         trie.nodes[at as usize].rules.push((row.scope, outcome));
         if let Some(kind) = guards_ancestors {
             let Some(anchor) = anchor else {
@@ -355,7 +352,7 @@ impl Policy {
                     "a floating row cannot guard its ancestors",
                 ));
             };
-            for &node in ancestors {
+            for node in ancestors {
                 trie.nodes[node as usize].inside.push(Inside {
                     inner: anchor.clone(),
                     kind,

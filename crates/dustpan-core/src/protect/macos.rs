@@ -52,7 +52,6 @@ static CRITICAL: &[Row] = &[
     // Children stay deletable by this layer; the roots themselves fall to the rows below.
     row(Abs("/usr/local"), Below, Allow),
     row(Abs("/opt/homebrew"), Below, Allow),
-    // Exact roots: refused themselves, children judged by later rows and layers.
     root("/"),
     root("/Applications"),
     root("/Library"),
@@ -74,7 +73,6 @@ static CRITICAL: &[Row] = &[
     root("/tmp"),
     root("/var"),
     root("/var/root"),
-    // Trees: the root and every descendant.
     system_tree("/bin"),
     system_tree("/dev"),
     system_tree("/sbin"),
@@ -96,7 +94,6 @@ static CRITICAL: &[Row] = &[
     // Read-only surfaces: age and process lists cannot prove them idle (SAFE-37).
     system_tree("/Library/Updates"),
     system_tree("/macOS Install Data"),
-    // Every account root, and analyze's structural folders.
     row(Abs("/Users"), Children, Refuse(HomeRoot)),
     row(Abs("/Library"), Children, Refuse(StructuralFolder)),
     only(Home(""), HomeRoot),

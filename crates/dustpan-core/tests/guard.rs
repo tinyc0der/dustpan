@@ -119,7 +119,6 @@ fn critical_roots_are_kept_and_their_children_are_judged_on_their_own() {
             ("/Library/Application Support/Vendor/x", "eligible"),
             ("/Users/Shared/x", "eligible"),
             ("/opt/tool/x", "eligible"),
-            // SAFE-04: the children of these two stay eligible, the roots do not.
             ("/usr/local", "critical/critical-system-path"),
             ("/usr/local/bin/tool", "eligible"),
             ("/opt/homebrew/Cellar/foo", "eligible"),
@@ -661,7 +660,6 @@ fn protection_rows_keep_named_state() {
     assert_outcomes(
         &mac(),
         &[
-            // Clean-only state.
             ("~/.prometheus/data", "protection/user-data"),
             ("~/.prometheus/data/wal/0001", "protection/user-data"),
             ("~/.jupyter/runtime/kernel.json", "protection/user-data"),
@@ -672,7 +670,6 @@ fn protection_rows_keep_named_state() {
             ("~/.bash_history.bak2", "protection/user-data"),
             ("~/.zsh_history.bak", "protection/user-data"),
             ("~/.zsh_history", "eligible"),
-            // Shared home roots: the root only.
             ("~/.cache", "protection/shared-root"),
             ("~/.config", "protection/shared-root"),
             ("~/.local", "protection/shared-root"),
@@ -687,7 +684,6 @@ fn protection_rows_keep_named_state() {
             ),
             ("~/.cache/tool/blob", "eligible"),
             ("~/.CACHE", "protection/shared-root"),
-            // Container runtimes.
             (
                 "~/Library/Containers/com.docker.docker",
                 "protection/app-state",
@@ -706,7 +702,6 @@ fn protection_rows_keep_named_state() {
                 "~/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/x",
                 "protection/app-state",
             ),
-            // Keywords anywhere in the path.
             (
                 "~/Library/Caches/SystemSettings.cache/x",
                 "protection/app-state",
@@ -743,7 +738,6 @@ fn protection_rows_keep_named_state() {
                 "~/Library/Preferences/Audio/com.apple.audio.DeviceSettings.plist",
                 "protection/app-state",
             ),
-            // Named user data.
             (
                 "~/Library/Logs/dustpan/operations.log",
                 "protection/user-data",
@@ -934,7 +928,6 @@ fn bundle_ids_keep_app_data_by_name() {
     assert_outcomes(
         &mac(),
         &[
-            // The name itself: the folder is kept, its contents are judged on their own.
             (
                 "~/Library/Caches/com.apple.Safari",
                 "protection/protected-bundle",
@@ -958,17 +951,14 @@ fn bundle_ids_keep_app_data_by_name() {
                 "protection/protected-bundle",
             ),
             ("~/Library/Caches/com.example.app", "eligible"),
-            // A `*x*` pattern keeps everything below the name too.
             (
                 "~/Library/Application Support/Tailscale-tailscaled/state/x",
                 "protection/protected-bundle",
             ),
-            // A pattern that spans a separator.
             (
                 "~/Library/Application Support/cloudflare/x/warp/y",
                 "protection/protected-bundle",
             ),
-            // A container is kept whole when its id is protected, except its caches.
             (
                 "~/Library/Containers/com.apple.Safari/Data/Documents/x",
                 "protection/protected-bundle",
@@ -1009,7 +999,6 @@ fn bundle_ids_keep_app_data_by_name() {
                 "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/db/x",
                 "protection/protected-bundle",
             ),
-            // A keyword still holds inside a container cache.
             (
                 "~/Library/Containers/com.apple.Safari/Data/Library/Caches/com.apple.finder/x",
                 "protection/app-state",
@@ -1029,11 +1018,8 @@ fn layers_decide_in_order() {
     assert_outcomes(
         &fs,
         &[
-            // Shape before critical: the link is named, not the tree behind it.
             ("~/Library/Caches/link/x", "shape/symlink-ancestor"),
-            // Live before protection: a running owner is named before the bundle rule.
             ("~/Library/Caches/com.google.Chrome", "live/owner-running"),
-            // Critical before live.
             ("/private/var/db/x.db", "critical/critical-system-path"),
         ],
     );

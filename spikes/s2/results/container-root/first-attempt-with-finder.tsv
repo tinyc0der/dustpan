@@ -1,0 +1,4 @@
+rename	false	1.8	?	Operation not permitted (os error 1)
+nsfm	false	37.6	?	“com.dustpan.spike.s2” couldn’t be moved to the trash because you don’t have permission to access it.
+cli	false	44.5	?	2026-11-15 21:40:34.056 trash[48461:104517194] # Error attempting to move ~/Library/Containers/com.dustpan.spike.s2 to the trash folder, Error Domain=NSCocoaErrorDomain Code=513 "“com.dustpan.spike.s2” couldn’t be moved to the trash because you don’t have permission to access it." UserInfo={NSURL=file://~/Library/Containers/com.dustpan.spike.s2, NSUserStringVariant=Trash, NSUnderlyingError=0xc99420960 {Error Domain=NSOSStatusErrorDomain Code=-5000 "afpAccessDenied: Insufficient access privileges for operation"}}
+finder	

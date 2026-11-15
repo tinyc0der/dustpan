@@ -1,0 +1,7 @@
+date	2026-11-15T14:59:44Z
+session	Aqua
+list ~/.Trash	denied
+read ~/.Trash/.DS_Store	denied
+rename into ~/.Trash	allowed
+stat ~/.Trash/<known name>	allowed
+unlink ~/.Trash/<known name>	allowed

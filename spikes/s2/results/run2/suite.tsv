@@ -1,0 +1,222 @@
+rep	method	item	ok	latency_ms	source_gone	landed_name	in_dot_trash	detail
+1	cli	file	true	24.2	true	s2-r1794754320-cli-file-1.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-file-1.txt" to "~/.Trash/s2-r1794754320-cli-file-1.txt"
+1	cli	folder	true	21.0	true	s2-r1794754320-cli-folder-1	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-folder-1" to "~/.Trash/s2-r1794754320-cli-folder-1"
+1	cli	app	true	27.3	true	s2-r1794754320-cli-app-1.app	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-app-1.app" to "~/.Trash/s2-r1794754320-cli-app-1.app"
+1	cli	container	true	22.6	true	s2-r1794754320-cli-container-1.txt	true	# Moved "~/Library/Containers/com.dustpan.spike.s2/s2-r1794754320-cli-container-1.txt" to "~/.Trash/s2-r1794754320-cli-container-1.txt"
+1	cli	collision	true	21.7	true	s2-r1794754320-cli-collision-1.txt 21-52-00-404.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-collision-1.txt" to "~/.Trash/s2-r1794754320-cli-collision-1.txt 21-52-00-404.txt"
+1	nsfm	file	true	16.7	true	s2-r1794754320-nsfm-file-1.txt	true	
+1	nsfm	folder	true	0.7	true	s2-r1794754320-nsfm-folder-1	true	
+1	nsfm	app	true	5.3	true	s2-r1794754320-nsfm-app-1.app	true	
+1	nsfm	container	true	1.5	true	s2-r1794754320-nsfm-container-1.txt	true	
+1	nsfm	collision	true	1.7	true	s2-r1794754320-nsfm-collision-1.txt 21-52-00-437.txt	true	
+1	rename	file	true	0.1	true	s2-r1794754320-rename-file-1.txt	true	
+1	rename	folder	true	0.1	true	s2-r1794754320-rename-folder-1	true	
+1	rename	app	true	0.1	true	s2-r1794754320-rename-app-1.app	true	
+1	rename	container	true	0.1	true	s2-r1794754320-rename-container-1.txt	true	
+1	rename	collision	true	0.1	true	s2-r1794754320-rename-collision-1 2.txt	true	
+1	finder	file	true	247.7	true	s2-r1794754320-finder-file-1.txt	true	
+1	finder	folder	true	207.7	true	s2-r1794754320-finder-folder-1	true	
+1	finder	app	true	234.6	true	s2-r1794754320-finder-app-1.app	true	
+1	finder	container	true	213.3	true	s2-r1794754320-finder-container-1.txt	true	
+1	finder	collision	true	203.9	true	s2-r1794754320-finder-collision-1 21.52.01.txt	true	
+2	cli	file	true	23.1	true	s2-r1794754320-cli-file-2.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-file-2.txt" to "~/.Trash/s2-r1794754320-cli-file-2.txt"
+2	cli	folder	true	20.7	true	s2-r1794754320-cli-folder-2	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-folder-2" to "~/.Trash/s2-r1794754320-cli-folder-2"
+2	cli	app	true	24.9	true	s2-r1794754320-cli-app-2.app	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-app-2.app" to "~/.Trash/s2-r1794754320-cli-app-2.app"
+2	cli	container	true	23.5	true	s2-r1794754320-cli-container-2.txt	true	# Moved "~/Library/Containers/com.dustpan.spike.s2/s2-r1794754320-cli-container-2.txt" to "~/.Trash/s2-r1794754320-cli-container-2.txt"
+2	cli	collision	true	26.7	true	s2-r1794754320-cli-collision-2.txt 21-52-01-897.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-collision-2.txt" to "~/.Trash/s2-r1794754320-cli-collision-2.txt 21-52-01-897.txt"
+2	nsfm	file	true	1.0	true	s2-r1794754320-nsfm-file-2.txt	true	
+2	nsfm	folder	true	0.4	true	s2-r1794754320-nsfm-folder-2	true	
+2	nsfm	app	true	5.7	true	s2-r1794754320-nsfm-app-2.app	true	
+2	nsfm	container	true	1.1	true	s2-r1794754320-nsfm-container-2.txt	true	
+2	nsfm	collision	true	0.6	true	s2-r1794754320-nsfm-collision-2.txt 21-52-01-918.txt	true	
+2	rename	file	true	0.1	true	s2-r1794754320-rename-file-2.txt	true	
+2	rename	folder	true	0.1	true	s2-r1794754320-rename-folder-2	true	
+2	rename	app	true	0.1	true	s2-r1794754320-rename-app-2.app	true	
+2	rename	container	true	0.1	true	s2-r1794754320-rename-container-2.txt	true	
+2	rename	collision	true	0.1	true	s2-r1794754320-rename-collision-2 2.txt	true	
+2	finder	file	true	223.6	true	s2-r1794754320-finder-file-2.txt	true	
+2	finder	folder	true	233.5	true	s2-r1794754320-finder-folder-2	true	
+2	finder	app	true	235.0	true	s2-r1794754320-finder-app-2.app	true	
+2	finder	container	true	200.7	true	s2-r1794754320-finder-container-2.txt	true	
+2	finder	collision	true	197.5	true	s2-r1794754320-finder-collision-2 21.52.03.txt	true	
+3	cli	file	true	24.2	true	s2-r1794754320-cli-file-3.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-file-3.txt" to "~/.Trash/s2-r1794754320-cli-file-3.txt"
+3	cli	folder	true	20.4	true	s2-r1794754320-cli-folder-3	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-folder-3" to "~/.Trash/s2-r1794754320-cli-folder-3"
+3	cli	app	true	24.7	true	s2-r1794754320-cli-app-3.app	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-app-3.app" to "~/.Trash/s2-r1794754320-cli-app-3.app"
+3	cli	container	true	21.5	true	s2-r1794754320-cli-container-3.txt	true	# Moved "~/Library/Containers/com.dustpan.spike.s2/s2-r1794754320-cli-container-3.txt" to "~/.Trash/s2-r1794754320-cli-container-3.txt"
+3	cli	collision	true	21.4	true	s2-r1794754320-cli-collision-3.txt 21-52-03-356.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-collision-3.txt" to "~/.Trash/s2-r1794754320-cli-collision-3.txt 21-52-03-356.txt"
+3	nsfm	file	true	1.0	true	s2-r1794754320-nsfm-file-3.txt	true	
+3	nsfm	folder	true	0.5	true	s2-r1794754320-nsfm-folder-3	true	
+3	nsfm	app	true	5.4	true	s2-r1794754320-nsfm-app-3.app	true	
+3	nsfm	container	true	1.0	true	s2-r1794754320-nsfm-container-3.txt	true	
+3	nsfm	collision	true	0.5	true	s2-r1794754320-nsfm-collision-3.txt 21-52-03-372.txt	true	
+3	rename	file	true	0.1	true	s2-r1794754320-rename-file-3.txt	true	
+3	rename	folder	true	0.1	true	s2-r1794754320-rename-folder-3	true	
+3	rename	app	true	0.1	true	s2-r1794754320-rename-app-3.app	true	
+3	rename	container	true	0.1	true	s2-r1794754320-rename-container-3.txt	true	
+3	rename	collision	true	0.1	true	s2-r1794754320-rename-collision-3 2.txt	true	
+3	finder	file	true	270.1	true	s2-r1794754320-finder-file-3.txt	true	
+3	finder	folder	true	231.6	true	s2-r1794754320-finder-folder-3	true	
+3	finder	app	true	234.1	true	s2-r1794754320-finder-app-3.app	true	
+3	finder	container	true	232.2	true	s2-r1794754320-finder-container-3.txt	true	
+3	finder	collision	true	221.8	true	s2-r1794754320-finder-collision-3 21.52.04.txt	true	
+4	cli	file	true	23.0	true	s2-r1794754320-cli-file-4.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-file-4.txt" to "~/.Trash/s2-r1794754320-cli-file-4.txt"
+4	cli	folder	true	21.5	true	s2-r1794754320-cli-folder-4	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-folder-4" to "~/.Trash/s2-r1794754320-cli-folder-4"
+4	cli	app	true	25.7	true	s2-r1794754320-cli-app-4.app	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-app-4.app" to "~/.Trash/s2-r1794754320-cli-app-4.app"
+4	cli	container	true	21.9	true	s2-r1794754320-cli-container-4.txt	true	# Moved "~/Library/Containers/com.dustpan.spike.s2/s2-r1794754320-cli-container-4.txt" to "~/.Trash/s2-r1794754320-cli-container-4.txt"
+4	cli	collision	true	22.3	true	s2-r1794754320-cli-collision-4.txt 21-52-04-946.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-collision-4.txt" to "~/.Trash/s2-r1794754320-cli-collision-4.txt 21-52-04-946.txt"
+4	nsfm	file	true	1.0	true	s2-r1794754320-nsfm-file-4.txt	true	
+4	nsfm	folder	true	0.5	true	s2-r1794754320-nsfm-folder-4	true	
+4	nsfm	app	true	5.3	true	s2-r1794754320-nsfm-app-4.app	true	
+4	nsfm	container	true	1.1	true	s2-r1794754320-nsfm-container-4.txt	true	
+4	nsfm	collision	true	0.5	true	s2-r1794754320-nsfm-collision-4.txt 21-52-04-963.txt	true	
+4	rename	file	true	0.1	true	s2-r1794754320-rename-file-4.txt	true	
+4	rename	folder	true	0.1	true	s2-r1794754320-rename-folder-4	true	
+4	rename	app	true	0.1	true	s2-r1794754320-rename-app-4.app	true	
+4	rename	container	true	0.1	true	s2-r1794754320-rename-container-4.txt	true	
+4	rename	collision	true	0.1	true	s2-r1794754320-rename-collision-4 2.txt	true	
+4	finder	file	true	228.1	true	s2-r1794754320-finder-file-4.txt	true	
+4	finder	folder	true	220.8	true	s2-r1794754320-finder-folder-4	true	
+4	finder	app	true	268.3	true	s2-r1794754320-finder-app-4.app	true	
+4	finder	container	true	263.3	true	s2-r1794754320-finder-container-4.txt	true	
+4	finder	collision	true	285.9	true	s2-r1794754320-finder-collision-4 21.52.06.txt	true	
+5	cli	file	true	33.6	true	s2-r1794754320-cli-file-5.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-file-5.txt" to "~/.Trash/s2-r1794754320-cli-file-5.txt"
+5	cli	folder	true	31.2	true	s2-r1794754320-cli-folder-5	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-folder-5" to "~/.Trash/s2-r1794754320-cli-folder-5"
+5	cli	app	true	42.6	true	s2-r1794754320-cli-app-5.app	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-app-5.app" to "~/.Trash/s2-r1794754320-cli-app-5.app"
+5	cli	container	true	24.8	true	s2-r1794754320-cli-container-5.txt	true	# Moved "~/Library/Containers/com.dustpan.spike.s2/s2-r1794754320-cli-container-5.txt" to "~/.Trash/s2-r1794754320-cli-container-5.txt"
+5	cli	collision	true	24.0	true	s2-r1794754320-cli-collision-5.txt 21-52-06-658.txt	true	# Moved "$TMPDIR/s2-work.3HWUsJ/s2-r1794754320-cli-collision-5.txt" to "~/.Trash/s2-r1794754320-cli-collision-5.txt 21-52-06-658.txt"
+5	nsfm	file	true	1.1	true	s2-r1794754320-nsfm-file-5.txt	true	
+5	nsfm	folder	true	0.6	true	s2-r1794754320-nsfm-folder-5	true	
+5	nsfm	app	true	5.4	true	s2-r1794754320-nsfm-app-5.app	true	
+5	nsfm	container	true	1.3	true	s2-r1794754320-nsfm-container-5.txt	true	
+5	nsfm	collision	true	0.5	true	s2-r1794754320-nsfm-collision-5.txt 21-52-06-676.txt	true	
+5	rename	file	true	0.1	true	s2-r1794754320-rename-file-5.txt	true	
+5	rename	folder	true	0.1	true	s2-r1794754320-rename-folder-5	true	
+5	rename	app	true	0.1	true	s2-r1794754320-rename-app-5.app	true	
+5	rename	container	true	0.1	true	s2-r1794754320-rename-container-5.txt	true	
+5	rename	collision	true	0.1	true	s2-r1794754320-rename-collision-5 2.txt	true	
+5	finder	file	true	253.7	true	s2-r1794754320-finder-file-5.txt	true	
+5	finder	folder	true	233.6	true	s2-r1794754320-finder-folder-5	true	
+5	finder	app	true	279.5	true	s2-r1794754320-finder-app-5.app	true	
+5	finder	container	true	303.3	true	s2-r1794754320-finder-container-5.txt	true	
+5	finder	collision	true	294.8	true	s2-r1794754320-finder-collision-5 21.52.08.txt	true	
+# finder_listed	120
+# finder_name	s2-r1794754320-cli-app-1.app
+# finder_name	s2-r1794754320-cli-app-2.app
+# finder_name	s2-r1794754320-cli-app-3.app
+# finder_name	s2-r1794754320-cli-app-4.app
+# finder_name	s2-r1794754320-cli-app-5.app
+# finder_name	s2-r1794754320-cli-collision-1.txt
+# finder_name	s2-r1794754320-cli-collision-1.txt 21-52-00-404.txt
+# finder_name	s2-r1794754320-cli-collision-2.txt
+# finder_name	s2-r1794754320-cli-collision-2.txt 21-52-01-897.txt
+# finder_name	s2-r1794754320-cli-collision-3.txt
+# finder_name	s2-r1794754320-cli-collision-3.txt 21-52-03-356.txt
+# finder_name	s2-r1794754320-cli-collision-4.txt
+# finder_name	s2-r1794754320-cli-collision-4.txt 21-52-04-946.txt
+# finder_name	s2-r1794754320-cli-collision-5.txt
+# finder_name	s2-r1794754320-cli-collision-5.txt 21-52-06-658.txt
+# finder_name	s2-r1794754320-cli-container-1.txt
+# finder_name	s2-r1794754320-cli-container-2.txt
+# finder_name	s2-r1794754320-cli-container-3.txt
+# finder_name	s2-r1794754320-cli-container-4.txt
+# finder_name	s2-r1794754320-cli-container-5.txt
+# finder_name	s2-r1794754320-cli-file-1.txt
+# finder_name	s2-r1794754320-cli-file-2.txt
+# finder_name	s2-r1794754320-cli-file-3.txt
+# finder_name	s2-r1794754320-cli-file-4.txt
+# finder_name	s2-r1794754320-cli-file-5.txt
+# finder_name	s2-r1794754320-cli-folder-1
+# finder_name	s2-r1794754320-cli-folder-2
+# finder_name	s2-r1794754320-cli-folder-3
+# finder_name	s2-r1794754320-cli-folder-4
+# finder_name	s2-r1794754320-cli-folder-5
+# finder_name	s2-r1794754320-finder-app-1.app
+# finder_name	s2-r1794754320-finder-app-2.app
+# finder_name	s2-r1794754320-finder-app-3.app
+# finder_name	s2-r1794754320-finder-app-4.app
+# finder_name	s2-r1794754320-finder-app-5.app
+# finder_name	s2-r1794754320-finder-collision-1 21.52.01.txt
+# finder_name	s2-r1794754320-finder-collision-1.txt
+# finder_name	s2-r1794754320-finder-collision-2 21.52.03.txt
+# finder_name	s2-r1794754320-finder-collision-2.txt
+# finder_name	s2-r1794754320-finder-collision-3 21.52.04.txt
+# finder_name	s2-r1794754320-finder-collision-3.txt
+# finder_name	s2-r1794754320-finder-collision-4 21.52.06.txt
+# finder_name	s2-r1794754320-finder-collision-4.txt
+# finder_name	s2-r1794754320-finder-collision-5 21.52.08.txt
+# finder_name	s2-r1794754320-finder-collision-5.txt
+# finder_name	s2-r1794754320-finder-container-1.txt
+# finder_name	s2-r1794754320-finder-container-2.txt
+# finder_name	s2-r1794754320-finder-container-3.txt
+# finder_name	s2-r1794754320-finder-container-4.txt
+# finder_name	s2-r1794754320-finder-container-5.txt
+# finder_name	s2-r1794754320-finder-file-1.txt
+# finder_name	s2-r1794754320-finder-file-2.txt
+# finder_name	s2-r1794754320-finder-file-3.txt
+# finder_name	s2-r1794754320-finder-file-4.txt
+# finder_name	s2-r1794754320-finder-file-5.txt
+# finder_name	s2-r1794754320-finder-folder-1
+# finder_name	s2-r1794754320-finder-folder-2
+# finder_name	s2-r1794754320-finder-folder-3
+# finder_name	s2-r1794754320-finder-folder-4
+# finder_name	s2-r1794754320-finder-folder-5
+# finder_name	s2-r1794754320-nsfm-app-1.app
+# finder_name	s2-r1794754320-nsfm-app-2.app
+# finder_name	s2-r1794754320-nsfm-app-3.app
+# finder_name	s2-r1794754320-nsfm-app-4.app
+# finder_name	s2-r1794754320-nsfm-app-5.app
+# finder_name	s2-r1794754320-nsfm-collision-1.txt
+# finder_name	s2-r1794754320-nsfm-collision-1.txt 21-52-00-437.txt
+# finder_name	s2-r1794754320-nsfm-collision-2.txt
+# finder_name	s2-r1794754320-nsfm-collision-2.txt 21-52-01-918.txt
+# finder_name	s2-r1794754320-nsfm-collision-3.txt
+# finder_name	s2-r1794754320-nsfm-collision-3.txt 21-52-03-372.txt
+# finder_name	s2-r1794754320-nsfm-collision-4.txt
+# finder_name	s2-r1794754320-nsfm-collision-4.txt 21-52-04-963.txt
+# finder_name	s2-r1794754320-nsfm-collision-5.txt
+# finder_name	s2-r1794754320-nsfm-collision-5.txt 21-52-06-676.txt
+# finder_name	s2-r1794754320-nsfm-container-1.txt
+# finder_name	s2-r1794754320-nsfm-container-2.txt
+# finder_name	s2-r1794754320-nsfm-container-3.txt
+# finder_name	s2-r1794754320-nsfm-container-4.txt
+# finder_name	s2-r1794754320-nsfm-container-5.txt
+# finder_name	s2-r1794754320-nsfm-file-1.txt
+# finder_name	s2-r1794754320-nsfm-file-2.txt
+# finder_name	s2-r1794754320-nsfm-file-3.txt
+# finder_name	s2-r1794754320-nsfm-file-4.txt
+# finder_name	s2-r1794754320-nsfm-file-5.txt
+# finder_name	s2-r1794754320-nsfm-folder-1
+# finder_name	s2-r1794754320-nsfm-folder-2
+# finder_name	s2-r1794754320-nsfm-folder-3
+# finder_name	s2-r1794754320-nsfm-folder-4
+# finder_name	s2-r1794754320-nsfm-folder-5
+# finder_name	s2-r1794754320-rename-app-1.app
+# finder_name	s2-r1794754320-rename-app-2.app
+# finder_name	s2-r1794754320-rename-app-3.app
+# finder_name	s2-r1794754320-rename-app-4.app
+# finder_name	s2-r1794754320-rename-app-5.app
+# finder_name	s2-r1794754320-rename-collision-1 2.txt
+# finder_name	s2-r1794754320-rename-collision-1.txt
+# finder_name	s2-r1794754320-rename-collision-2 2.txt
+# finder_name	s2-r1794754320-rename-collision-2.txt
+# finder_name	s2-r1794754320-rename-collision-3 2.txt
+# finder_name	s2-r1794754320-rename-collision-3.txt
+# finder_name	s2-r1794754320-rename-collision-4 2.txt
+# finder_name	s2-r1794754320-rename-collision-4.txt
+# finder_name	s2-r1794754320-rename-collision-5 2.txt
+# finder_name	s2-r1794754320-rename-collision-5.txt
+# finder_name	s2-r1794754320-rename-container-1.txt
+# finder_name	s2-r1794754320-rename-container-2.txt
+# finder_name	s2-r1794754320-rename-container-3.txt
+# finder_name	s2-r1794754320-rename-container-4.txt
+# finder_name	s2-r1794754320-rename-container-5.txt
+# finder_name	s2-r1794754320-rename-file-1.txt
+# finder_name	s2-r1794754320-rename-file-2.txt
+# finder_name	s2-r1794754320-rename-file-3.txt
+# finder_name	s2-r1794754320-rename-file-4.txt
+# finder_name	s2-r1794754320-rename-file-5.txt
+# finder_name	s2-r1794754320-rename-folder-1
+# finder_name	s2-r1794754320-rename-folder-2
+# finder_name	s2-r1794754320-rename-folder-3
+# finder_name	s2-r1794754320-rename-folder-4
+# finder_name	s2-r1794754320-rename-folder-5

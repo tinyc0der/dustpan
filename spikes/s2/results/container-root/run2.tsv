@@ -1,0 +1,9 @@
+date	2026-11-15T15:01:18Z
+xattr	com.apple.containermanager.identifier
+xattr	com.apple.containermanager.schema-version
+xattr	com.apple.containermanager.uuid
+xattr	com.apple.provenance
+rename	false	0.1	?	Operation not permitted (os error 1)
+nsfm	false	14.3	?	“com.dustpan.spike.s2” couldn’t be moved to the trash because you don’t have permission to access it.
+cli	false	20.0	?	2026-11-15 22:01:18.790 trash[7172:104850655] # Error attempting to move ~/Library/Containers/com.dustpan.spike.s2 to the trash folder, Error Domain=NSCocoaErrorDomain Code=513 "“com.dustpan.spike.s2” couldn’t be moved to the trash because you don’t have permission to access it." UserInfo={NSURL=file://~/Library/Containers/com.dustpan.spike.s2, NSUserStringVariant=Trash, NSUnderlyingError=0x94f048960 {Error Domain=NSOSStatusErrorDomain Code=-5000 "afpAccessDenied: Insufficient access privileges for operation"}}
+after	still present

@@ -1,0 +1,121 @@
+cleanup	s2-r1794754320-cli-app-1.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-app-2.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-app-3.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-app-4.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-app-5.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-1.txt 21-52-00-404.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-2.txt 21-52-01-897.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-3.txt 21-52-03-356.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-4.txt 21-52-04-946.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-collision-5.txt 21-52-06-658.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-container-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-container-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-container-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-container-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-container-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-file-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-file-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-file-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-file-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-file-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-folder-1	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-folder-2	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-folder-3	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-folder-4	moved_out=true	removed=true
+cleanup	s2-r1794754320-cli-folder-5	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-app-1.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-app-2.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-app-3.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-app-4.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-app-5.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-1 21.52.01.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-2 21.52.03.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-3 21.52.04.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-4 21.52.06.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-5 21.52.08.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-collision-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-container-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-container-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-container-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-container-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-container-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-file-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-file-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-file-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-file-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-file-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-folder-1	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-folder-2	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-folder-3	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-folder-4	moved_out=true	removed=true
+cleanup	s2-r1794754320-finder-folder-5	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-app-1.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-app-2.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-app-3.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-app-4.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-app-5.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-1.txt 21-52-00-437.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-2.txt 21-52-01-918.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-3.txt 21-52-03-372.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-4.txt 21-52-04-963.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-collision-5.txt 21-52-06-676.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-container-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-container-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-container-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-container-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-container-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-file-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-file-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-file-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-file-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-file-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-folder-1	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-folder-2	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-folder-3	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-folder-4	moved_out=true	removed=true
+cleanup	s2-r1794754320-nsfm-folder-5	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-app-1.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-app-2.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-app-3.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-app-4.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-app-5.app	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-1 2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-2 2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-3 2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-4 2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-5 2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-collision-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-container-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-container-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-container-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-container-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-container-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-file-1.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-file-2.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-file-3.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-file-4.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-file-5.txt	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-folder-1	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-folder-2	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-folder-3	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-folder-4	moved_out=true	removed=true
+cleanup	s2-r1794754320-rename-folder-5	moved_out=true	removed=true
+left_in_trash	0

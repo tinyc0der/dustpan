@@ -1,0 +1,27 @@
+method	item	runs	all_ok	all_source_gone	all_in_dot_trash	median_ms	landed_example
+cli	file	5	True	True	True	24.20	s2-r1794754320-cli-file-5.txt
+cli	folder	5	True	True	True	21.00	s2-r1794754320-cli-folder-5
+cli	app	5	True	True	True	25.70	s2-r1794754320-cli-app-5.app
+cli	container	5	True	True	True	22.60	s2-r1794754320-cli-container-5.txt
+cli	collision	5	True	True	True	22.30	s2-r1794754320-cli-collision-5.txt 21-52-06-658.txt
+nsfm	file	5	True	True	True	1.00	s2-r1794754320-nsfm-file-5.txt
+nsfm	folder	5	True	True	True	0.50	s2-r1794754320-nsfm-folder-5
+nsfm	app	5	True	True	True	5.40	s2-r1794754320-nsfm-app-5.app
+nsfm	container	5	True	True	True	1.10	s2-r1794754320-nsfm-container-5.txt
+nsfm	collision	5	True	True	True	0.50	s2-r1794754320-nsfm-collision-5.txt 21-52-06-676.txt
+rename	file	5	True	True	True	0.10	s2-r1794754320-rename-file-5.txt
+rename	folder	5	True	True	True	0.10	s2-r1794754320-rename-folder-5
+rename	app	5	True	True	True	0.10	s2-r1794754320-rename-app-5.app
+rename	container	5	True	True	True	0.10	s2-r1794754320-rename-container-5.txt
+rename	collision	5	True	True	True	0.10	s2-r1794754320-rename-collision-5 2.txt
+finder	file	5	True	True	True	247.70	s2-r1794754320-finder-file-5.txt
+finder	folder	5	True	True	True	231.60	s2-r1794754320-finder-folder-5
+finder	app	5	True	True	True	235.00	s2-r1794754320-finder-app-5.app
+finder	container	5	True	True	True	232.20	s2-r1794754320-finder-container-5.txt
+finder	collision	5	True	True	True	221.80	s2-r1794754320-finder-collision-5 21.52.08.txt
+
+method	median_ms_all_items	median_ms_excluding_rep1
+cli	23.50	23.75
+nsfm	1.00	1.00
+rename	0.10	0.10
+finder	233.60	233.85

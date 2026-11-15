@@ -1,0 +1,2 @@
+rmdir: ~/Library/Containers/com.dustpan.spike.s2: Operation not permitted
+rmdir exit=1

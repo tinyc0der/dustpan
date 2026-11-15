@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["crates/dustpan-core", "crates/dustpan-sys", "crates/dustpan"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/tinyc0der/dustpan"
+
+[workspace.dependencies]
+dustpan-core = { path = "crates/dustpan-core" }
+dustpan-sys = { path = "crates/dustpan-sys" }

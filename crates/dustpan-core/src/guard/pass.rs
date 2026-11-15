@@ -45,6 +45,20 @@ enum Dir {
     Refused(ShapeReason),
 }
 
+fn refusal_for(owner: &Owner, state: OwnerState) -> Option<LiveReason> {
+    match state {
+        OwnerState::Idle => None,
+        OwnerState::Running(pids) => Some(LiveReason::OwnerRunning {
+            owner: owner.clone(),
+            pids,
+        }),
+        OwnerState::Unknown(why) => Some(LiveReason::OwnerUnknown {
+            owner: owner.clone(),
+            why,
+        }),
+    }
+}
+
 /// One path's verdict, and the identity discovery saw (`None` when the path does not exist or
 /// could not be read).
 #[derive(Debug)]
@@ -181,11 +195,15 @@ impl<'a> Pass<'a> {
         let live = self.policy.live(path, &mut self.scratch);
         let mut refusal = live.powerlog.then_some(LiveReason::LiveDatabase);
         if refusal.is_none() {
-            let scope = live.scope_owner.map(|id| Owner::BundleId(id.into()));
-            refusal = owners
-                .iter()
-                .chain(scope.iter())
-                .find_map(|owner| self.owner_refusal(owner));
+            refusal = owners.iter().find_map(|owner| match owner {
+                Owner::BundleId(id) => self.bundle_refusal(id),
+                Owner::Process(_) => refusal_for(owner, owner.state_in(self.processes())),
+            });
+        }
+        if refusal.is_none()
+            && let Some(id) = live.scope_owner
+        {
+            refusal = self.bundle_refusal(id);
         }
         if refusal.is_none() && live.family_unreadable {
             refusal = Some(LiveReason::InUseUnknown(probe::Unseen::Failed));
@@ -248,29 +266,22 @@ impl<'a> Pass<'a> {
         }
     }
 
-    fn owner_refusal(&mut self, owner: &Owner) -> Option<LiveReason> {
-        let state = match owner {
-            Owner::BundleId(id) => match self.bundles.get(&**id) {
-                Some(state) => state.clone(),
-                None => {
-                    let state = owner.state_in(self.processes());
-                    self.bundles.insert(id.clone(), state.clone());
-                    state
-                }
-            },
-            Owner::Process(_) => owner.state_in(self.processes()),
-        };
-        match state {
-            OwnerState::Idle => None,
-            OwnerState::Running(pids) => Some(LiveReason::OwnerRunning {
-                owner: owner.clone(),
-                pids,
-            }),
-            OwnerState::Unknown(why) => Some(LiveReason::OwnerUnknown {
-                owner: owner.clone(),
-                why,
-            }),
+    /// Whether the app with this bundle id keeps the path. Asked once per id in a pass: every
+    /// path in one cache folder shares the answer, and the table behind it does not change.
+    fn bundle_refusal(&mut self, id: &str) -> Option<LiveReason> {
+        if matches!(self.bundles.get(id), Some(OwnerState::Idle)) {
+            return None;
         }
+        let owner = Owner::BundleId(id.into());
+        let state = match self.bundles.get(id) {
+            Some(state) => state.clone(),
+            None => {
+                let state = owner.state_in(self.processes());
+                self.bundles.insert(id.into(), state.clone());
+                state
+            }
+        };
+        refusal_for(&owner, state)
     }
 
     /// Leaves `self.frames` ending at `dir`, reusing every frame that is an ancestor of it.

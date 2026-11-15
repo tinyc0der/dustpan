@@ -46,3 +46,20 @@ pub(crate) fn table() -> Seen<ProcessTable> {
     complete &= saw_init;
     Seen::Found(ProcessTable { complete, procs })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_table_is_complete_and_holds_this_process() {
+        let Seen::Found(table) = table() else {
+            panic!("/proc is not readable");
+        };
+        assert!(table.complete);
+        let me = Pid(std::process::id());
+        let this = table.procs.iter().find(|p| p.pid == me);
+        let exe = std::env::args_os().next();
+        assert_eq!(this.map(|p| p.exe.clone()), exe);
+    }
+}

@@ -65,7 +65,7 @@ pub(super) struct NamePatterns {
     exact: HashSet<Box<[u8]>>,
     prefixes: PrefixSet,
     suffixes: Vec<Box<[u8]>>,
-    contains: Vec<Box<[u8]>>,
+    contains: Substrings,
     general: Vec<Glob>,
     /// `*a*b` patterns. Mole matches a pattern that starts with `*` against the whole path, and
     /// these can match across a separator, so they keep that meaning.
@@ -95,7 +95,7 @@ impl NamePatterns {
             (false, false, false) => drop(self.exact.insert(bytes.into())),
             (false, false, true) => self.prefixes.insert(inner.as_bytes()),
             (false, true, false) => self.suffixes.push(inner.as_bytes().into()),
-            (false, true, true) => self.contains.push(inner.as_bytes().into()),
+            (false, true, true) => self.contains.insert(inner.as_bytes()),
         }
         Ok(())
     }
@@ -105,7 +105,7 @@ impl NamePatterns {
     }
 
     pub(super) fn bundle(&self, name: &[u8]) -> BundleMatch {
-        if self.contains.iter().any(|c| contains(name, c)) {
+        if self.contains.any_in(name) {
             BundleMatch::Anywhere
         } else if self.exact.contains(name)
             || self.prefixes.matches(name)
@@ -127,6 +127,34 @@ impl NamePatterns {
             .iter()
             .find(|(k, _)| contains(folded, k))
             .map(|&(_, kind)| kind)
+    }
+}
+
+/// The fixed parts of `*x*` patterns, grouped by first byte. A name is scanned once, and a
+/// position is compared only with the few patterns that start with the byte found there.
+struct Substrings {
+    by_first: [Vec<Box<[u8]>>; 256],
+}
+
+impl Default for Substrings {
+    fn default() -> Self {
+        Self {
+            by_first: std::array::from_fn(|_| Vec::new()),
+        }
+    }
+}
+
+impl Substrings {
+    fn insert(&mut self, needle: &[u8]) {
+        self.by_first[usize::from(needle[0])].push(needle.into());
+    }
+
+    fn any_in(&self, hay: &[u8]) -> bool {
+        (0..hay.len()).any(|at| {
+            self.by_first[usize::from(hay[at])]
+                .iter()
+                .any(|needle| hay[at..].starts_with(needle))
+        })
     }
 }
 

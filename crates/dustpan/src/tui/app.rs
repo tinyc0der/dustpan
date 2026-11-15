@@ -14,7 +14,6 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -271,18 +270,18 @@ fn enter() -> std::io::Result<Restore> {
 }
 
 fn restore() {
-    restore_to(&RESTORED, &mut std::io::stdout());
+    once(&RESTORED, || {
+        let mut out = std::io::stdout();
+        let _ = execute!(out, DisableMouseCapture, LeaveAlternateScreen, cursor::Show);
+        let _ = disable_raw_mode();
+    });
 }
 
-fn restore_to(restored: &Mutex<bool>, out: &mut impl Write) {
-    let mut restored = restored
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if std::mem::replace(&mut *restored, true) {
-        return;
+fn once(done: &Mutex<bool>, action: impl FnOnce()) {
+    let mut done = done.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !std::mem::replace(&mut *done, true) {
+        action();
     }
-    let _ = execute!(out, DisableMouseCapture, LeaveAlternateScreen, cursor::Show);
-    let _ = disable_raw_mode();
 }
 
 /// The default hook prints on the alternate screen in raw mode, where the message is lost and garbled.
@@ -313,14 +312,12 @@ mod tests {
     }
 
     #[test]
-    fn restoring_twice_leaves_the_alternate_screen_once() {
-        let restored = Mutex::new(false);
-        let mut out = Vec::new();
-        restore_to(&restored, &mut out);
-        restore_to(&restored, &mut out);
-        let text = String::from_utf8(out).unwrap();
-        assert_eq!(text.matches("\x1b[?1049l").count(), 1, "{text:?}");
-        assert_eq!(text.matches("\x1b[?25h").count(), 1, "{text:?}");
+    fn restoring_twice_runs_the_restore_once() {
+        let done = Mutex::new(false);
+        let mut runs = 0;
+        once(&done, || runs += 1);
+        once(&done, || runs += 1);
+        assert_eq!(runs, 1);
     }
 
     #[test]

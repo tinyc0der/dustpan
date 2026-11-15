@@ -1,0 +1,5 @@
+terminal	variant	result	pixels
+terminal	unicode	no-window
+terminal	ascii	no-window
+iterm	unicode	no-window
+iterm	ascii	no-window

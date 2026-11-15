@@ -4,7 +4,7 @@ use crate::candidate::{Candidate, Rule};
 use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
 use crate::probe::{self, Handles, Owner, OwnerState, Probe, ProcessTable, Seen};
-use crate::protect::{Policy, ScopeOwner, Step};
+use crate::protect::{Policy, Position, ScopeOwner, Step};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -39,6 +39,7 @@ struct Frame {
     path: AbsPath,
     state: Dir,
     step: Step,
+    listed: Position,
 }
 
 enum Dir {
@@ -276,7 +277,12 @@ impl<'a> Pass<'a> {
                 return (Verdict::Kept(KeptReason::Protected(hit)), identity);
             }
         }
-        if let Some(hit) = self.policy.whitelisted(path, &mut self.scratch) {
+        let listing = &policy.whitelist;
+        let listed = match (parent, path.name()) {
+            (Some(at), Some(name)) => listing.hit(&self.frames[at].listed, name, &mut self.scratch),
+            _ => listing.here(&listing.start(path, &mut self.scratch)),
+        };
+        if let Some(hit) = listed {
             return (Verdict::Kept(KeptReason::Whitelisted(hit)), identity);
         }
         (Verdict::Eligible, identity)
@@ -412,7 +418,17 @@ impl<'a> Pass<'a> {
             }
             _ => self.policy.root_step(&path, id, &mut self.scratch),
         };
-        self.frames.push(Frame { path, state, step });
+        let listing = &self.policy.whitelist;
+        let listed = match (parent, path.name()) {
+            (Some(parent), Some(name)) => listing.step(&parent.listed, name, &mut self.scratch),
+            _ => listing.start(&path, &mut self.scratch),
+        };
+        self.frames.push(Frame {
+            path,
+            state,
+            step,
+            listed,
+        });
     }
 
     /// One process table per pass, taken the first time an owner needs it.

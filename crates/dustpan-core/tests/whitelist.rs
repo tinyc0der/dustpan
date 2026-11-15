@@ -224,6 +224,42 @@ fn defaults_stop_applying_once_a_user_file_exists() {
 }
 
 #[test]
+fn one_pass_judges_paths_that_share_ancestors_like_separate_passes() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Projects/keep/deep/x/y")
+        .dir("/Users/alice/Projects/keep/other")
+        .dir("/Users/alice/Projects/keeper")
+        .dir("/Users/alice/Projects/keep/deep/z");
+    let env = |_: &str| None;
+    let guard = Guard::new(
+        GuardInputs {
+            os: Os::MacOs,
+            home: p(HOME),
+            env: &env,
+            whitelist: text("~/Projects/keep/deep/*\n"),
+        },
+        &fs,
+    )
+    .unwrap();
+    let mut pass = guard.pass(&fs);
+    for (path, want) in [
+        (
+            "/Users/alice/Projects/keep/deep/x/y",
+            "whitelist/whitelisted",
+        ),
+        ("/Users/alice/Projects/keep/deep/z", "whitelist/whitelisted"),
+        (
+            "/Users/alice/Projects/keep/deep",
+            "whitelist/contains-whitelisted",
+        ),
+        ("/Users/alice/Projects/keep/other", "eligible"),
+        ("/Users/alice/Projects/keeper", "eligible"),
+    ] {
+        assert_eq!(outcome(pass.evaluate(p(path)).verdict()), want, "{path}");
+    }
+}
+
+#[test]
 fn the_finder_sentinel_keeps_ds_store_files() {
     let fs = FakeProbe::new().file("/Users/alice/Documents/.DS_Store");
     let v = judge(

@@ -9,7 +9,7 @@ use super::live::{LiveChecks, LiveRules};
 use super::names::{BundleMatch, Comp, Glob, NamePatterns, fold};
 use super::table::{Anchor, Effect, Row, Scope, Table};
 use super::whitelisted::Whitelisted;
-use crate::guard::{GuardInputs, Hit, How, Kind, PolicyError, WhitelistHit};
+use crate::guard::{GuardInputs, Hit, How, Kind, PolicyError};
 use crate::identity::FileId;
 use crate::path::AbsPath;
 use crate::probe::{self, Probe, Seen};
@@ -46,7 +46,7 @@ pub(crate) struct Policy {
     id_rows: Vec<IdRow>,
     data_volume: Option<DataVolume>,
     live: LiveRules,
-    whitelist: Whitelisted,
+    pub(crate) whitelist: Whitelisted,
 }
 
 struct IdRow {
@@ -492,15 +492,6 @@ impl Policy {
     /// Whether a name read from a directory can still be an alias that folding misses. ASCII
     /// case is the only alias an all-ASCII name has on a case-insensitive volume, and folding
     /// covers it; a case fold or a normalization form needs a byte outside ASCII.
-    /// Layer 5: the whitelist entry that keeps `path`, if any.
-    pub(crate) fn whitelisted(
-        &self,
-        path: &AbsPath,
-        scratch: &mut Vec<u8>,
-    ) -> Option<WhitelistHit> {
-        self.whitelist.hit(path, scratch)
-    }
-
     pub(crate) fn may_be_alias(&self, path: &AbsPath) -> bool {
         self.fold_case && !path.bytes().is_ascii()
     }

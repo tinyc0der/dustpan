@@ -2,7 +2,6 @@ use dustpan_core::facts::{InstallMethod, OsFacts};
 use dustpan_core::paths::{self, Os};
 use std::path::PathBuf;
 
-/// Name, version, arch and install method of the running system. Starts no subprocess.
 pub fn os_facts() -> OsFacts {
     let env = |key: &str| std::env::var(key).ok();
     let cargo_bin = paths::cargo_bin_dir(Os::current(), &env);

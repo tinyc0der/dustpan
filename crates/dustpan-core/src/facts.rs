@@ -1,7 +1,6 @@
 use std::fmt;
 use std::path::Path;
 
-/// How this binary got onto the machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallMethod {
     Homebrew,
@@ -43,7 +42,6 @@ impl fmt::Display for InstallMethod {
     }
 }
 
-/// What `--version` prints on its second line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OsFacts {
     pub name: String,

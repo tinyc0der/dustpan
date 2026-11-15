@@ -37,7 +37,6 @@ pub fn home_dir(os: Os, env: Env) -> Option<PathBuf> {
     )
 }
 
-/// Where `--debug` session logs go.
 pub fn log_dir(os: Os, env: Env) -> Option<PathBuf> {
     match os {
         Os::MacOs => Some(home_dir(os, env)?.join("Library/Logs/dustpan")),
@@ -51,7 +50,6 @@ pub fn log_dir(os: Os, env: Env) -> Option<PathBuf> {
     }
 }
 
-/// The folder `cargo install` puts binaries in.
 pub fn cargo_bin_dir(os: Os, env: Env) -> Option<PathBuf> {
     let cargo_home = var(env, "CARGO_HOME").or_else(|| Some(home_dir(os, env)?.join(".cargo")))?;
     Some(cargo_home.join("bin"))

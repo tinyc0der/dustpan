@@ -1,0 +1,3 @@
+./.cache/mole
+./.config/mole
+./Library/Logs/mole

@@ -1,0 +1,8 @@
+
+# ========== clean-dry-run run=20261115220545-12863-4242-29790 session started at 2026-11-15 22:05:45 ==========
+[2026-11-15 22:05:45] [clean-dry-run run=20261115220545-12863-4242-29790] SKIPPED $FIXTURE/home/Library/Caches/Firefox (protected)
+[2026-11-15 22:05:45] [clean-dry-run run=20261115220545-12863-4242-29790] SKIPPED $FIXTURE/home/Library/Logs/mole (protected)
+# ========== clean-dry-run run=20261115220545-12863-4242-29790 session ended at 2026-11-15 22:05:51, 13 items, 1.73GB ==========
+
+# ========== purge-dry-run run=20261115220551-14270-16348-25506 session started at 2026-11-15 22:05:51 ==========
+# ========== purge-dry-run run=20261115220551-14270-16348-25506 session ended at 2026-11-15 22:05:52, 2 items, 3.2MB ==========

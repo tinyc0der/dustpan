@@ -1,0 +1,96 @@
+
+Clean Your Mac
+
+Dry Run Mode, Preview only, no deletions
+
+◎ System caches need sudo, run sudo -v && mo clean --dry-run for full preview
+
+⚙ Apple Silicon | Free space: 110.04GB
+✓ Whitelist: 19 core patterns active
+  ↳ $FIXTURE/home/Library/Caches/ms-playwright*
+  ↳ $FIXTURE/home/.gradle/caches/*
+  ↳ $FIXTURE/home/.gradle/daemon/*
+  ↳ $FIXTURE/home/.ollama/models/*
+  ↳ $FIXTURE/home/Library/Caches/com.nssurge.surge-mac/*
+  ↳ $FIXTURE/home/Library/Application Support/com.nssurge.surge-mac/*
+  ↳ $FIXTURE/home/Library/Caches/org.R-project.R/R/renv/*
+  ↳ $FIXTURE/home/Library/Caches/JetBrains*
+  ↳ $FIXTURE/home/Library/Caches/com.jetbrains.toolbox*
+  ↳ $FIXTURE/home/Library/Caches/tealdeer/tldr-pages
+  ↳ $FIXTURE/home/Library/Application Support/JetBrains*
+  ↳ $FIXTURE/home/Library/Caches/com.apple.finder
+  ↳ $FIXTURE/home/Library/Mobile Documents*
+  ↳ $FIXTURE/home/Library/Caches/com.apple.FontRegistry*
+  ↳ $FIXTURE/home/Library/Caches/com.apple.spotlight*
+  ↳ $FIXTURE/home/Library/Caches/com.apple.Spotlight*
+  ↳ $FIXTURE/home/Library/Caches/CloudKit*
+  ↳ $FIXTURE/home/Library/Caches/pypoetry/virtualenvs*
+
+➤ User essentials
+  → User app cache · 1.0MB dry
+  → User app logs · 3 items, 1.1MB dry
+  → Trash · would empty, 1 items
+
+➤ App caches
+  ✓ Nothing to clean
+
+➤ Browsers
+  → Chrome cache · 1.0MB dry
+  → Chrome code cache · 524KB dry
+  → Chrome GPU cache · 524KB dry
+  → Firefox cache · 1.0MB dry
+  → Chrome old versions · 1 dirs, 735.0MB dry
+  → Edge old versions · 1 dirs, 573.9MB dry
+
+➤ Cloud & Office
+  ✓ Nothing to clean
+
+➤ Developer tools
+  → npm cache · would clean
+  → npm logs · 2KB dry
+  → pnpm cache · would clean
+  → Corepack cache · would clean
+  → bun cache · would clean
+  → pip cache · would clean
+  → uv cache · would clean
+  ⊙ Docker unused data · review with docker system df
+  → Leaked browser profiles · 0B dry
+  → Clang module cache · 413.5MB dry
+  → Homebrew · would cleanup
+
+➤ Apps & utilities
+  ✓ Nothing to clean
+
+➤ Virtualization
+  ✓ Nothing to clean
+
+➤ Application Support
+  ✓ Nothing to clean
+
+➤ App leftovers
+  ✓ Nothing to clean
+
+➤ Apple Silicon updates
+  ✓ Nothing to clean
+
+➤ Device backups & firmware
+  ✓ Nothing to clean
+
+➤ Time Machine
+  ✓ Nothing to clean
+
+➤ Large files
+  ⊙ Docker storage · Images 22.82GB (17.88GB (78%) reclaimable) · Containers 8.112kB (0B (0%) reclaimable) · Local Volumes 25.51GB (12.66GB (49%) reclaimable) · Build Cache 15.07GB (1.09kB reclaimable)
+  ⊙ Android system images · 34.00GB · ~/Library/Android/sdk/system-images
+
+➤ Project artifacts
+  ⊙ Build artifacts · 4 dirs, 4.2MB+ · mo purge
+
+
+======================================================================
+Dry run complete - no changes made
+Potential space: 1.73GB | Items: 13 | Categories: 3
+Detailed file list: $FIXTURE/home/.config/mole/clean-list.txt
+Use mo clean --whitelist to add protection rules
+======================================================================
+

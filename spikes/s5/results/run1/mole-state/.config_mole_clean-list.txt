@@ -1,0 +1,38 @@
+# Mole Cleanup Preview - 2026-11-15 22:05:51
+#
+# How to protect files:
+# 1. Run mo clean --whitelist and press Enter to save your selections
+# 2. Append paths below to ~/.config/mole/whitelist, one per line
+# A saved file replaces optional defaults; built-in safety protections still apply.
+#
+# Example:
+#   /Users/*/Library/Caches/com.example.app
+#
+
+
+=== User essentials ===
+$FIXTURE/home/Library/Caches/Google  # 1.0MB
+$FIXTURE/home/Library/Logs/DiagnosticReports/ExampleApp-2026-10-01.ips  # 66KB
+$FIXTURE/home/Library/Logs/ExampleApp  # 1.0MB
+$FIXTURE/home/Library/Logs/trap-logs  # 1KB
+$FIXTURE/home/.Trash/old-report.pdf  # 131KB
+
+=== Browsers ===
+$FIXTURE/home/Library/Caches/Google/Chrome/Default  # 1.0MB, counted under $FIXTURE/home/Library/Caches/Google
+$FIXTURE/home/Library/Application Support/Google/Chrome/Default/Code Cache/js  # 524KB
+$FIXTURE/home/Library/Application Support/Google/Chrome/Default/GPUCache/data_1  # 524KB
+$FIXTURE/home/Library/Caches/Firefox/Profiles  # 1.0MB
+/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/152.0.7977.65  # 735.0MB
+/Applications/Microsoft Edge.app/Contents/Frameworks/Microsoft Edge Framework.framework/Versions/154.0.4258.37  # 573.9MB
+
+=== Developer tools ===
+$FIXTURE/home/.npm/_logs/2026-11-15T15_05_46_534Z-debug-0.log  # 2KB
+/var/folders/0z/bmq286gx6sn80k37gg5sn0340000gn/T/playwright_chromiumdev_profile-EqdnxX  # 0B
+/var/folders/0z/bmq286gx6sn80k37gg5sn0340000gn/C/clang/ModuleCache  # 413.5MB
+
+# ============================================
+# Summary
+# ============================================
+# Potential cleanup: 1.73GB
+# Items: 13
+# Categories: 3

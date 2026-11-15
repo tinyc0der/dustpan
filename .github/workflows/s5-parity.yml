@@ -1,0 +1,33 @@
+name: s5-parity
+on:
+  push:
+    branches: [spike/s5-parity]
+  workflow_dispatch:
+jobs:
+  parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Mole with Homebrew
+        run: |
+          mkdir -p results-ci
+          sw_vers | tee results-ci/runner.txt
+          brew --version | tee -a results-ci/runner.txt
+          start=$(date +%s)
+          brew install mole 2>&1 | tee results-ci/brew-install.log | tail -40
+          echo "brew install exit=${PIPESTATUS[0]} seconds=$(( $(date +%s) - start ))" | tee -a results-ci/runner.txt
+          mo --version | tee -a results-ci/runner.txt
+      - name: Run S5 twice
+        run: |
+          spikes/s5/run.sh results-ci/run1
+          spikes/s5/run.sh results-ci/run2
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s5-ci-${{ matrix.os }}
+          path: results-ci

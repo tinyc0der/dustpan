@@ -1,0 +1,5 @@
+date	2026-11-15T15:05:53Z
+os	26.6.2 25G83
+mole	Mole version 1.63.0
+mo	/opt/homebrew/Cellar/mole/1.63.0/libexec/mole
+host env names passed to mo	ANDROID_HOME ANDROID_NDK_HOME ANDROID_PLATFORM JAVA_HOME 

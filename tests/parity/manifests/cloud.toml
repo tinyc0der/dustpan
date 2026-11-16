@@ -1,0 +1,39 @@
+[[file]]
+path = "home/Library/CloudStorage/Dropbox/cloudweb/package.json"
+size = 64
+
+[[file]]
+path = "home/Library/CloudStorage/Dropbox/cloudweb/package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Library/CloudStorage/Dropbox/cloudweb/node_modules/left-pad/index.js"
+size = 1048576
+
+[[file]]
+path = "home/Library/CloudStorage/Dropbox/cloudweb/node_modules/.package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Projects/oldweb/package.json"
+size = 64
+
+[[file]]
+path = "home/Projects/oldweb/package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Projects/oldweb/node_modules/left-pad/index.js"
+size = 1048576
+
+[[file]]
+path = "home/Projects/oldweb/node_modules/.package-lock.json"
+size = 64
+
+[[age]]
+path = "home/Library/CloudStorage/Dropbox/cloudweb"
+days = 30
+
+[[age]]
+path = "home/Projects/oldweb"
+days = 30

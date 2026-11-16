@@ -413,7 +413,7 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 **Build.**
 
 - [ ] `fixture_home` builds a home folder with caches, logs, browser profiles, apps, projects, installers, and symlink traps from a TOML manifest.
-- [ ] `mole_runner` runs `mo clean --dry-run`, `mo purge --dry-run --yes` and `mo installer --dry-run` with `HOME` set to the fixture, and parses each candidate list.
+- [ ] `mole_runner` runs `mo clean --dry-run`, `mo purge --dry-run` (no `--yes`: a dry run needs none, and without it Mole refuses to purge with no terminal, a second fail-safe if `--dry-run` were ever lost) and `mo installer --dry-run --debug` (the installer's full paths come from its debug trace on stderr, not its one-page menu) with `HOME` set to the fixture, inside a sandbox that denies writes and denies reading file contents under the real home, and parses each candidate list.
 - [ ] `scripts/parity.sh <command>` prints three lists, paths only Mole found, paths only dustpan found, and paths both found.
 
 **You see.**

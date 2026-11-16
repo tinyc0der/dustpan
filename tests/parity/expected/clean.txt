@@ -1,0 +1,9 @@
+~/.Trash/old-report.pdf
+~/Library/Application Support/Google/Chrome/Default/Code Cache/js
+~/Library/Application Support/Google/Chrome/Default/GPUCache/data_1
+~/Library/Caches/Firefox/Profiles
+~/Library/Caches/Google
+~/Library/Caches/com.example.widget
+~/Library/Logs/DiagnosticReports/ExampleApp-2026-10-01.ips
+~/Library/Logs/ExampleApp
+~/Library/Logs/trap-logs

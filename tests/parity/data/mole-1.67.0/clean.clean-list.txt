@@ -1,0 +1,36 @@
+# Mole Cleanup Preview - 2026-11-16 00:46:55
+#
+# How to protect files:
+# 1. Run mo clean --whitelist and press Enter to save your selections
+# 2. Append paths below to ~/.config/mole/whitelist, one per line
+# A saved file replaces optional defaults; built-in safety protections still apply.
+#
+# Example:
+#   /Users/*/Library/Caches/com.example.app
+#
+
+
+=== User essentials ===
+/FIXTURE/home/Library/Caches/Google  # 1.0MB
+/FIXTURE/home/Library/Caches/com.example.widget  # 3.1MB
+/FIXTURE/home/Library/Logs/DiagnosticReports/ExampleApp-2026-10-01.ips  # 66KB
+/FIXTURE/home/Library/Logs/ExampleApp  # 1.0MB
+/FIXTURE/home/Library/Logs/trap-logs  # 0B
+/FIXTURE/home/.Trash/old-report.pdf  # 131KB
+
+=== Browsers ===
+/FIXTURE/home/Library/Caches/Google/Chrome/Default  # 1.0MB, counted under /FIXTURE/home/Library/Caches/Google
+/FIXTURE/home/Library/Application Support/Google/Chrome/Default/Code Cache/js  # 524KB
+/FIXTURE/home/Library/Application Support/Google/Chrome/Default/GPUCache/data_1  # 524KB
+/FIXTURE/home/Library/Caches/Firefox/Profiles  # 1.0MB
+
+=== Developer tools ===
+/FIXTURE/home/.npm/_logs/2026-11-16T00_46_35_263Z-debug-0.log  # 4KB
+/var/folders/XX/HOSTHASH/C/clang/ModuleCache  # 93.6MB
+
+# ============================================
+# Summary
+# ============================================
+# Potential cleanup: 101.1MB
+# Items: 11
+# Categories: 3

@@ -1,0 +1,31 @@
+[DEBUG] Debug logging enabled. Session log: /FIXTURE/home/Library/Logs/mole/mole_debug_session.log
+[DEBUG] === Collect Installers ===
+[DEBUG] Scanning for redundant installer files
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/This-Is-A-Very-Long-Installer-Name-For-Truncation-1.2.3.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a01.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a02.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a03.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a04.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a05.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a06.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a07.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a08.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a09.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a10.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a11.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a12.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a13.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a14.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a15.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a16.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a17.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a18.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a19.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a20.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a21.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a22.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a23.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a24.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a25.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/sub/Nested.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Library/Caches/Homebrew/downloads/0123abcdef--Firefox-1.0.dmg

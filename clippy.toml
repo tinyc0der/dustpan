@@ -1,0 +1,6 @@
+disallowed-methods = [
+    { path = "std::fs::remove_file", reason = "SAFE-01: every removal goes through the sink module, the only place allowed to call this" },
+    { path = "std::fs::remove_dir", reason = "SAFE-01: every removal goes through the sink module, the only place allowed to call this" },
+    { path = "std::fs::remove_dir_all", reason = "SAFE-01: every removal goes through the sink module, the only place allowed to call this" },
+    { path = "std::fs::rename", reason = "SAFE-01: every move goes through the sink module, the only place allowed to call this" },
+]

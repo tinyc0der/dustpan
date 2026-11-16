@@ -8,6 +8,7 @@ use dustpan_sys::FileStore;
 use std::io;
 use std::path::Path;
 
+#[derive(Clone, Debug)]
 pub struct Loaded {
     pub history: History,
     /// The current log's path, as `dustpan history` names it.

@@ -1,0 +1,28 @@
+---
+source: crates/dustpan/tests/tui_screens.rs
+expression: masked(text)
+---
+ dustpan › Home › History
+────────────────────────────────────────────────────────────────────────────────
+ Nothing has been cleaned yet.
+ Every removal dustpan makes will show up here.
+
+ Log: <fixture>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Scroll  Esc Back  ? Help  q Quit  Ctrl+C Quit now

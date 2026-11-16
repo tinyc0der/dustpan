@@ -1,0 +1,40 @@
+---
+source: crates/dustpan/tests/tui_screens.rs
+expression: "screen(&after(state(unicode(), 120, 36, no_env()), &[Input::Open]))"
+---
+ dustpan › Home › Clean
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Clean
+ Clear caches, logs and leftovers
+
+ What it will do
+  • Finds caches, logs and leftovers you can clear.
+  • Shows a preview. Nothing goes until you confirm.
+  • Skips anything the safety guard protects.
+
+ Arrives in milestone M3.
+
+ Until then: Check a path (0) or History (9)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Esc Back  0 9 Try it now  ? Help  q Quit  Ctrl+C Quit now

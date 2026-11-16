@@ -4,41 +4,41 @@ expression: "screen(&after(state(unicode(), 120, 40), &[Input::Help]))"
 ---
  dustpan › Home                                                                                Macintosh HD  88 GB free
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                                           │
- ➤ 1  Clean       Coming in M3                                             │ Clean
-   2  Uninstall   Coming in M5                                             │
-   3  Analyze     Coming in M1                                             │ Free up disk space
-   4  Optimize    Coming in M4                                             │
-   5  Status      Coming in M2                                             │ Status  Coming in M3
-  ───────────────────────────────────────────────────────────────────────  │ Key     1
-   6  Purge       Coming in M6                                             │
-   7  Installers  Coming in M6                                             │
-   8  Slim        Coming in M7                                             │
-   9  History     Coming in M3                                             │
-                            ┌ 🧹 Help for Home ────────────────────────────────────────────┐
-                            │ ↑ ↓ j k       Move the cursor                                │
+ Welcome. Pick a tool with ↑↓ and Enter, or click one.                           │
+                                                                                 │ Clean
+ ➤ 1  Clean         Clear caches, logs and leftovers                    soon     │
+   2  Uninstall     Remove an app and its leftovers                     soon     │ Clear caches, logs and leftovers
+   3  Analyze       See what is using your disk                         soon     │
+   4  Optimize      Refresh caches and services                         soon     │ Status  Arrives in M3
+   5  Status        Watch CPU, memory, disk, battery                    soon     │ Key     1
+  ────────────────────────────────────────────────────────────────────────       │
+   6  Purge         Remove old projects' build files                    soon     │ Press Enter to see what it will do.
+   7  Installers    Find installer files to delete                      soon     │
+   8  Slim          Trim unused code from apps                          soon     │
+   9  History       Review w┌ 🧹 Help for Home ────────────────────────────────────────────┐
+   0  Check a path  Ask if d│ ↑ ↓ j k       Move the cursor                                │
                             │ Enter → l     Open the entry                                 │
-                            │ 1..9          Jump to an entry                               │
+                            │ 0..9          Jump to an entry                               │
                             │ Tab           Swap list and detail below 100 columns         │
                             │ ,             Settings                                       │
                             │ ?             Show or close this help                        │
                             │ q             Quit                                           │
                             │ Ctrl+C        Quit now                                       │
-                            │ Wheel, click  Move, select a row                             │
+                            │ Wheel, click  Wheel moves, click selects, click again opens  │
                             │ Jump keys                                                    │
                             │ 1 Clean  2 Uninstall  3 Analyze  4 Optimize  5 Status        │
-                            │ 6 Purge  7 Installers  8 Slim  9 History                     │
+                            │ 6 Purge  7 Installers  8 Slim  9 History  0 Check a path     │
                             └ ? or Esc closes ─────────────────────────────────────────────┘
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
-                                                                           │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
+                                                                                 │
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ Move  Enter Open  1-9 Jump  , Settings  ? Help  q Quit  Ctrl+C Quit now
+ ↑↓ Move  Enter Open  0-9 Jump  , Settings  ? Help  q Quit  Ctrl+C Quit now

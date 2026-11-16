@@ -4,21 +4,21 @@ expression: "screen(&state(unicode(), 60, 20))"
 ---
  dustpan › Home                    Macintosh HD  88 GB free
 ────────────────────────────────────────────────────────────
+ Welcome. Pick a tool with ↑↓ and Enter, or click one.
 
- ➤ 1  Clean       Coming in M3
-   2  Uninstall   Coming in M5
-   3  Analyze     Coming in M1
-   4  Optimize    Coming in M4
-   5  Status      Coming in M2
+ ➤ 1  Clean         Clear caches, logs and leftovers    soon
+   2  Uninstall     Remove an app and its leftovers     soon
+   3  Analyze       See what is using your disk         soon
+   4  Optimize      Refresh caches and services         soon
+   5  Status        Watch CPU, memory, disk, battery    soon
   ────────────────────────────────────────────────────────
-   6  Purge       Coming in M6
-   7  Installers  Coming in M6
-   8  Slim        Coming in M7
-   9  History     Coming in M3
-
-
+   6  Purge         Remove old projects' build files    soon
+   7  Installers    Find installer files to delete      soon
+   8  Slim          Trim unused code from apps          soon
+   9  History       Review what past cleanups removed  ready
+   0  Check a path  Ask if dustpan keeps a path        ready
 
 
 
 ────────────────────────────────────────────────────────────
- ↑↓ Move  Enter Open  1-9 Jump  Tab Detail  ? Help  q Quit
+ ↑↓ Move  Enter Open  0-9 Jump  Tab Detail  ? Help  q Quit

@@ -1,0 +1,20 @@
+---
+source: crates/dustpan/tests/tui_screens.rs
+expression: "screen(&after(state(unicode(), 60, 16, no_env()),\n&[Input::Jump(7), Input::Open]))"
+---
+ dustpan › Home › Installers
+────────────────────────────────────────────────────────────
+ Installers
+ Find installer files to delete
+
+ What it will do
+  • Finds installer files, such as .dmg and .pkg.
+  • Moves the ones you pick to the Trash.
+
+ Arrives in milestone M6.
+
+ Until then: Check a path (0) or History (9)
+
+
+────────────────────────────────────────────────────────────
+ Esc Back  0 9 Try it now  ? Help  q Quit  Ctrl+C Quit now

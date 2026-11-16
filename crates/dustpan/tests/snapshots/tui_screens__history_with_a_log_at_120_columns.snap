@@ -1,0 +1,40 @@
+---
+source: crates/dustpan/tests/tui_screens.rs
+expression: "masked(screen(&history(unicode(), 120, 36, env)))"
+---
+ dustpan › Home › History
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Recent sessions
+ Started           Command     Items      Size  Status
+ 2026-11-16 09:45  clean           1    1.5 MB  done
+
+ Deletion audit
+ When              Mode       Result                Size  Path
+ 2026-11-16 09:45  trash      owner-running      unknown  /home/a/Library/Caches/com.example.busy
+ 2026-11-16 09:45  permanent  ok                  1.5 MB  /home/a/Library/Caches/com.example.app/Cache.db
+
+ Log: <fixture>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Scroll  Esc Back  ? Help  q Quit  Ctrl+C Quit now

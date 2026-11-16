@@ -4,17 +4,17 @@ expression: "screen(&after(state(unicode(), 60, 16), &[Input::Help]))"
 ---
  dustpan › Home                    Macintosh HD  88 GB free
 ──┌ 🧹 Help for Home ────────────────────────────────────┐──
-  │ ↑ ↓ j k       Move the cursor                        │
- ➤│ Enter → l     Open the entry                         │
-  │ 1..9          Jump to an entry                       │
-  │ Tab           Swap list and detail below 100 columns │
-  │ ,             Settings                               │
-  │ ?             Show or close this help                │
-  │ q             Quit                                   │
-  │ Ctrl+C        Quit now                               │
-  │ Wheel, click  Move, select a row                     │
-  │ Jump keys                                            │
-  │ 1 Clean  2 Uninstall  3 Analyze  4 Optimize          │
+ W│ ↑ ↓ j k       Move the cursor                        │
+ ➤│ Enter → l     Open the entry                         │on
+  │ 0..9          Jump to an entry                       │on
+  │ Tab           Swap list and detail below 100 columns │on
+  │ ,             Settings                               │on
+  │ ?             Show or close this help                │on
+  │ q             Quit                                   │on
+  │ Ctrl+C        Quit now                               │on
+  │ Wheel, click  Wheel moves, click selects, click again│on
+  │ Jump keys                                            │dy
+  │ 1 Clean  2 Uninstall  3 Analyze  4 Optimize          │dy
   │ 5 Status  6 Purge  7 Installers  8 Slim  9 History   │
 ──└ ? or Esc closes ─────────────────────────────────────┘──
- ↑↓ Move  Enter Open  1-9 Jump  Tab Detail  ? Help  q Quit
+ ↑↓ Move  Enter Open  0-9 Jump  Tab Detail  ? Help  q Quit

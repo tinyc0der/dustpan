@@ -10,7 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
 pub const DETAIL_MIN_WIDTH: u16 = 100;
-const DETAIL_WIDTH: u16 = 44;
+const DETAIL_WIDTH: u16 = 38;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Regions {
@@ -156,6 +156,24 @@ pub fn header_line<'a>(look: &Look, header: &Header, width: usize) -> Line<'a> {
     ])
 }
 
+/// The columns of the breadcrumb at `index` (0 is `Home`), after the leading `dustpan`.
+pub fn crumb_columns(
+    look: &Look,
+    breadcrumb: &[&str],
+    index: usize,
+) -> Option<std::ops::Range<u16>> {
+    let sep = format!(" {} ", look.glyphs.sep).width();
+    let mut start = 1 + "dustpan".width() + sep;
+    for (i, crumb) in breadcrumb.iter().enumerate() {
+        let end = start + crumb.width();
+        if i == index {
+            return Some(start as u16..end as u16);
+        }
+        start = end + sep;
+    }
+    None
+}
+
 fn right_candidates(glyphs: &Glyphs, volume: &BootVolume) -> Vec<String> {
     let free = format!("{} free ", format_size(volume.free_bytes));
     let name = cut_middle(&volume.name, 24, glyphs.ellipsis);
@@ -243,6 +261,14 @@ pub fn cut_middle(text: &str, max: usize, ellipsis: &str) -> String {
         .rev()
         .collect();
     format!("{head}{ellipsis}{tail}")
+}
+
+pub fn pad_end(text: &str, width: usize) -> String {
+    format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
+}
+
+pub fn pad_start(text: &str, width: usize) -> String {
+    format!("{}{text}", " ".repeat(width.saturating_sub(text.width())))
 }
 
 pub fn cut_end(text: &str, max: usize, ellipsis: &str) -> String {

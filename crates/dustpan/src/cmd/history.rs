@@ -5,43 +5,22 @@
 //! not a regular file or is larger than `FileStore::READ_CAP`; 2 for a usage error
 //! (`--limit 0` and `--limit 201` are refused while the arguments are parsed).
 use crate::exit::Exit;
+use dustpan::history_log::{self, Loaded};
 use dustpan_core::history::{DeletionRecord, History, Limit, SessionSummary};
 use dustpan_core::path::escaped;
-use dustpan_core::paths::{self, Os};
 use dustpan_core::size::Size;
-use dustpan_sys::FileStore;
 use std::ffi::OsStr;
 use std::io::{self, Write};
-use std::path::Path;
-
-/// The file's bytes, empty when it does not exist, or the message that names it.
-fn read(dir: &Path, name: &str) -> Result<Vec<u8>, String> {
-    let path = dir.join(name);
-    match FileStore::read(&path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        read => read.map_err(|e| format!("cannot read {}: {e}", escaped(path.as_os_str()))),
-    }
-}
 
 pub fn run(json: bool, limit: Limit, out: &mut dyn Write) -> Exit {
     let env = |key: &str| std::env::var(key).ok();
-    let Some(dir) = paths::log_dir(Os::current(), &env) else {
-        let _ = writeln!(
-            io::stderr(),
-            "dustpan: the home folder is not set or not an absolute path, so there is no log folder to read"
-        );
-        return Exit::Failed;
-    };
-    let logs = read(&dir, FileStore::OLD).and_then(|old| Ok((old, read(&dir, FileStore::FILE)?)));
-    let (old, current) = match logs {
-        Ok(logs) => logs,
+    let Loaded { history, log } = match history_log::load(&env) {
+        Ok(loaded) => loaded,
         Err(message) => {
             let _ = writeln!(io::stderr(), "dustpan: {message}");
             return Exit::Failed;
         }
     };
-    let history = History::read(&old, &current);
-    let log = dir.join(FileStore::FILE).to_string_lossy().into_owned();
     // A closed pipe is not a failure of the command.
     let _ = if json {
         write_json(&history, limit, &log, out)

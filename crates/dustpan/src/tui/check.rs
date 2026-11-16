@@ -13,13 +13,16 @@ use ratatui::widgets::Paragraph;
 use std::ffi::OsStr;
 use unicode_width::UnicodeWidthStr;
 
-pub const PLACEHOLDER: &str = "Type or paste a path, e.g. ~/Library/Caches";
+pub const PLACEHOLDER: &str = "Type a path, e.g. ~/Library/Caches";
 pub const ELIGIBLE: &str = "dustpan may clean this when Clean arrives";
 const MAX_INPUT: usize = 4096;
-const EMPTY_HINT: &str = "Try a folder like ~/Library/Caches, or drag one in from Finder.";
+const EMPTY_HINT: &str = "Drag a file in, or paste a path, to check it at once.";
+const UNMATCHED_QUOTE: &str =
+    "This paste has an unmatched quote. Paste one path at a time, or type it.";
+const AMBIGUOUS: &str = "This looks like several paths, or one path with spaces. Quote it, or paste one path at a time.";
 
-/// The field holds the paths literally. A newline between two of them comes only from a paste
-/// of several paths, because a typed key never makes one.
+/// The field holds one typed path, taken literally. A paste never goes into it: it is checked at
+/// once, as its own submission.
 #[derive(Clone, Debug)]
 pub struct CheckView {
     pub input: String,
@@ -48,7 +51,8 @@ impl CheckView {
         }
     }
 
-    /// Pasted text may hold Terminal's escapes, quotes, or several paths. See [`pasted_paths`].
+    /// A paste is its own submission. It never joins the field, and the typed text stays as it is.
+    /// A paste that cannot be split without guessing checks nothing and says why.
     pub fn paste(&mut self, pasted: &str, env: &Environment) {
         let exists = |path: &str| {
             let full = match (path.strip_prefix('~'), env.get("HOME")) {
@@ -59,11 +63,12 @@ impl CheckView {
             };
             std::fs::symlink_metadata(full).is_ok()
         };
-        for (i, path) in pasted_paths(pasted, exists).iter().enumerate() {
-            if i > 0 && self.input.len() < MAX_INPUT {
-                self.input.push('\n');
+        match pasted_paths(pasted, exists) {
+            Ok(paths) if paths.is_empty() => {}
+            Ok(paths) => {
+                self.check(&paths, env);
             }
-            path.chars().for_each(|c| self.type_char(c));
+            Err(refused) => self.error = Some(refused.to_string()),
         }
     }
 
@@ -75,109 +80,149 @@ impl CheckView {
         self.input.clear();
     }
 
-    /// Enter. One check and one result for each path in the field, from a guard built now so it
-    /// reads the whitelist as it is now.
+    /// Enter. Checks exactly what is in the field, as one path.
     pub fn submit(&mut self, env: &Environment) {
-        let paths: Vec<&str> = self
-            .input
-            .split('\n')
-            .filter(|path| !path.trim().is_empty())
-            .collect();
-        if paths.is_empty() {
+        if self.input.trim().is_empty() {
             self.error = Some("Type or paste a path first.".to_owned());
             return;
         }
+        let typed = std::mem::take(&mut self.input);
+        if !self.check(std::slice::from_ref(&typed), env) {
+            self.input = typed;
+        }
+    }
+
+    /// One check and one result for each path, from a guard built now so it reads the whitelist
+    /// as it is now. The results go on top, in the order given. False when nothing was checked.
+    fn check(&mut self, paths: &[String], env: &Environment) -> bool {
         let checker = match Checker::open(&|name| env.get(name)) {
             Ok(checker) => checker,
             Err(message) => {
                 self.error = Some(message);
-                return;
+                return false;
             }
         };
         let judged: Result<Vec<Checked>, String> = checker
-            .check_each(paths.iter().map(|path| OsStr::new(*path)))
+            .check_each(paths.iter().map(|path| OsStr::new(path.as_str())))
             .collect();
         match judged {
             Ok(checked) => {
                 self.results.splice(0..0, checked);
-                self.input.clear();
                 self.error = None;
                 self.scroll = 0;
+                true
             }
-            Err(message) => self.error = Some(message),
+            Err(message) => {
+                self.error = Some(message);
+                false
+            }
         }
     }
 }
 
-fn unescape(raw: &str) -> Vec<(char, bool)> {
-    let mut chars = Vec::new();
-    let mut rest = raw.chars();
-    while let Some(c) = rest.next() {
-        match (c, cfg!(windows)) {
-            ('\\', false) => match rest.next() {
-                Some(escaped) => chars.push((escaped, true)),
-                None => chars.push((c, false)),
-            },
-            _ => chars.push((c, false)),
+/// Why a paste checked nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    UnmatchedQuote,
+    Ambiguous,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Refused::UnmatchedQuote => UNMATCHED_QUOTE,
+            Refused::Ambiguous => AMBIGUOUS,
+        })
+    }
+}
+
+/// The paths in a paste. Each line stands alone, and a blank line is ignored.
+/// - A line with a quote or a backslash is a shell word list ([`shell_words`]), and each word is
+///   a path. Terminal and iTerm2 drags, GNOME Terminal drags and shell copies all arrive so.
+/// - Any other line with no whitespace is one path.
+/// - Any other line with whitespace is one path when `exists` finds the whole line. Else it is
+///   one path for each word when `exists` finds every word. Else it is refused, never guessed.
+///
+/// One refused line refuses the whole paste, so nothing is checked from a paste that was only
+/// partly understood. A backslash is an escape everywhere but Windows, where it separates
+/// folders.
+pub fn pasted_paths(raw: &str, exists: impl Fn(&str) -> bool) -> Result<Vec<String>, Refused> {
+    paths_in(raw, exists, !cfg!(windows))
+}
+
+fn paths_in(
+    raw: &str,
+    exists: impl Fn(&str) -> bool,
+    backslash_escapes: bool,
+) -> Result<Vec<String>, Refused> {
+    let mut paths = Vec::new();
+    for line in raw.split(['\n', '\r']).filter(|l| !l.trim().is_empty()) {
+        let shell = line.contains(['\'', '"']) || (backslash_escapes && line.contains('\\'));
+        if shell {
+            paths.extend(shell_words(line, backslash_escapes)?);
+            continue;
+        }
+        let line = line.trim();
+        if !line.contains(char::is_whitespace) || exists(line) {
+            paths.push(line.to_owned());
+            continue;
+        }
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if !words.iter().all(|word| exists(word)) {
+            return Err(Refused::Ambiguous);
+        }
+        paths.extend(words.into_iter().map(str::to_owned));
+    }
+    Ok(paths)
+}
+
+/// POSIX shell words. Single quotes are literal. Double quotes let a backslash escape only `\`,
+/// `"`, `$` and a backtick. Outside quotes a backslash escapes the next character, and unquoted
+/// whitespace ends a word. A quote opened and never closed is [`Refused::UnmatchedQuote`].
+fn shell_words(line: &str, backslash_escapes: bool) -> Result<Vec<String>, Refused> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_whitespace() => words.extend(word.take()),
+            '\'' => {
+                let text = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(inner) => text.push(inner),
+                        None => return Err(Refused::UnmatchedQuote),
+                    }
+                }
+            }
+            '"' => {
+                let text = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\\') if backslash_escapes => match chars.next() {
+                            Some(e @ ('\\' | '"' | '$' | '`')) => text.push(e),
+                            Some(other) => {
+                                text.push('\\');
+                                text.push(other);
+                            }
+                            None => return Err(Refused::UnmatchedQuote),
+                        },
+                        Some(inner) => text.push(inner),
+                        None => return Err(Refused::UnmatchedQuote),
+                    }
+                }
+            }
+            '\\' if backslash_escapes => {
+                let text = word.get_or_insert_with(String::new);
+                text.push(chars.next().unwrap_or('\\'));
+            }
+            other => word.get_or_insert_with(String::new).push(other),
         }
     }
-    chars
-}
-
-fn blank(&(c, escaped): &(char, bool)) -> bool {
-    !escaped && c.is_whitespace()
-}
-
-fn text(chars: &[(char, bool)]) -> String {
-    chars.iter().map(|&(c, _)| c).collect()
-}
-
-/// The paths a terminal pasted. Each line is its own path. Terminal.app escapes a dragged
-/// file's name with backslashes (`My\ Folder`), puts a plain space between several dragged
-/// files, and a copied path may sit in quotes or carry a trailing space. A line that is not
-/// itself an existing path, and splits on its unescaped spaces into pieces that all start with
-/// `/` or `~`, is several paths. Any other line is one path, so a plain `/Users/x/My Folder`
-/// stays whole. Paths are never glued together.
-pub fn pasted_paths(raw: &str, exists: impl Fn(&str) -> bool) -> Vec<String> {
-    raw.split(['\n', '\r'])
-        .flat_map(|line| line_paths(line, &exists))
-        .collect()
-}
-
-fn line_paths(line: &str, exists: &impl Fn(&str) -> bool) -> Vec<String> {
-    let trimmed = line.trim();
-    for quote in ['\'', '"'] {
-        if let Some(inner) = trimmed
-            .strip_prefix(quote)
-            .and_then(|rest| rest.strip_suffix(quote))
-        {
-            return vec![inner.to_owned()];
-        }
-    }
-    let chars = unescape(line);
-    let start = chars.iter().position(|c| !blank(c)).unwrap_or(chars.len());
-    let end = chars
-        .iter()
-        .rposition(|c| !blank(c))
-        .map_or(start, |i| i + 1);
-    let chars = &chars[start..end];
-    let whole = text(chars);
-    if whole.is_empty() {
-        return Vec::new();
-    }
-    if exists(&whole) {
-        return vec![whole];
-    }
-    let pieces: Vec<String> = chars
-        .split(blank)
-        .filter(|piece| !piece.is_empty())
-        .map(text)
-        .collect();
-    if pieces.len() > 1 && pieces.iter().all(|p| p.starts_with(['/', '~'])) {
-        pieces
-    } else {
-        vec![whole]
-    }
+    words.extend(word);
+    Ok(words)
 }
 
 fn verdict_rows(checked: &Checked, width: usize) -> Vec<Row> {
@@ -302,11 +347,9 @@ fn field_line<'a>(look: &Look, input: &str, width: usize) -> Line<'a> {
             look.dim(),
         ));
     } else {
-        let divider = format!(" {} ", look.glyphs.bullet);
-        let shown = input.replace('\n', &divider);
         let mut tail: Vec<char> = Vec::new();
         let mut used = 0;
-        for c in shown.chars().rev() {
+        for c in input.chars().rev() {
             let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             if used + cell > room.saturating_sub(1) {
                 break;
@@ -324,73 +367,185 @@ fn field_line<'a>(look: &Look, input: &str, width: usize) -> Line<'a> {
 mod tests {
     use super::*;
 
-    fn never(_: &str) -> bool {
-        false
+    fn parse(raw: &str, existing: &[&str]) -> Result<Vec<String>, Refused> {
+        paths_in(raw, |p| existing.contains(&p), true)
     }
 
-    fn pasted(raw: &str) -> Vec<String> {
-        pasted_paths(raw, never)
+    type Case<'a> = (
+        &'a str,
+        &'a str,
+        &'a [&'a str],
+        Result<Vec<String>, Refused>,
+    );
+
+    fn ok(paths: &[&str]) -> Result<Vec<String>, Refused> {
+        Ok(paths.iter().map(|p| (*p).to_owned()).collect())
     }
 
     #[test]
-    fn a_dragged_in_path_loses_its_backslashes_and_trailing_space() {
-        if cfg!(windows) {
-            return;
+    fn a_paste_is_split_by_the_shell_word_rules_and_never_guessed() {
+        let cases: &[Case] = &[
+            ("one plain path", "/a/b", &[], ok(&["/a/b"])),
+            (
+                "single-quoted pair",
+                "'/a/x' '/a/y' ",
+                &[],
+                ok(&["/a/x", "/a/y"]),
+            ),
+            (
+                "double-quoted pair",
+                "\"/a/x\" \"/a/y\"",
+                &[],
+                ok(&["/a/x", "/a/y"]),
+            ),
+            (
+                "escapes and a quote",
+                r"/a/My\ Folder\ \(1\) '/a/keepme'",
+                &[],
+                ok(&["/a/My Folder (1)", "/a/keepme"]),
+            ),
+            (
+                "a trailing escaped space is kept",
+                r"/a/trail\  ",
+                &[],
+                ok(&["/a/trail "]),
+            ),
+            ("an escaped backslash", r"/a/b\\c", &[], ok(&[r"/a/b\c"])),
+            (
+                "single quotes keep backslashes",
+                r"'/a/b\c'",
+                &[],
+                ok(&[r"/a/b\c"]),
+            ),
+            (
+                "double quotes escape only four",
+                r#""/a/\$x\"y\`z\\w\q""#,
+                &[],
+                ok(&[r#"/a/$x"y`z\w\q"#]),
+            ),
+            (
+                "a quote joins the word it touches",
+                r#"/a/"x y"z"#,
+                &[],
+                ok(&["/a/x yz"]),
+            ),
+            ("an empty quoted word is a word", "''", &[], ok(&[""])),
+            (
+                "a lone trailing backslash stays",
+                "/a/b\\",
+                &[],
+                ok(&["/a/b\\"]),
+            ),
+            ("an escaped apostrophe", r"/a/it\'s", &[], ok(&["/a/it's"])),
+            (
+                "tilde words stay for the checker",
+                "'~/a' ~/b",
+                &[],
+                ok(&["~/a", "~/b"]),
+            ),
+            (
+                "unmatched single quote",
+                "'/a/x",
+                &[],
+                Err(Refused::UnmatchedQuote),
+            ),
+            (
+                "unmatched double quote",
+                "/a/x \"/a/y",
+                &[],
+                Err(Refused::UnmatchedQuote),
+            ),
+            (
+                "a quote that never closes after an escape",
+                r#""/a/x\"#,
+                &[],
+                Err(Refused::UnmatchedQuote),
+            ),
+            (
+                "one refused line refuses the paste",
+                "/a/x\n'/a/y",
+                &[],
+                Err(Refused::UnmatchedQuote),
+            ),
+            (
+                "an existing path with a space, unquoted",
+                "/a/my dir",
+                &["/a/my dir"],
+                ok(&["/a/my dir"]),
+            ),
+            (
+                "the whole line wins over its words",
+                "/a/b /c",
+                &["/a/b /c", "/a/b", "/c"],
+                ok(&["/a/b /c"]),
+            ),
+            (
+                "a missing path with a space",
+                "/a/Backup ~2024",
+                &[],
+                Err(Refused::Ambiguous),
+            ),
+            (
+                "one existing word is not enough",
+                "/a/one /a/missing",
+                &["/a/one"],
+                Err(Refused::Ambiguous),
+            ),
+            (
+                "two existing paths split by a space",
+                "/a/one /a/two",
+                &["/a/one", "/a/two"],
+                ok(&["/a/one", "/a/two"]),
+            ),
+            (
+                "the folder `a ` with a missing child",
+                "/h/a /c",
+                &["/h/a "],
+                Err(Refused::Ambiguous),
+            ),
+            (
+                "tilde words that exist",
+                "~/a ~/b",
+                &["~/a", "~/b"],
+                ok(&["~/a", "~/b"]),
+            ),
+            (
+                "lines are separate, blanks ignored",
+                "/a/one\r\n\n  \n/a/two\n",
+                &[],
+                ok(&["/a/one", "/a/two"]),
+            ),
+            (
+                "each line is judged on its own",
+                "/a/one two\n/a/three",
+                &["/a/one two"],
+                ok(&["/a/one two", "/a/three"]),
+            ),
+            ("empty", "", &[], ok(&[])),
+            ("whitespace only", " \t\r\n \n", &[], ok(&[])),
+        ];
+        for (name, raw, existing, want) in cases {
+            assert_eq!(&parse(raw, existing), want, "{name}: {raw:?}");
         }
+    }
+
+    #[test]
+    fn on_windows_a_backslash_is_a_folder_separator_and_quotes_still_work() {
+        let paths = |raw| paths_in(raw, |_| false, false);
+        assert_eq!(paths(r"C:\Users\me\x"), ok(&[r"C:\Users\me\x"]));
+        assert_eq!(paths(r#""C:\a b" 'D:\c'"#), ok(&[r"C:\a b", r"D:\c"]));
+    }
+
+    #[test]
+    fn a_refusal_says_what_to_do_next() {
         assert_eq!(
-            pasted(r"/Users/me/My\ Folder\ \(1\)/  "),
-            ["/Users/me/My Folder (1)/"]
+            Refused::UnmatchedQuote.to_string(),
+            "This paste has an unmatched quote. Paste one path at a time, or type it."
         );
-        assert_eq!(pasted(r"/a/b\\c"), [r"/a/b\c"]);
-        assert_eq!(pasted(r"/a/trailing\ "), ["/a/trailing "]);
-        assert_eq!(pasted("/a/b\\"), ["/a/b\\"]);
-    }
-
-    #[test]
-    fn quotes_around_a_path_are_removed_and_spaces_inside_stay() {
-        assert_eq!(pasted("'/Users/me/My Folder'"), ["/Users/me/My Folder"]);
-        assert_eq!(pasted("  \"/Users/me/x y\"  "), ["/Users/me/x y"]);
-        assert_eq!(pasted("'/it's'"), ["/it's"]);
-    }
-
-    #[test]
-    fn a_plain_or_tilde_path_is_kept_and_blank_input_is_empty() {
-        assert_eq!(pasted("~/Library/Caches"), ["~/Library/Caches"]);
-        assert!(pasted("   ").is_empty());
-        assert!(pasted("").is_empty());
-        assert_eq!(pasted("'"), ["'"]);
-    }
-
-    #[test]
-    fn lines_are_separate_paths() {
-        assert_eq!(pasted("/a/one\n/a/two"), ["/a/one", "/a/two"]);
-        assert_eq!(pasted("/a/one\r\n/a/two\r\n"), ["/a/one", "/a/two"]);
-        assert_eq!(pasted("/a/one\n\n  \n~/two"), ["/a/one", "~/two"]);
-    }
-
-    #[test]
-    fn terminals_two_file_drag_is_two_paths() {
-        if cfg!(windows) {
-            return;
-        }
         assert_eq!(
-            pasted(r"/a/My\ Folder /b/keepme "),
-            ["/a/My Folder", "/b/keepme"]
+            Refused::Ambiguous.to_string(),
+            "This looks like several paths, or one path with spaces. Quote it, or paste one path at a time."
         );
-        assert_eq!(pasted("~/one /b/two"), ["~/one", "/b/two"]);
-    }
-
-    #[test]
-    fn a_path_with_a_plain_space_stays_one_path() {
-        assert_eq!(pasted("/Users/x/My Folder"), ["/Users/x/My Folder"]);
-        assert_eq!(pasted("/Users/x/a /b c"), ["/Users/x/a /b c"]);
-    }
-
-    #[test]
-    fn a_line_that_is_an_existing_path_is_not_split() {
-        let exists = |p: &str| p == "/a/b /c";
-        assert_eq!(pasted_paths("/a/b /c", exists), ["/a/b /c"]);
-        assert_eq!(pasted_paths("/a/b /d", exists), ["/a/b", "/d"]);
     }
 
     fn tempdir() -> tempfile::TempDir {
@@ -421,7 +576,6 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let mut view = CheckView::open(&env);
         view.paste(&folder.to_string_lossy(), &env);
-        view.submit(&env);
         let lines = lines(&view);
         let eligible = lines.iter().position(|l| l.contains("Eligible")).unwrap();
         let shown: String = lines[..eligible].iter().map(|l| &l[1..]).collect();
@@ -437,7 +591,6 @@ mod tests {
         let env = fixture_env(dir.path());
         let mut view = CheckView::open(&env);
         view.paste("/usr", &env);
-        view.submit(&env);
         let lines = lines(&view);
         assert!(lines[1].starts_with("   Kept  "), "{lines:?}");
         let checker = Checker::open(&|name| env.get(name)).unwrap();
@@ -460,7 +613,6 @@ mod tests {
         let env = fixture_env(dir.path());
         let mut view = CheckView::open(&env);
         view.paste("~/Library/Caches", &env);
-        view.submit(&env);
         let shown = &lines(&view)[0];
         assert!(shown.ends_with("Library/Caches"), "{shown}");
         assert!(!shown.contains('~'), "{shown}");
@@ -474,7 +626,6 @@ mod tests {
         let mut view = CheckView::open(&env);
         for name in ["first", "second"] {
             view.paste(&dir.path().join(name).to_string_lossy(), &env);
-            view.submit(&env);
         }
         let paths: Vec<_> = view.results.iter().map(|r| r.path.clone()).collect();
         assert!(
@@ -497,7 +648,6 @@ mod tests {
         ] {
             let mut view = CheckView::open(&env);
             view.paste(&raw, &env);
-            view.submit(&env);
             let paths: Vec<_> = view.results.iter().map(|r| r.path.clone()).collect();
             assert_eq!(
                 paths,
@@ -538,7 +688,7 @@ mod tests {
                 .unwrap()
                 .contains("home folder is not set")
         );
-        broken.paste("/x", &none);
+        "/x".chars().for_each(|c| broken.type_char(c));
         broken.submit(&none);
         assert!(broken.error.is_some() && broken.results.is_empty());
         assert_eq!(

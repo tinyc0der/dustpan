@@ -673,14 +673,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_paste_fills_the_field_and_enter_checks_it() {
+    fn a_paste_is_checked_at_once_and_never_enters_the_field() {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path().canonicalize().unwrap();
         let mut s = state(120, 40);
         s.facts.env = fixture_env(&dir_path);
         let s = press(s, &[Input::Jump(0), Input::Open]);
         let pasted = format!("{}/My\\ Folder ", dir_path.display());
-        let s = press(s, &[Input::Paste(pasted), Input::Open]);
+        let s = press(s, &[Input::Paste(pasted)]);
         let Screen::Check(view) = &s.screen else {
             panic!("left the Check screen");
         };

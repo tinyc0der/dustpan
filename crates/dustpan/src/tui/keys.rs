@@ -173,7 +173,7 @@ pub const CHECK: [KeyDoc; 8] = [
     QUIT_NOW,
     doc(
         "Paste",
-        "Paste a path, or drag one in from Finder",
+        "Drag a file in, or paste a path, to check it at once",
         None,
         false,
     ),

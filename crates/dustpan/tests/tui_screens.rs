@@ -173,7 +173,7 @@ fn check_starts_with_a_placeholder_and_a_promise_to_only_read() {
     let (_home, env) = home_with_log(None);
     let text = screen(&check(unicode(), 80, 24, env));
     assert!(
-        text.contains("Type or paste a path, e.g. ~/Library/Caches"),
+        text.contains("Type a path, e.g. ~/Library/Caches"),
         "{text}"
     );
     assert!(text.contains("Nothing is changed or removed"));
@@ -271,7 +271,7 @@ fn a_pasted_escaped_path_with_a_trailing_space_is_checked_as_the_real_path() {
     let pasted = format!("{}/My\\ Folder ", root.display());
     for width in [60, 120] {
         let s = check(unicode(), width, 24, env.clone());
-        let s = update(update(s, Input::Paste(pasted.clone())), Input::Open);
+        let s = update(s, Input::Paste(pasted.clone()));
         let text = screen(&s);
         assert_eq!(
             judged_path(&text).replace(' ', ""),
@@ -303,7 +303,7 @@ fn a_paste_of_two_paths_gets_one_result_for_each_and_never_a_glued_path() {
         format!("{} {} ", scratch.display(), keepme.display()),
     ] {
         let s = check(unicode(), 120, 36, env.clone());
-        let s = update(update(s, Input::Paste(pasted.clone())), Input::Open);
+        let s = update(s, Input::Paste(pasted.clone()));
         let paths: Vec<_> = check_results(&s).iter().map(|r| r.path.clone()).collect();
         assert_eq!(
             paths,
@@ -401,7 +401,7 @@ fn every_help_overlay_and_the_empty_check_hint_fit_at_the_smallest_size() {
     }
     let empty = squeezed(&screen(&check_screen));
     assert!(
-        empty.contains("Try a folder like ~/Library/Caches, or drag one in from Finder."),
+        empty.contains("Drag a file in, or paste a path, to check it at once."),
         "{empty}"
     );
 }
@@ -416,7 +416,7 @@ fn a_typed_backslash_is_part_of_the_path_but_a_pasted_one_is_an_escape() {
     let s = update(type_in(s, &typed), Input::Open);
     assert_eq!(check_results(&s)[0].path, typed);
     let s = check(unicode(), 120, 36, env);
-    let s = update(update(s, Input::Paste(typed.clone())), Input::Open);
+    let s = update(s, Input::Paste(typed.clone()));
     assert_eq!(
         check_results(&s)[0].path,
         format!("{}/backslash", root.display())
@@ -485,5 +485,209 @@ fn every_screen_fits_its_rows_in_the_window_from_60_to_140_columns() {
                 assert!(line.width() <= width as usize, "{width}: {line}");
             }
         }
+    }
+}
+
+#[cfg(unix)]
+mod pasted_paths {
+    use super::*;
+    use dustpan::tui::app::Screen;
+
+    const UNMATCHED: &str = "This paste has an unmatched quote.";
+    const AMBIGUOUS: &str = "This looks like several paths, or one path with spaces.";
+
+    enum Want<'a> {
+        Paths(&'a [&'a str]),
+        Message(&'a str),
+        Nothing,
+    }
+
+    /// A fixture home with a whitelisted `keepme`, a plain `scratch`, and folders whose names
+    /// need quoting.
+    fn fixture() -> (tempfile::TempDir, std::path::PathBuf, Environment) {
+        let (dir, root) = canonical_home();
+        write_whitelist(&root, "~/keepme\n");
+        for name in [
+            "scratch",
+            "keepme",
+            "one",
+            "two",
+            "with space",
+            "My Folder (1)",
+            "it's here",
+            "back\\slash",
+            "a ",
+        ] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let env = env_for(&root);
+        (dir, root, env)
+    }
+
+    fn view_of(state: &State) -> &dustpan::tui::check::CheckView {
+        match &state.screen {
+            Screen::Check(view) => view,
+            other => panic!("not on Check: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_paste_is_checked_at_once_by_the_shell_word_rules_and_never_guessed() {
+        let (_dir, root, env) = fixture();
+        let h = root.display().to_string();
+        let cases: Vec<(&str, String, Want)> = vec![
+            (
+                "two single-quoted paths",
+                format!("'{h}/scratch' '{h}/keepme' "),
+                Want::Paths(&["$H/scratch", "$H/keepme"]),
+            ),
+            (
+                "two double-quoted paths",
+                format!("\"{h}/scratch\" \"{h}/keepme\""),
+                Want::Paths(&["$H/scratch", "$H/keepme"]),
+            ),
+            (
+                "escapes mixed with a quote",
+                format!("{h}/My\\ Folder\\ \\(1\\) '{h}/keepme'"),
+                Want::Paths(&["$H/My Folder (1)", "$H/keepme"]),
+            ),
+            (
+                "a missing path with a space is not split",
+                format!("{h}/Backup ~2024"),
+                Want::Message(AMBIGUOUS),
+            ),
+            (
+                "an existing folder with a space, unquoted, is one path",
+                format!("{h}/with space"),
+                Want::Paths(&["$H/with space"]),
+            ),
+            (
+                "a missing path with a space, unquoted, is refused",
+                format!("{h}/missing folder"),
+                Want::Message(AMBIGUOUS),
+            ),
+            (
+                "two existing paths split by a space are two paths",
+                format!("{h}/one {h}/two"),
+                Want::Paths(&["$H/one", "$H/two"]),
+            ),
+            (
+                "the folder `a ` with a missing child is refused",
+                format!("{h}/a /c"),
+                Want::Message(AMBIGUOUS),
+            ),
+            (
+                "tilde words expand",
+                "~/scratch ~/keepme".to_owned(),
+                Want::Paths(&["$H/scratch", "$H/keepme"]),
+            ),
+            (
+                "tilde in a quoted word expands",
+                "'~/one' \"~/two\"".to_owned(),
+                Want::Paths(&["$H/one", "$H/two"]),
+            ),
+            (
+                "lines are separate paths, in order",
+                format!("{h}/scratch\n{h}/keepme\r\n\n  \n{h}/one"),
+                Want::Paths(&["$H/scratch", "$H/keepme", "$H/one"]),
+            ),
+            (
+                "an escaped apostrophe",
+                format!("{h}/it\\'s\\ here"),
+                Want::Paths(&["$H/it's here"]),
+            ),
+            (
+                "an apostrophe inside double quotes",
+                format!("\"{h}/it's here\""),
+                Want::Paths(&["$H/it's here"]),
+            ),
+            (
+                "a pasted backslash escapes",
+                format!("{h}/back\\\\slash"),
+                Want::Paths(&["$H/back\\slash"]),
+            ),
+            (
+                "single quotes keep a backslash literal",
+                format!("'{h}/back\\slash'"),
+                Want::Paths(&["$H/back\\slash"]),
+            ),
+            (
+                "an unmatched single quote",
+                format!("'{h}/scratch"),
+                Want::Message(UNMATCHED),
+            ),
+            (
+                "an unmatched double quote after a good word",
+                format!("{h}/one \"{h}/two"),
+                Want::Message(UNMATCHED),
+            ),
+            ("an empty paste", String::new(), Want::Nothing),
+            ("a blank paste", " \t\n  \r\n".to_owned(), Want::Nothing),
+        ];
+        for (name, pasted, want) in cases {
+            let s = check(unicode(), 120, 36, env.clone());
+            let s = update(s, Input::Paste(pasted.clone()));
+            let view = view_of(&s);
+            assert!(
+                view.input.is_empty(),
+                "{name}: a paste never joins the field"
+            );
+            let paths: Vec<String> = view
+                .results
+                .iter()
+                .map(|r| r.path.replace(&h, "$H"))
+                .collect();
+            match want {
+                Want::Paths(expected) => {
+                    assert_eq!(paths, expected, "{name}: {pasted:?}");
+                    assert_eq!(view.error, None, "{name}");
+                }
+                Want::Message(text) => {
+                    assert!(paths.is_empty(), "{name}: checked {paths:?}");
+                    let message = view.error.as_deref().unwrap_or("");
+                    assert!(message.contains(text), "{name}: {message:?}");
+                }
+                Want::Nothing => {
+                    assert!(paths.is_empty() && view.error.is_none(), "{name}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_quoted_pair_gives_scratch_eligible_and_keepme_kept() {
+        let (_dir, root, env) = fixture();
+        let h = root.display();
+        let s = check(unicode(), 120, 36, env);
+        let s = update(s, Input::Paste(format!("'{h}/scratch' '{h}/keepme' ")));
+        let results = check_results(&s);
+        assert!(results[0].verdict.kept().is_none(), "scratch is eligible");
+        assert!(results[1].verdict.kept().is_some(), "keepme is whitelisted");
+    }
+
+    #[test]
+    fn two_pastes_before_enter_are_two_checks_and_typed_text_is_left_alone() {
+        let (_dir, root, env) = fixture();
+        let h = root.display();
+        let s = check(unicode(), 120, 36, env);
+        let s = type_in(s, "half a pa");
+        let s = update(s, Input::Paste(format!("{h}/scratch")));
+        let s = update(s, Input::Paste(format!("{h}/keepme")));
+        let paths: Vec<_> = check_results(&s).iter().map(|r| r.path.clone()).collect();
+        assert_eq!(paths, [format!("{h}/keepme"), format!("{h}/scratch")]);
+        assert_eq!(view_of(&s).input, "half a pa");
+    }
+
+    #[test]
+    fn a_refused_paste_leaves_earlier_results_and_the_field_alone() {
+        let (_dir, root, env) = fixture();
+        let h = root.display();
+        let s = check(unicode(), 120, 36, env);
+        let s = update(s, Input::Paste(format!("{h}/scratch")));
+        let s = type_in(s, "typed");
+        let s = update(s, Input::Paste("'oops".to_owned()));
+        assert_eq!(check_results(&s).len(), 1);
+        assert_eq!(view_of(&s).input, "typed");
+        assert!(screen(&s).contains("unmatched quote"), "{}", screen(&s));
     }
 }

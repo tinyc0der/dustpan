@@ -277,6 +277,24 @@ fn a_read_only_log_folder_warns_once_and_the_delete_still_happens() {
     assert!(!dir.join(FileStore::FILE).exists());
 }
 
+#[test]
+fn a_linked_log_folder_warns_once_logs_nothing_and_the_delete_still_happens() {
+    let fixture = Fixture::new("linked-log-folder");
+    fixture.tree("Library/Caches/com.example.one", 2, 3);
+    let elsewhere = fixture.at("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let dir = fixture.log_dir();
+    std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &dir).unwrap();
+    let target = fixture.at("Library/Caches/com.example.one");
+    let ran = run(&fixture, std::slice::from_ref(&target), || Sink::Delete);
+    assert_eq!(ran.warnings.len(), 1, "{:?}", ran.warnings);
+    assert_eq!(ran.tally.removed, 1, "{:?}", ran.outcomes);
+    assert!(!target.exists());
+    let logged: Vec<_> = std::fs::read_dir(&elsewhere).unwrap().collect();
+    assert!(logged.is_empty(), "{logged:?}");
+}
+
 /// Lanes 5, 6 and 10: moves a uniquely named fixture folder to the real Trash of the user
 /// running the test, and prints its name and where it landed.
 #[test]

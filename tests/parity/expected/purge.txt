@@ -1,0 +1,2 @@
+~/Projects/oldrust/target
+~/Projects/oldweb/node_modules

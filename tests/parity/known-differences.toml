@@ -1,0 +1,4 @@
+[[known]]
+command = "clean"
+path = "~/Library/Caches/com.example.notes"
+reason = "holds Cache.db, a SQLite file under a reverse-DNS cache. Mole lists it only when lsof can see root-owned processes (run as root or with passwordless sudo, which the harness forbids), so it always declines here"

@@ -1,0 +1,9 @@
+(version 1)
+(allow default)
+(deny file-write*
+  (subpath "/Users")
+  (subpath "/Library")
+  (subpath "/Applications")
+  (subpath "/opt")
+  (subpath "/usr/local"))
+(deny process-exec (literal "/usr/bin/sudo"))

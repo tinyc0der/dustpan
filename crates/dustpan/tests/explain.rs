@@ -227,6 +227,7 @@ fn an_unset_home_stops_the_command() {
         .stderr(predicate::str::contains("home folder is not set"));
 }
 
+#[cfg(unix)]
 fn write_whitelist(home: &Path, body: &str) -> std::path::PathBuf {
     let dir = home.join(".config").join("dustpan");
     std::fs::create_dir_all(&dir).unwrap();

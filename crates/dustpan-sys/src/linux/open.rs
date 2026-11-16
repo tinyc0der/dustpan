@@ -1,6 +1,6 @@
 //! The files every process holds open, read from the links in `/proc/<pid>/fd`, and the paths
 //! Unix sockets are bound to, read from `/proc/net/unix`.
-use crate::probe::{MAX_DESCRIPTORS, bound_socket, unseen};
+use crate::probe::{Handle, MAX_DESCRIPTORS, bound_socket, unseen};
 use dustpan_core::probe::{OpenFile, OpenFiles, Pid, Seen, Unlisted, Unseen};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -8,7 +8,7 @@ use std::fs::ReadDir;
 use std::io::{Error, ErrorKind};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 fn exited(e: &Error) -> bool {
@@ -85,6 +85,7 @@ fn snapshot(most: usize) -> Seen<OpenFiles> {
                 continue;
             }
         };
+        let mut unconfirmed = false;
         for fd in fds.flatten() {
             seen += 1;
             if seen > most {
@@ -93,17 +94,28 @@ fn snapshot(most: usize) -> Seen<OpenFiles> {
             let Ok(target) = std::fs::read_link(fd.path()) else {
                 continue;
             };
-            let path = if target.is_absolute() {
-                Some(target)
+            let handle = if target.is_absolute() {
+                Handle::At(target)
             } else {
-                socket_inode(&target).and_then(|inode| sockets.get(&inode).cloned())
+                let bound = socket_inode(&target).and_then(|inode| sockets.get(&inode));
+                bound.cloned().unwrap_or(Handle::Nowhere)
             };
-            if let Some(path) = path {
-                open.files.push(OpenFile {
+            match handle {
+                Handle::At(path) => open.files.push(OpenFile {
                     pid: Pid(pid),
                     path,
-                });
+                }),
+                Handle::Nowhere => {}
+                Handle::Unconfirmed => unconfirmed = true,
             }
+        }
+        if unconfirmed {
+            // The descriptor folder opened, so the process is this user's, or the run is root.
+            let mine = true;
+            open.unlisted.push(Unlisted {
+                pid: Pid(pid),
+                mine,
+            });
         }
     }
     Seen::Found(open)
@@ -119,7 +131,8 @@ fn socket_inode(link: &Path) -> Option<u64> {
 /// `/proc/net/unix`. A descriptor is a socket and no file, yet removing the path cuts the
 /// process off from its clients. A row is `Num RefCount Protocol Flags Type St Inode Path`,
 /// and the path is absent for an unbound socket and starts with `@` for an abstract one.
-fn bound_sockets(table: &[u8]) -> HashMap<u64, PathBuf> {
+/// The table leaves both out, and a relative address too.
+fn bound_sockets(table: &[u8]) -> HashMap<u64, Handle> {
     let row = |line: &[u8]| {
         let mut rest = line;
         let mut inode = None;
@@ -129,8 +142,8 @@ fn bound_sockets(table: &[u8]) -> HashMap<u64, PathBuf> {
             inode = std::str::from_utf8(&rest[..end]).ok();
             rest = &rest[end + 1..];
         }
-        let path = PathBuf::from(OsStr::from_bytes(rest));
-        Some((inode?.parse().ok()?, bound_socket(path)?))
+        let bound = bound_socket(Path::new(OsStr::from_bytes(rest)));
+        (bound != Handle::Nowhere).then_some((inode?.parse().ok()?, bound))
     };
     table
         .split(|&b| b == b'\n')
@@ -152,17 +165,20 @@ mod tests {
     #[test]
     fn only_a_socket_bound_to_an_absolute_path_is_listed() {
         let table = b"Num       RefCount Protocol Flags    Type St Inode Path
-0000000000000000: 00000002 00000000 00010000 0001 01 17231 /run/user/1000/bus
-0000000000000000: 00000002 00000000 00010000 0001 01    42 /tmp/with space/x.sock
+0000000000000000: 00000002 00000000 00010000 0001 01 17231 /bus
+0000000000000000: 00000002 00000000 00010000 0001 01    42 /with space.sock
 0000000000000000: 00000002 00000000 00010000 0001 01 20418 @/tmp/.X11-unix/X0
 0000000000000000: 00000003 00000000 00000000 0001 03 19012
 0000000000000000: 00000002 00000000 00010000 0001 01 20500 relative.sock
+0000000000000000: 00000002 00000000 00010000 0001 01   777 /no such folder/x.sock
 ";
         let sockets = bound_sockets(table);
         let mut inodes: Vec<_> = sockets.keys().copied().collect();
         inodes.sort_unstable();
-        assert_eq!(inodes, [42, 17231]);
-        assert_eq!(sockets[&42], Path::new("/tmp/with space/x.sock"));
+        assert_eq!(inodes, [42, 777, 17231]);
+        assert_eq!(sockets[&17231], Handle::At("/bus".into()));
+        assert_eq!(sockets[&42], Handle::At("/with space.sock".into()));
+        assert_eq!(sockets[&777], Handle::Unconfirmed);
         assert_eq!(socket_inode(Path::new("socket:[17231]")), Some(17231));
         assert_eq!(socket_inode(Path::new("pipe:[17231]")), None);
     }

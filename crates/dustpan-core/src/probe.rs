@@ -126,7 +126,9 @@ pub struct Pid(pub u32);
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct OpenFiles {
     pub files: Vec<OpenFile>,
-    /// Running processes whose open files the probe could not list.
+    /// Running processes whose open files the probe could not list, or not all of them: a
+    /// process that holds a file at a path the probe cannot confirm is here, and `files` has
+    /// what else it holds.
     pub unlisted: Vec<Unlisted>,
 }
 

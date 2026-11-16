@@ -3,7 +3,6 @@ use filetime::FileTime;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
 use std::os::unix::fs::symlink;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -268,7 +267,7 @@ fn stored_zip(entries: &[String]) -> Vec<u8> {
     }
     let central_offset = out.len() as u32;
     let count = entries.len() as u16;
-    out.write_all(&central).expect("write to Vec");
+    out.extend_from_slice(&central);
     out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
     out.extend_from_slice(&[0, 0, 0, 0]);
     out.extend_from_slice(&count.to_le_bytes());

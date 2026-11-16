@@ -413,7 +413,7 @@ This is the largest milestone, because the catalog is curated data. Split it int
 
 ## Appendix A. Spike questions for M0
 
-No prototype has run yet. The operator asked for the plan first. Each spike below is unproven until its M0 PR records a verdict, a branch and the numbers.
+M0-2 ran each spike on a throwaway branch on one Mac (Apple M1 Pro, macOS 26.6.2). The verdicts are in the second table, and each note in `docs/spikes/` holds the numbers and the scripts that produced them. Steps that need a fingerprint, a password, a UAC click, a second machine or Remote Login are pending the operator, and each note lists them.
 
 | Spike | Question | Decides |
 |---|---|---|
@@ -422,6 +422,14 @@ No prototype has run yet. The operator asked for the plan first. Each spike belo
 | S3 Privilege helper | Can the TUI suspend, run `sudo -v` with Touch ID, start `dustpan --privileged-helper` over a pipe, and resume without leaking keystrokes? What does the Windows `runas` relaunch need? | The `Privileged` sink and M4's shape |
 | S4 Terminal | Do sub-cell bars, braille spinners, emoji widths and mouse events render correctly in Terminal.app, iTerm2, Ghostty, Windows Terminal, conhost and a Linux VTE terminal? | Glyph set and ASCII fallback rules |
 | S5 Parity harness | Can `mo clean`, `purge` and `installer` run in dry-run mode against a fixture `HOME` and produce a parseable candidate list? | Whether parity is a CI gate or a manual check |
+
+| Spike | Verdict | Branch at SHA | Note |
+|---|---|---|---|
+| S1 | Walk natively with `getattrlistbulk` on a bounded `rayon` pool, not `du` workers: 0.29 to 0.30 times Mole's time on `~`, total within 0.98 percent of Mole's. M1 picks its APFS clone rule on purpose. | `spike/s1-scan` at `6ed92cc` | `docs/spikes/s1-scan.md` |
+| S2 | The macOS `Trash` sink uses `NSFileManager trashItemAtURL` through `objc2-foundation`. A container folder owned by `containermanagerd` is a permission failure, never a delete. Put Back and SSH are pending the operator. | `spike/s2-trash` at `ed75e60` | `docs/spikes/s2-trash.md` |
+| S3 | Suspend, `sudo -v` on the user's terminal, then `sudo -n dustpan --privileged-helper` over stdin and stdout with a closed action enum; flush input and drain events before resume. Touch ID, password and Windows runs are pending the operator. | `spike/s3-privilege` at `c54dd6a` | `docs/spikes/s3-privilege.md` |
+| S4 | Box drawing, eighth blocks, braille spinner, `🧹`, bare `⚙` (U+2699), `➤ ▾ ▸ ✓ ✗ ■ › ·`; never `⚙️` with U+FE0F. ASCII fallback on `--ascii` or a non-UTF-8 locale, with every frame character mapped at the same width. iTerm2, Ghostty, Windows and VTE screenshots are pending the operator. | `spike/s4-terminal` at `f2a7c6a` | `docs/spikes/s4-terminal.md` |
+| S5 | Parity is a CI gate on `macos-latest` (GitHub no longer runs `macos-14`), with a pinned Mole, a fresh fixture `HOME`, a scrubbed environment and the write-deny sandbox, comparing only paths inside the fixture. | `spike/s5-parity` at `594db77` | `docs/spikes/s5-parity.md` |
 
 ## Appendix B. Alternatives rejected
 

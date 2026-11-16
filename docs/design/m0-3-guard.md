@@ -417,3 +417,81 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 ## Next implementation step
 
 M0-4 adds the whitelist as layer 5: a required `whitelist` field on `GuardInputs`, a `KeptReason::Whitelisted` variant whose `source()` names the file, and `source` filled in `explain --json`.
+
+## M0-4 whitelist
+
+Layer 5 keeps a path the user whitelisted, everything inside it, and every folder above it. M0-5's sinks trust it, so a whitelisted path that reads `Eligible` is a path they would delete. This section records how the layer reads the file, which spellings of an entry it keeps, and how it compares names.
+
+### Reading the file
+
+`dustpan_sys::read_config` judges the file the way Mole's `mole_whitelist_file_state` does (`lib/core/base.sh:418`). It walks the path from the top with `lstat` and follows each link.
+
+- The file is missing only when a component does not exist. Then the default entries apply.
+- A link whose target does not exist, a folder on the path that is not a folder, or a file that is not a regular file stops the run. The message names the component. A broken link never authorizes the defaults.
+- The read opens with `O_NONBLOCK`, so a FIFO swapped in after the walk cannot block the run. `fstat` must report a regular file.
+- At most 1 MiB is read. A hand-kept list of 10,000 entries uses under half of that. A link to `/dev/zero` or a log that keeps growing stops at the cap.
+
+A config path the guard cannot take, such as an `XDG_CONFIG_HOME` with `..`, stops the run with the path and the cause. Whitelist lines with `..` stop the load too, as Mole refuses them.
+
+### Parsing an entry
+
+A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load.
+
+Each name of an entry is matched as Mole matches it with `[[ $path == $pattern ]]`:
+
+- `*` is any run of characters inside one name. Mole's `*` also crosses `/`. An earlier decision row keeps it inside one name.
+- `?` is one character. `[...]` is one character from a set, with ranges, `!` or `^` negation, and the POSIX classes. `\` takes the next character as written.
+- A `[` with no closing `]` is a plain character, as in a shell.
+- A name with a wildcard also matches its own text, as Mole's quoted comparison does. An entry for a folder named `[2020] Album` keeps that folder.
+- An unknown class, a range that runs backwards, and `[=e=]` or `[.e.]` stop the load and name the line. Mole's shell would read them another way, so a silent guess could keep less.
+
+### Every spelling of an entry
+
+`Guard::new` resolves each entry once through the probe, the way layer 4 binds its anchors.
+
+1. The leading names that hold no wildcard are walked from the root with `lstat`. A link is followed with `probe::physical`, the last name included. Everything inside a link to a folder lies in that folder, so the entry keeps the target too.
+2. The walk stops at the first name that does not exist. The physical path found so far is spelled as stored (`Probe::spelling`). If the probe cannot answer, the physical path stands, and folding still meets its case and normalization aliases.
+3. The entry goes into the trie twice, under the data-volume firmlink mapping (`Policy::canonical`). One copy is as written. The other is the found path, with the rest of the entry appended as written. The found names come from disk, so they go in as plain names even when they hold `*` or `[`.
+
+Both copies carry the same entry index, so a hit names the entry as the user wrote it. Every folder above either copy is kept as `contains-whitelisted`. This covers `/tmp/x` judged as `/private/tmp/x`, Fedora Atomic's `/home` link to `/var/home`, and an entry spelled `/System/Volumes/Data/...`.
+
+A `lstat` that cannot answer (`EACCES`, `EIO`) stops the guard build with `PolicyError::AnchorUnreadable` naming the entry, as a protected anchor does. Keeping only the written spelling would protect less than the user wrote if the unreadable name were a link.
+
+Layer 5 binds no file identity. A Linux bind mount of a whitelisted folder at another path is not kept by this layer. Layer 1 refuses every path below a linked ancestor, so a scanner never judges a spelling through a link.
+
+### Comparing names
+
+On a volume that folds case (the macOS and Windows tables), both an entry's names and a judged path's names are compared under one key:
+
+1. Decompose to NFD.
+2. Map each character to its uppercase and then to that letter's lowercase, only where each mapping gives one character.
+3. Compose to NFC.
+
+All-ASCII names take an ASCII-lowercase fast path, which gives the same key.
+
+The key has to meet every name the volume treats as the same. Matching more can only keep more.
+
+- APFS ignores both normalization form and case. NFD before the case map and NFC after it put canonically equivalent names on one key, as Unicode's canonical caseless match does.
+- NTFS folds case through its upcase table, one character for one, and keeps normalization forms apart. The key folds the same case pairs. It also joins normalization forms, which only keeps more.
+- The upper-then-lower map joins pairs that lowercase alone misses, such as final sigma and `σ`.
+- One-for-one maps keep `?` counting `ß` as one character, so `Stra?e` still matches `Straße`. Full case folding would turn `ß` into `ss`, and `?` would then match less.
+- NFC rather than NFD keeps `é` one character for `?` and `[...]`. Both also take any combining marks that follow the character they match.
+
+The resolution through `Probe::spelling` already meets any spelling the volume itself accepts for an existing name. The fold matters for names after a wildcard and for names that do not exist yet.
+
+A set compares both cases of the folded character, because the folded name no longer says which case Mole would have seen. A negated set therefore also matches a letter it names in another case: `com.[!z]oo.bar` keeps `com.zoo.bar` on macOS. That keeps more than Mole, never less.
+
+On Linux the key is the name's bytes. ext4 compares bytes, so an NFC entry does not keep an NFD folder there, and the two are different files.
+
+`unicode-normalization` supplies the NFD and NFC tables. It is the one dependency of `dustpan-core`, and it does no I/O.
+
+### Cost
+
+A `Pass` keeps one trie position per ancestor frame, as before. Resolution costs one `lstat` per distinct folder named by the entries' literal heads, plus one stored-spelling question per distinct deepest folder, all at `Guard::new`. `explain` with the bench's 500-line whitelist measured 11.6 ms at this head and 9.1 ms at 13d50e0, from 100 alternated runs each. `docs/perf.md` records the scan bench.
+
+### Changes a restack of M0-3 meets
+
+- `Policy::from_table` builds the whitelist after `verified_firmlinks`, because resolution needs `canonical`. The struct starts with `Whitelisted::empty`.
+- `Whitelisted::compile` takes the probe and `canonical` and returns `Result<_, PolicyError>`. `Guard::new` can now fail with `AnchorUnreadable` for a whitelist entry.
+- `whitelist::LoadError::BadEntry` carries `EntryError` (`Shape` or `Glob`) in place of `ShapeError`.
+- `protect/names.rs`, `guard/pass.rs` and `guard/verdict.rs` are unchanged by the fix round.

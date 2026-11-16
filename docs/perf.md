@@ -107,3 +107,22 @@ Medians of the three runs: `scan` 822,299 on trunk and 827,668 on head (0.7% fas
 **The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain` on both sides, the same count as M0-3.
 
 **Machine.** Apple M1 Pro, 10 cores, 32 GB, macOS 26.6.2. Other agents were building on the machine, load average 5.2 to 5.8.
+
+### Fix round 1
+
+The fix round folds non-ASCII names, matches `?` and `[...]`, and resolves every entry through the probe at `Guard::new`. The same bench ran from fresh exports (`side-a` at `a2b9f07`, `side-c` at `5126bf5`) under `/tmp/swarm-m0-4/fix1/bench`, alternated, three runs each, on 2026-11-16.
+
+| Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
+|---|---|---|---|---|---|
+| 1 | trunk | 7.15 | 806,668 | 200,358 | 1,231,661 |
+| 1 | head | 6.60 | 845,294 | 203,661 | 1,254,655 |
+| 2 | trunk | 6.31 | 842,309 | 215,239 | 1,294,971 |
+| 2 | head | 7.42 | 840,201 | 212,537 | 1,244,352 |
+| 3 | trunk | 6.99 | 899,543 | 204,217 | 1,271,496 |
+| 3 | head | 6.07 | 870,925 | 213,700 | 1,252,601 |
+
+Medians: `scan` 842,309 on trunk and 845,294 on head (0.4% faster, inside the spread), `explain` 204,217 and 212,537, `cpu` 1,271,496 and 1,252,601 (1.5% slower). The rule passes. An earlier round of three runs per side, taken while the fixtures were first built, swung from 433,003 to 802,047 for `scan` on both sides. Its `cpu` medians were 1,239,496 on trunk and 1,227,168 on head.
+
+**What limits the number.** The same as above. An all-ASCII name takes the ASCII fold, so the bench's names cost what they did. Resolution runs at `Guard::new`, outside the timed rounds. `explain` as a process, which includes it, took 11.6 ms at this head and 9.1 ms at `13d50e0`, as means of 100 alternated runs with the same 500 lines.
+
+**The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain`, and the bench still checks that a path the whitelist names is kept.

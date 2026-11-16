@@ -222,7 +222,7 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [ ] Lane 7. Run `dustpan explain $'~/bad\nname'`. Save `control.txt`. Pass when it is kept for control bytes and the name prints escaped.
 - [ ] Lane 8. Run `dustpan explain --json ~/Library/Caches/x | jq .`. Save `json.txt`. Pass when the object has `path`, `verdict`, `layer` and `reason`.
 - [ ] Lane 9. Run `dustpan explain relative/path`. Save `relative.txt`. Pass when it resolves to an absolute path or refuses with exit 2.
-- [ ] Lane 10. CI-run on `windows-latest`. Run lanes 2 and 5 on the Windows CI artifact with `C:\Windows` and `%USERPROFILE%\Documents`. Save `windows.txt`. Pass when the same verdicts apply.
+- [ ] Lane 10. CI-run on `windows-latest`. Run lanes 2 and 5 on the Windows CI artifact with `C:\Windows` and `%USERPROFILE%\Documents`. Save `windows.txt`. Pass when the same verdicts apply. Until M8 lists open files on Windows, the file inside `Documents` is kept as `file-open-unknown` and not eligible (`docs/design/m0-3-guard.md`, "Fix round 3").
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 

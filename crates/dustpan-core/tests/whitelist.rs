@@ -530,15 +530,24 @@ const MULTI_CHARACTER_FOLDS: &[(&str, &str)] = &[
 fn multi_character_fold_cases(entry_for: impl Fn(&str, &str) -> String) {
     for &(stored, folded) in MULTI_CHARACTER_FOLDS {
         for (name, spelling) in [
-            (format!("a{stored}z"), format!("A{}Z", folded.to_uppercase())),
-            (format!("A{}Z", folded.to_uppercase()), format!("a{stored}z")),
+            (
+                format!("a{stored}z"),
+                format!("A{}Z", folded.to_uppercase()),
+            ),
+            (
+                format!("A{}Z", folded.to_uppercase()),
+                format!("a{stored}z"),
+            ),
             (format!("a{stored}z"), format!("a{folded}z")),
         ] {
             let path = format!("/Users/alice/P/a/{name}");
             let fs = FakeProbe::new().dir(&path);
             let entry = entry_for(&spelling, folded);
             let got = outcome(&judge(&fs, text(&entry), &path));
-            assert_eq!(got, "whitelist/whitelisted", "entry {entry:?}, name {name:?}");
+            assert_eq!(
+                got, "whitelist/whitelisted",
+                "entry {entry:?}, name {name:?}"
+            );
         }
     }
 }

@@ -9,6 +9,7 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+caseless = "0.2"
 unicode-normalization = "0.1"
 
 [features]

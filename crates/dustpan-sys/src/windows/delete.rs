@@ -428,6 +428,10 @@ pub(super) mod tests {
 
     /// `mklink /J`: a junction needs no privilege, unlike a symlink.
     fn junction(link: &Path, target: &Path) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "`mklink /J` makes the junction fixture"
+        )]
         let made = Command::new("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)

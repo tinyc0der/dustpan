@@ -52,6 +52,10 @@ fn short_version_flag_matches_long() {
 
 #[test]
 fn version_survives_a_closed_pipe() {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the dustpan binary under test"
+    )]
     let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("dustpan"))
         .arg("--version")
         .stdout(Stdio::piped())
@@ -74,6 +78,10 @@ fn debug_version_survives_a_closed_stderr_pipe() {
     let home = guard.path();
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the dustpan binary under test"
+    )]
     let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("dustpan"))
         .args(["--debug", "--version"])
         .env("HOME", home)

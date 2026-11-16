@@ -33,6 +33,10 @@ impl Drop for Running {
 
 /// `dustpan explain path`, killed when it is still running after `limit`.
 fn explain_within(limit: Duration, home: &Path, path: &str) -> Option<Output> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the dustpan binary under test"
+    )]
     let mut child = Command::new(cargo_bin("dustpan"))
         .env("HOME", home)
         .args(["explain", path])
@@ -90,6 +94,10 @@ impl Fixture {
     /// that check waited 0.5 to 0.9 seconds on the bench host. One untimed `explain` waits it
     /// out, so the timed calls measure dustpan.
     pub fn start(&self, exe: &Path) -> Running {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "runs a placed copy of this test binary as the owner process"
+        )]
         let child = Command::new(exe)
             .args(["--exact", "helper_sleeps_when_asked"])
             .env(SLEEP, "1")

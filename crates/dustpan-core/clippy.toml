@@ -1,4 +1,5 @@
-# A crate-level clippy.toml replaces the workspace one, so the four SAFE-01 bans are repeated here.
+# A crate-level clippy.toml replaces the workspace one, so every `std` path the workspace bans is
+# repeated here. `crates/dustpan/tests/seams.rs` checks it.
 # The rest keep the crate boundary: dustpan-core makes no OS call. It asks through `probe::Probe`.
 disallowed-methods = [
     { path = "std::fs::remove_file", reason = "SAFE-01: every removal goes through the sink module, the only place allowed to call this" },

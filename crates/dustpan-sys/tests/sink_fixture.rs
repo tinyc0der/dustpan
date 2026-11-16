@@ -557,6 +557,10 @@ fn mount_lane() {
     std::fs::write(folder.join("beside.txt"), b"beside").unwrap();
     let image = fixture.at("image.dmg");
     let hdiutil = |args: &[&std::ffi::OsStr]| {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the mount lane attaches its disk image with hdiutil"
+        )]
         let status = std::process::Command::new("/usr/bin/hdiutil")
             .args(args)
             .stdin(std::process::Stdio::null())

@@ -81,6 +81,7 @@ fn a_deep_tree_of_large_info_plists_does_not_slow_explain() {
 #[test]
 fn a_fifo_named_info_plist_does_not_hang_explain() {
     explain_names_the_process_beside(|plist| {
+        #[expect(clippy::disallowed_methods, reason = "mkfifo makes the FIFO fixture")]
         let made = Command::new("mkfifo").arg(plist).status().unwrap();
         assert!(made.success());
     });

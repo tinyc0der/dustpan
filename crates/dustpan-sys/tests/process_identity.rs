@@ -65,10 +65,6 @@ fn write_plist(contents: &Path) {
 }
 
 #[test]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the test deletes the one binary it copied into its own temporary folder"
-)]
 fn a_process_is_tied_to_its_bundle_until_its_binary_is_deleted() {
     let dir = tempfile::tempdir().unwrap();
     let contents = dir.path().join("Owner.app/Contents");
@@ -77,6 +73,10 @@ fn a_process_is_tied_to_its_bundle_until_its_binary_is_deleted() {
     let exe = contents.join("MacOS/owner");
     std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the copy of this test binary as the process under test"
+    )]
     let child = Command::new(&exe)
         .args(["--exact", "helper_sleeps_when_asked"])
         .env(SLEEP, "1")
@@ -88,6 +88,10 @@ fn a_process_is_tied_to_its_bundle_until_its_binary_is_deleted() {
     let in_bundle = App::Bundles(Box::new([BUNDLE_ID.into()]));
     assert_eq!(settles_on(pid, &in_bundle), Some(in_bundle));
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test deletes the one binary it copied into its own temporary folder"
+    )]
     std::fs::remove_file(&exe).unwrap();
     let unknown = App::Unknown { mine: true };
     assert_eq!(settles_on(pid, &unknown), Some(unknown));
@@ -102,6 +106,10 @@ fn a_bundle_with_an_unreadable_plist_leaves_its_process_unidentified() {
     let exe = contents.join("MacOS/broken");
     std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the copy of this test binary as the process under test"
+    )]
     let child = Command::new(&exe)
         .args(["--exact", "helper_sleeps_when_asked"])
         .env(SLEEP, "1")

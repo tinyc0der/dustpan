@@ -83,6 +83,10 @@ struct Holder(Child);
 
 impl Holder {
     fn start(folder: &Path, chain: Option<&Path>) -> Self {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the holder is this test binary, run again as a helper"
+        )]
         let mut holder = Command::new(std::env::current_exe().unwrap());
         holder
             .args(["--exact", HELPER, "--nocapture"])

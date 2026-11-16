@@ -99,6 +99,10 @@ fn stop_with(stop: &str) {
     )
     .unwrap();
     fs::set_permissions(&mo, fs::Permissions::from_mode(0o755)).unwrap();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the parity harness binary under test"
+    )]
     let mut harness = Command::new(env!("CARGO_BIN_EXE_parity"))
         .arg("purge")
         .env("PARITY_MO", &mo)
@@ -117,6 +121,10 @@ fn stop_with(stop: &str) {
     }
     sleep(Duration::from_millis(200));
     let mole_pid = fs::read_to_string(&marker).unwrap().trim().to_string();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "signals the harness and Mole with /bin/kill"
+    )]
     let signal = |sig: &str, pid: &str| {
         Command::new("/bin/kill")
             .args([sig, pid])
@@ -179,6 +187,10 @@ fn the_create_probe_never_removes_a_file_that_already_exists() {
     let dir = tempfile::tempdir().unwrap();
     let existing = dir.path().join("keep");
     fs::write(&existing, "mine").unwrap();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the sandbox's create probe under /bin/sh"
+    )]
     let status = Command::new("/bin/sh")
         .args(["-c", CREATE_PROBE, "probe"])
         .arg(&existing)

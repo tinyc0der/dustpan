@@ -13,6 +13,10 @@ fn fixture_home() -> tempfile::TempDir {
     let home = fresh_dir();
     if cfg!(unix) {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/mkhome.sh");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the shared fixture script builds the home"
+        )]
         let built = std::process::Command::new("bash")
             .arg(script)
             .arg(home.path())
@@ -212,6 +216,10 @@ fn json_keeps_a_hostile_name_inside_its_string() {
 /// itself, so this shares no code with dustpan's lookup.
 #[cfg(unix)]
 fn account_home() -> std::path::PathBuf {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the shell reads the user database, so the check shares no code with dustpan"
+    )]
     let out = std::process::Command::new("sh")
         .args(["-c", r#"eval "printf %s ~$(id -un)""#])
         .output()
@@ -414,6 +422,7 @@ fn a_config_folder_that_links_to_an_unmounted_volume_stops_the_command() {
 fn a_whitelist_that_is_a_fifo_stops_the_command() {
     let home = fixture_home();
     let fifo = config_dir(home.path()).join("whitelist");
+    #[expect(clippy::disallowed_methods, reason = "mkfifo makes the FIFO fixture")]
     let made = std::process::Command::new("mkfifo")
         .arg(&fifo)
         .status()

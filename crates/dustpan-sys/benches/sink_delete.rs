@@ -57,6 +57,10 @@ mod unix {
 
     fn rm_rf(tree: &Path) -> Duration {
         let start = Instant::now();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "`/bin/rm -rf` is the baseline the sink is measured against"
+        )]
         let status = Process::new("/bin/rm")
             .arg("-rf")
             .arg(tree)

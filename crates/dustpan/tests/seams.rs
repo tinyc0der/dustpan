@@ -91,3 +91,36 @@ fn only_the_sink_files_lift_the_removal_bans() {
         .collect();
     assert!(lifted.is_empty(), "removal outside the sink: {lifted:?}");
 }
+
+/// The paths a `clippy.toml` bans, one `{ path = "..." }` entry per line.
+fn banned_paths(clippy_toml: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(crates().join(clippy_toml)).unwrap();
+    text.lines()
+        .filter_map(|line| line.trim_start().strip_prefix("{ path = \""))
+        .filter_map(|rest| rest.split('"').next())
+        .map(str::to_string)
+        .collect()
+}
+
+/// SAFE-01: a crate's own `clippy.toml` replaces the workspace one, so dustpan-core must repeat
+/// every `std` route the workspace bans. Core has no libc or Windows dependency to ban.
+#[test]
+fn core_repeats_every_std_ban_of_the_workspace() {
+    let core = banned_paths("dustpan-core/clippy.toml");
+    let std_bans: Vec<String> = banned_paths("../clippy.toml")
+        .into_iter()
+        .filter(|path| path.starts_with("std::"))
+        .collect();
+    assert!(
+        std_bans.contains(&"std::process::Command::new".to_string()),
+        "read the workspace bans: {std_bans:?}"
+    );
+    let missing: Vec<&String> = std_bans
+        .iter()
+        .filter(|path| !core.contains(path))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "dustpan-core/clippy.toml misses {missing:?}"
+    );
+}

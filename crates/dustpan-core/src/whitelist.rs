@@ -1,6 +1,10 @@
+pub(crate) mod glob;
+
 use crate::config::Read;
 use crate::path::{AbsPath, ShapeError, escaped};
 use crate::paths::Os;
+use glob::Glob;
+pub use glob::GlobError;
 use std::ffi::OsStr;
 use std::fmt;
 
@@ -53,8 +57,8 @@ pub enum Origin {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Pattern {
-    /// An absolute path whose components may hold `*`. It protects what it names, everything
-    /// inside it, and every folder above it (removing the folder removes the entry).
+    /// An absolute path whose names may hold `*`, `?` and `[...]`. It protects what it names,
+    /// everything inside it, and every folder above it (removing the folder removes the entry).
     Path(AbsPath),
     /// Every file named `.DS_Store`.
     FinderMetadata,
@@ -83,8 +87,24 @@ pub enum LoadError {
         file: AbsPath,
         line: usize,
         entry: String,
-        why: ShapeError,
+        why: EntryError,
     },
+}
+
+/// Why one line cannot be applied.
+#[derive(Debug)]
+pub enum EntryError {
+    Shape(ShapeError),
+    Glob(GlobError),
+}
+
+impl fmt::Display for EntryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Shape(why) => why.fmt(f),
+            Self::Glob(why) => why.fmt(f),
+        }
+    }
 }
 
 impl fmt::Display for LoadError {
@@ -109,23 +129,31 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-fn expand(os: Os, home: &AbsPath, raw: &str) -> Result<Pattern, ShapeError> {
+/// What follows a leading `~`, `$HOME` or `${HOME}` that ends at a separator or the line's end,
+/// with every separator after it dropped, so `~//x` is the home's `x` and never `/x`.
+fn under_home(os: Os, raw: &str) -> Option<&str> {
+    let rest = ["~", "$HOME", "${HOME}"]
+        .iter()
+        .find_map(|home| raw.strip_prefix(home))?;
+    let separator = |c: char| c == '/' || (os == Os::Windows && c == '\\');
+    (rest.is_empty() || rest.starts_with(separator)).then(|| rest.trim_start_matches(separator))
+}
+
+fn expand(os: Os, home: &AbsPath, raw: &str) -> Result<Pattern, EntryError> {
     if raw == FINDER_METADATA {
         return Ok(Pattern::FinderMetadata);
     }
-    let under_home = raw.strip_prefix('~').and_then(|rest| match rest {
-        "" => Some(""),
-        _ => rest.strip_prefix('/').or_else(|| {
-            (os == Os::Windows)
-                .then(|| rest.strip_prefix('\\'))
-                .flatten()
-        }),
-    });
-    let expanded = match under_home {
+    let expanded = match under_home(os, raw) {
         Some(rest) => home.as_path().join(rest),
         None => raw.into(),
     };
-    AbsPath::parse(expanded.as_os_str()).map(Pattern::Path)
+    let path = AbsPath::parse(expanded.as_os_str()).map_err(EntryError::Shape)?;
+    for name in path.names() {
+        for fold_case in [false, true] {
+            Glob::parse(name, fold_case).map_err(EntryError::Glob)?;
+        }
+    }
+    Ok(Pattern::Path(path))
 }
 
 fn built_in(os: Os, home: &AbsPath, rows: &[&str], origin: Origin, into: &mut Vec<Entry>) {
@@ -161,7 +189,8 @@ impl Whitelist {
 ///
 /// A line is trimmed (so CRLF endings and trailing spaces do not matter), and blank lines and
 /// lines that start with `#` are skipped. A line that cannot name a place, such as a relative
-/// path or one with `..`, stops the load: skipping it would protect less than the user wrote.
+/// path, one with `..`, or a bracket Mole's shell would read another way, stops the load:
+/// skipping it would protect less than the user wrote.
 pub fn load(os: Os, home: &AbsPath, file: &AbsPath, read: Read) -> Result<Whitelist, LoadError> {
     let text = match read {
         Read::Missing => return Ok(Whitelist::defaults(os, home)),

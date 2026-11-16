@@ -59,7 +59,7 @@ If the screen is locked the GUI path fails (`ioreg -n Root -d1 -a | grep -A1 CGS
 
 Wait after a key with `$V wait home "<text>" 3`, not a fixed sleep. For restore checks start a shell pane (`$V start sh 120 40`), type the binary path with `$V text sh "$BIN"` plus `$V keys sh Enter`, then quit it and read `$V info sh` and `stty -a` from the same shell.
 
-The lane runner drives all of this for the M0-6 checklist lanes (1 to 8 and 10) plus lane 0 (the wrap check bites on a wrapped capture), 11 (hangup), 12 (`Tab` swap at 80 by 24) and 13 (terminal closed without SIGHUP), 14 (About pages), 15 (History over a fixture log), 16 (History empty and unreadable), 17 (Check) and 18 (mouse open), and saves one capture per lane. Lane 1 reads Home only and does not run Mole:
+The lane runner drives all of this for the M0-6 checklist lanes (1 to 8 and 10) plus lane 0 (the wrap check bites on a wrapped capture), 11 (hangup), 12 (`Tab` swap at 80 by 24) and 13 (terminal closed without SIGHUP), 14 (About pages), 15 (History over a fixture log), 16 (History empty and unreadable), 17 (Check), 18 (mouse open), 19 (paste of several paths), 20 (whitelist edit seen on the same screen), 21 (wrapped Check error), 22 (60 by 16 fit) and 23 (typed backslash), and saves one capture per lane. Lane 1 reads Home only and does not run Mole:
 
 ```bash
 python3 .claude/skills/verify/scripts/home-lanes.py /tmp/swarm-m0-6/owner --bin $BIN

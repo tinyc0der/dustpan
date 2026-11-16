@@ -10,7 +10,11 @@ Enter on a Home entry opens a screen. A `soon` entry opens an About page that sa
 - `history-error` shows `The history could not be read.` and the sentence `dustpan history` prints. The screen stays usable.
 - `check-field` takes text. `q`, `j`, `k` and digits are letters there. Backspace erases, Ctrl+U clears, Enter checks, Esc goes back.
 - `check-verdict` stacks results newest first. Each shows the path, then `Kept  <reason>` or `Eligible  dustpan may clean this when Clean arrives`.
-- `check-paste` handles a bracketed paste. A backslash-escaped path (`My\ Folder\ \(1\)`), surrounding quotes and a trailing space are cleaned up. `~` expands to the home folder.
+- `check-paste` handles a bracketed paste. A backslash-escaped path (`My\ Folder\ \(1\)`), surrounding quotes and a trailing space are cleaned up, and the field then shows the real path. `~` expands to the home folder. Typed text is never touched: a typed `\` stays in the path.
+- `check-many` gives one result for each path in a paste. Lines are separate paths. A line that is not an existing path and splits on unescaped spaces into pieces that all start with `/` or `~` (Terminal.app's multi-file drag) is several paths. Any other line is one path, so `/Users/x/My Folder` stays whole. Results show in paste order, newest paste first, and the field shows several paths with a bullet between them.
+- `check-fresh` builds the guard again on each Enter, so an edit to the whitelist shows in the very next check.
+- `check-error` wraps an error over several lines, so the cause stays readable at 60, 80 and 100 columns.
+- `check-wrap` shows the whole judged path over as many lines as it needs. It is never cut in the middle.
 - `read-only` means opening History never creates the log folder, and no screen writes anything.
 
 ## How to get to it (user POV)
@@ -25,10 +29,12 @@ Preconditions: release binary built. History and Check lanes use a fixture folde
 - **History.** Start with `env HOME=<fixture>` and press `9`, `Enter`. `$V wheel home down 10 8` scrolls. Compare a listing of the fixture before and after: it must not change.
 - **Check.** `0`, `Enter`, then `$V text home /System` and `Enter` shows `Kept  critical system path`. `$V text home '~/scratch'` shows `Eligible` above it.
 - **Paste.** `$V paste home '<fixture>/My\ Folder\ \(1\) '` fills the field. The pty-drive `paste` command wraps the text in bracketed-paste marks because the program turned that mode on.
-- **Lanes.** `home-lanes.py OUT --only 14,15,16,17,18` runs About, History, History empty and unreadable, Check, and the mouse, and saves `about.txt`, `history.txt`, `history-empty.txt`, `check.txt`, `mouse.txt`.
+- **Several paths.** `$V paste home "$H/scratch"$'\n'"$H/keepme"` and `$V paste home "$H/scratch $H/keepme "` each give two results, `scratch` above `keepme`.
+- **Whitelist edit.** Check a path, write `~/keepme` into `$H/.config/dustpan/whitelist`, check it again on the same screen: the newest result changes from `Eligible` to `Kept  protected by your whitelist`.
+- **Lanes.** `home-lanes.py OUT --only 14,15,16,17,18,19,20,21,22,23` runs About, History, History empty and unreadable, Check, the mouse, a paste of several paths, a whitelist edit, an unreadable whitelist at three widths, the 60 by 16 fit of every help overlay and the Check hint, and the typed backslash. It saves `about.txt`, `history.txt`, `history-empty.txt`, `check.txt`, `mouse.txt`, `check-many.txt`, `check-whitelist.txt`, `check-error.txt`, `small-60x16.txt` and `check-backslash.txt`.
 
 ## Gotchas
 
 - A fixture folder under a symlinked path (`/tmp`) makes every check `Kept` because of the symlinked ancestor. Use the `/private/tmp/...` spelling.
-- A path longer than the window is cut in the middle with `…`, so assert on the tail of a long path.
+- A path longer than the window wraps onto more lines and is never cut. Put the lines back together before comparing, and compare without spaces, because the screen capture drops a trailing space at a wrap. `result_paths` in `home-lanes.py` does both.
 - The Check field shows a reversed block where the cursor is. It is not a real terminal cursor, so `$V info` still says `cursor_visible=0`.

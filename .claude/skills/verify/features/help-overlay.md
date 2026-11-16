@@ -24,4 +24,4 @@ Preconditions: pane `home` at 120 by 40.
 ## Gotchas
 
 - Keys other than `?`, `Esc`, `q`, `F1` and `Ctrl+C` do nothing while help is open. A moving cursor behind it is a bug.
-- At 60 by 16 the box fills the height. Check the last jump-key row is not cut.
+- At 60 by 16 the box fills the height and wraps long rows. Check the last jump-key row (`0 Check a path`) and the `Wheel` row are whole. Lane 22 does.

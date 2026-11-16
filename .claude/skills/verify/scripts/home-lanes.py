@@ -3,7 +3,7 @@
 
 Usage: home-lanes.py OUTDIR [--bin PATH] [--only 1,2,...]
 
-Lanes 0 to 13 follow docs/M0-checklist.md "Draw the TUI frame, Home and help overlay (M0-6)". Lanes 14 to 18 cover the
+Lanes 0 to 13 follow docs/M0-checklist.md "Draw the TUI frame, Home and help overlay (M0-6)". Lanes 14 to 23 cover the
 About pages, History, Check and the mouse, with fixture homes under OUTDIR/fixtures. Nothing here runs Mole. Each lane prints PASS or FAIL
 with the reason and writes OUTDIR/<slug>.txt. The exit status is 1 when any lane fails.
 """
@@ -56,6 +56,25 @@ def wrapped(screen, expected):
                 if line.lstrip().startswith(tail) and text not in line:
                     return f"line {line!r} starts with the tail {tail!r} of {text!r}"
     return None
+
+
+def result_paths(screen):
+    """The paths a Check screen judged, newest first, each put back together from its wrapped lines."""
+    lines = screen.split("\n")
+    rules = [i for i, line in enumerate(lines) if line and set(line) <= {"─", "-"}]
+    paths, chunks = [], []
+    for line in lines[rules[1] + 1 : rules[-1]]:
+        if re.match(r"^ {3}(Kept|Eligible)  ", line):
+            paths.append("".join(chunks))
+            chunks = []
+        elif line.startswith(" ") and not line.startswith("   "):
+            chunks.append(line[1:])
+    return paths
+
+
+def same_path(shown, expected):
+    """A wrapped line loses a trailing space to the screen capture, so compare without spaces."""
+    return shown.replace(" ", "") == expected.replace(" ", "")
 
 
 def start(binary, cols, rows, *extra, env=None):
@@ -523,10 +542,11 @@ class Lanes:
             and re.search(r"Kept +\S", kept)
             and 0 <= eligible_at < kept_at
             and "dustpan may clean this when Clean arrives" in two
-            and any(line.rstrip().endswith("/scratch") for line in lines)
-            and "My\\ Folder" in pasted_field
-            and any(line.rstrip().endswith("/My Folder (1)") for line in pasted.split("\n"))
-            and "\\" not in "".join(line for line in pasted.split("\n") if "My Folder" in line)
+            and same_path(result_paths(two)[0], home + "/scratch")
+            and "My Folder (1)" in pasted_field
+            and "My\\ Folder" not in pasted_field
+            and same_path(result_paths(pasted)[0], home + "/My Folder (1)")
+            and "\\" not in result_paths(pasted)[0]
             and "Welcome." in back
         )
         self.report(17, True if ok else "check screen did not match; see check.txt", "Check: q j 1 are text, Ctrl+U clears, Kept and Eligible verdicts newest first, ~ expands, a pasted escaped path is cleaned up")
@@ -577,11 +597,162 @@ class Lanes:
         self.report(18, True if ok else "mouse did not match; see mouse.txt", "click selects, a second click opens, the Home crumb returns, the wheel moves the selection, 60x16 click opens Check")
 
 
+    def open_check(self, home, cols, rows):
+        self.start_in(home, cols, rows)
+        drive("keys", SESSION, "0", "Enter")
+        drive("wait", SESSION, "Type or paste a path", "3")
+
+    def submit(self):
+        drive("keys", SESSION, "Enter")
+        time.sleep(0.4)
+        return drive("screen", SESSION)
+
+    @staticmethod
+    def write_whitelist(home, body, mode=0o644):
+        folder = os.path.join(home, ".config", "dustpan")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "whitelist")
+        if os.path.exists(path):
+            os.chmod(path, 0o644)
+        with open(path, "w") as handle:
+            handle.write(body)
+        os.chmod(path, mode)
+
+    def lane19(self):
+        home = self.fixture_home("check-many", dirs=["scratch", "keepme", "My Folder (1)"])
+        self.write_whitelist(home, "~/keepme\n")
+        before = self.listing(home)
+        scratch, keepme = f"{home}/scratch", f"{home}/keepme"
+        self.open_check(home, 120, 40)
+        captures = {}
+        for name, text in {
+            "two lines": f"{scratch}\n{keepme}",
+            "terminal two-file drag": f"{scratch} {keepme} ",
+            "escaped name then a file": f"{home}/My\\ Folder\\ \\(1\\) {keepme} ",
+            "plain space, existing": f"{home}/My Folder (1)",
+            "plain space, missing": f"{home}/not here",
+        }.items():
+            drive("keys", SESSION, "C-u")
+            drive("paste", SESSION, text)
+            time.sleep(0.2)
+            field = drive("screen", SESSION).split("\n")[2]
+            captures[name] = (field, self.submit())
+        drive("stop", SESSION)
+        after = self.listing(home)
+        out = "".join(f"=== {name}: field ===\n{field}\n=== after Enter ===\n{screen}\n" for name, (field, screen) in captures.items())
+        self.save("check-many.txt", out + f"=== fixture before ===\n{before}\n=== fixture after ===\n{after}\n")
+        top = {name: result_paths(screen) for name, (_, screen) in captures.items()}
+        ok = (
+            all(same_path(a, b) for a, b in zip(top["two lines"][:2], [scratch, keepme]))
+            and all(same_path(a, b) for a, b in zip(top["terminal two-file drag"][:2], [scratch, keepme]))
+            and all(same_path(a, b) for a, b in zip(top["escaped name then a file"][:2], [f"{home}/My Folder (1)", keepme]))
+            and same_path(top["plain space, existing"][0], f"{home}/My Folder (1)")
+            and same_path(top["plain space, missing"][0], f"{home}/not here")
+            and top["plain space, missing"][1:5] == top["plain space, existing"][:4]
+            and top["plain space, existing"][1:5] == top["escaped name then a file"][:4]
+            and len(top["two lines"]) == 2
+            and top["terminal two-file drag"][2:] == top["two lines"]
+            and "Eligible" in captures["two lines"][1]
+            and "Kept" in captures["two lines"][1]
+            and before == after
+        )
+        self.report(19, True if ok else "paste of several paths did not match; see check-many.txt", "Check: a paste of two lines or two dragged files gets one result each, a plain space stays one path, never glued")
+
+    def lane20(self):
+        home = self.fixture_home("check-whitelist", dirs=["keepme"])
+        self.open_check(home, 120, 40)
+        first = self.type_and_submit(f"{home}/keepme")
+        self.write_whitelist(home, "~/keepme\n")
+        second = self.type_and_submit(f"{home}/keepme")
+        self.write_whitelist(home, "\n")
+        third = self.type_and_submit(f"{home}/keepme")
+        drive("stop", SESSION)
+        self.save("check-whitelist.txt", f"=== no whitelist ===\n{first}\n=== whitelist now names keepme ===\n{second}\n=== whitelist emptied ===\n{third}")
+
+        def newest(screen):
+            row = next((line for line in screen.split("\n") if re.match(r"^ {3}(Kept|Eligible)  ", line)), "")
+            return row.strip()
+
+        ok = (
+            newest(first).startswith("Eligible")
+            and newest(second).startswith("Kept")
+            and "whitelist" in newest(second)
+            and newest(third).startswith("Eligible")
+        )
+        self.report(20, True if ok else f"whitelist edit not seen: {newest(first)!r} {newest(second)!r} {newest(third)!r}", "Check: an edit to the whitelist is seen by the next Enter on the same screen")
+
+    def type_and_submit(self, text):
+        drive("text", SESSION, text)
+        return self.submit()
+
+    def lane21(self):
+        home = self.fixture_home("check-unreadable", dirs=["keepme"])
+        self.write_whitelist(home, "~/keepme\n", mode=0)
+        shots = {}
+        for cols in (60, 80, 100):
+            self.open_check(home, cols, 24)
+            shots[cols] = self.type_and_submit("/usr")
+            drive("stop", SESSION)
+        self.write_whitelist(home, "\n")
+        self.save("check-error.txt", "".join(f"=== {cols} columns ===\n{shot}\n" for cols, shot in shots.items()))
+
+        def flat(screen):
+            return " ".join(screen.split())
+
+        ok = all("nothing is cleaned until it can be read" in flat(shot) and "Permission denied" in flat(shot) for shot in shots.values())
+        self.report(21, True if ok else "the cause is cut off; see check-error.txt", "Check: an unreadable whitelist's error wraps over several lines at 60, 80 and 100 columns")
+
+    def lane22(self):
+        home = self.fixture_home("check-small", dirs=["scratch"])
+        wanted = {
+            "home": (
+                ["?"],
+                ["Move the cursor", "Open the entry", "Jump to an entry", "Show or close this help", "Quit now", "Wheel moves, click selects or opens", "1 Clean", "9 History", "0 Check a path", "? or Esc closes"],
+            ),
+            "about": (["3", "Enter", "?"], ["Back to Home", "Open Check a path or History now", "Quit now", "? or Esc closes"]),
+            "history": (["9", "Enter", "?"], ["Scroll", "Back to Home", "Quit now", "? or Esc closes"]),
+            "check": (["0", "Enter", "F1"], ["Check the path", "Back to Home", "Erase a letter", "Clear the field", "Scroll the results", "Quit now", "Paste a path, or drag one in from Finder", "? or Esc closes"]),
+        }
+        shots, missing = {}, []
+        for name, (keys, needles) in wanted.items():
+            self.start_in(home, 60, 16)
+            for key in keys:
+                drive("keys", SESSION, key)
+                time.sleep(0.25)
+            shots[name] = drive("screen", SESSION)
+            flat = " ".join(shots[name].replace("│", " ").split())
+            missing += [f"{name}: {n}" for n in needles if n not in flat]
+            drive("stop", SESSION)
+        self.start_in(home, 60, 16)
+        drive("keys", SESSION, "0", "Enter")
+        drive("wait", SESSION, "Type or paste a path", "3")
+        shots["check empty"] = drive("screen", SESSION)
+        flat = " ".join(shots["check empty"].split())
+        if "Try a folder like ~/Library/Caches, or drag one in from Finder." not in flat:
+            missing.append("check empty: hint")
+        drive("stop", SESSION)
+        self.save("small-60x16.txt", "".join(f"=== {name} ===\n{shot}\n" for name, shot in shots.items()))
+        self.report(22, True if not missing else f"cut off at 60x16: {missing}", "Every help overlay and the Check empty hint fit whole at 60x16")
+
+    def lane23(self):
+        home = self.fixture_home("check-backslash", dirs=["back"])
+        typed = f"{home}/back\\slash"
+        self.open_check(home, 120, 40)
+        by_typing = self.type_and_submit(typed)
+        drive("paste", SESSION, typed)
+        time.sleep(0.2)
+        by_pasting = self.submit()
+        drive("stop", SESSION)
+        self.save("check-backslash.txt", f"=== typed ===\n{by_typing}\n=== pasted ===\n{by_pasting}")
+        ok = same_path(result_paths(by_typing)[0], typed) and "\\" in result_paths(by_typing)[0] and same_path(result_paths(by_pasting)[0], f"{home}/backslash")
+        self.report(23, True if ok else "typed backslash dropped or pasted one kept; see check-backslash.txt", "Check: a typed backslash is part of the path, a pasted one is an escape")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("out")
     parser.add_argument("--bin", default=os.path.join(HERE, "../../../../target/release/dustpan"))
-    parser.add_argument("--only", default="0,1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18")
+    parser.add_argument("--only", default="0,1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19,20,21,22,23")
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
     lanes = Lanes(args.out, os.path.abspath(args.bin))

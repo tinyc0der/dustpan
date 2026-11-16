@@ -6,6 +6,7 @@ use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
 use crate::probe::{self, Owner, OwnerState, Probe, ProcessTable, Seen};
 use crate::protect::{Bundles, LiveChecks, Policy, Position, ScopeOwner, Step};
+use crate::sink::Cancel;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -33,6 +34,8 @@ pub struct Pass<'a> {
     /// False while the stored spelling of a path is judged, which has no other spelling.
     checks_spelling: bool,
     bundles: Bundles,
+    /// Once set, the pass takes no more live evidence (SAFE-20).
+    stop: Option<&'a Cancel>,
 }
 
 /// What a pass has observed of the running system. Each part is taken once, on first need. The
@@ -121,7 +124,22 @@ impl<'a> Pass<'a> {
             follows_leaf_link: true,
             checks_spelling: true,
             bundles: Bundles::Named,
+            stop: None,
         }
+    }
+
+    /// Takes no process table or snapshot of open files once `cancel` is set. What it would
+    /// have taken reads as unknown, which keeps the path; `Recheck` reports the signal and
+    /// shares none of it.
+    pub(super) fn stop_on(self, cancel: Option<&'a Cancel>) -> Self {
+        Self {
+            stop: cancel,
+            ..self
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.stop.is_some_and(Cancel::is_set)
     }
 
     /// A pass for `Recheck`: it reads the batch's live evidence instead of taking its own where
@@ -365,7 +383,7 @@ impl<'a> Pass<'a> {
     fn judge_link_target(&mut self, link: &AbsPath) -> Option<ShapeReason> {
         match probe::physical(self.probe, link) {
             Seen::Found(target) => {
-                let mut pass = Pass::new(self.policy, self.probe);
+                let mut pass = Pass::new(self.policy, self.probe).stop_on(self.stop);
                 pass.follows_leaf_link = false;
                 pass.live = std::mem::take(&mut self.live);
                 let verdict = pass.judge(&target, None, &[]).0;
@@ -514,9 +532,14 @@ impl<'a> Pass<'a> {
     /// seeded with its batch's evidence.
     fn processes(&mut self) -> &Seen<ProcessTable> {
         let probe = self.probe;
-        self.live
-            .processes
-            .get_or_insert_with(|| Arc::new(probe.processes()))
+        let stopped = self.stopped();
+        self.live.processes.get_or_insert_with(|| {
+            Arc::new(if stopped {
+                Seen::Unknown(probe::Unseen::Failed)
+            } else {
+                probe.processes()
+            })
+        })
     }
 
     /// The direct sign that a path is live: a process holds it open, or a file anywhere below
@@ -533,10 +556,15 @@ impl<'a> Pass<'a> {
         live: &LiveChecks<'_>,
     ) -> Option<LiveReason> {
         let (probe, fold_case) = (self.probe, self.policy.folds_case());
-        let open = &**self
-            .live
-            .open
-            .get_or_insert_with(|| Arc::new(OpenIndex::new(probe.open_files(), fold_case)));
+        let stopped = self.stopped();
+        let open = &**self.live.open.get_or_insert_with(|| {
+            let files = if stopped {
+                Seen::Unknown(probe::Unseen::Failed)
+            } else {
+                probe.open_files()
+            };
+            Arc::new(OpenIndex::new(files, fold_case))
+        });
         let scratch = &mut self.scratch;
         let quiet = parent.is_some_and(|at| {
             let folder = &mut self.frames[at];

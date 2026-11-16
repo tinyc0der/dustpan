@@ -475,3 +475,24 @@ fn a_trash_move_that_takes_another_object_logs_what_moved_and_where() {
         "{rows}"
     );
 }
+
+#[test]
+fn no_live_probe_runs_after_a_signal_during_the_process_probe() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let at_signal = Arc::new(AtomicUsize::new(usize::MAX));
+    let seen = Arc::clone(&at_signal);
+    let fs = fixture();
+    let ran = run_signalled(&fs, BLOB, Sink::Delete, move |fs, cancel| {
+        fs.on_process_probe(move |fs| {
+            cancel.set();
+            seen.store(fs.open_file_calls(), Ordering::SeqCst);
+        });
+    });
+    assert_eq!(ran.outcome, Outcome::Cancelled);
+    assert_eq!(
+        fs.open_file_calls(),
+        at_signal.load(Ordering::SeqCst),
+        "a snapshot of open files was taken after the signal"
+    );
+    assert!(fs.exists(BLOB));
+}

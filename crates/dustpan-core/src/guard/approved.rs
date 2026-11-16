@@ -256,8 +256,9 @@ impl Recheck<'_> {
     /// approval, evidence as old as [`Lease::bound`] is taken once more, a leaf's included,
     /// since a slow probe ages what it returns; if the new evidence is that old too, the
     /// candidate is kept (`LiveReason::SlowProbe`). So no approval rests on evidence older than
-    /// the bound, the survey's and the probes' own time included. Never refreshes the identity
-    /// to approve a replacement.
+    /// the bound, the survey's and the probes' own time included. A signal stops the next
+    /// probe, and the candidate is cancelled (SAFE-20). Never refreshes the identity to approve
+    /// a replacement.
     #[expect(
         clippy::result_large_err,
         reason = "both sides carry the candidate; boxing adds an allocation per candidate"
@@ -288,7 +289,8 @@ impl Recheck<'_> {
         let seeded = self.fresh(started);
         let taken = self.taken(&seeded).unwrap_or(started);
         let found = candidate.identity();
-        let mut pass = Pass::with_evidence(policy, probe, seeded.clone());
+        let stop = self.cancel;
+        let mut pass = Pass::with_evidence(policy, probe, seeded.clone()).stop_on(stop);
         // The pass binds identity in layer 1, before layer 3 asks who has the path open.
         let (verdict, before) = pass.judge(candidate.path(), None, &candidate.rule().owners);
         let mut held = pass.evidence();
@@ -302,9 +304,8 @@ impl Recheck<'_> {
             // A swap while the owner probe ran leaves a path layer 1 never saw.
             (Verdict::Eligible, Some(_)) => match bind(candidate.path(), probe) {
                 Ok((after, kind)) if after == found => {
-                    let mut inside = Pass::contents(policy, probe, held);
+                    let mut inside = Pass::contents(policy, probe, held).stop_on(stop);
                     let path = candidate.path();
-                    let stop = self.cancel;
                     let manifest = survey::survey(
                         &mut inside,
                         probe,
@@ -321,6 +322,10 @@ impl Recheck<'_> {
                 Err(rejection) => Err(rejection),
             },
         };
+        // A pass the signal stopped holds unknowns in place of the probes it skipped.
+        if self.cancelled() {
+            return Err(Rejection::Cancelled);
+        }
         self.keep(started, &seeded, held);
         let (manifest, kind, scopes) = surveyed?;
         // Shared evidence and a survey age the evidence past the lease; a fresh leaf's ages
@@ -361,7 +366,8 @@ impl Recheck<'_> {
             return Err(Rejection::Cancelled);
         }
         let started = self.clock.elapsed();
-        let mut pass = Pass::with_evidence(&self.guard.policy, self.probe, Evidence::default());
+        let mut pass = Pass::with_evidence(&self.guard.policy, self.probe, Evidence::default())
+            .stop_on(self.cancel);
         let (verdict, now) = pass.judge(candidate.path(), None, &candidate.rule().owners);
         let mut checked = match (verdict, now) {
             (Verdict::Kept(reason), _) => Err(Rejection::Kept(reason)),
@@ -382,6 +388,9 @@ impl Recheck<'_> {
                     reason: Box::new(KeptReason::Live(reason)),
                 },
             )));
+        }
+        if self.cancelled() {
+            return Err(Rejection::Cancelled);
         }
         let Evidence { processes, open } = pass.evidence();
         self.processes = processes.map(|value| Aged {

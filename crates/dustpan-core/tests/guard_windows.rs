@@ -221,3 +221,36 @@ fn docker_state_keeps_the_folders_that_hold_it() {
         "{verdict:?}"
     );
 }
+
+fn load(body: &str) -> Result<Whitelist, dustpan_core::whitelist::LoadError> {
+    dustpan_core::whitelist::load(
+        Os::Windows,
+        &p(HOME),
+        &p(r"C:\Users\alice\AppData\Roaming\dustpan\whitelist"),
+        dustpan_core::config::Read::Text(body.into()),
+    )
+}
+
+#[test]
+fn a_tilde_with_doubled_backslashes_still_names_the_home_folder() {
+    let wl = load("~\\\\Projects\\keep\r\n~/\\x\r\n").unwrap();
+    let named: Vec<String> = wl
+        .entries()
+        .iter()
+        .take(2)
+        .map(|e| match &e.pattern {
+            dustpan_core::whitelist::Pattern::Path(path) => path.to_string(),
+            dustpan_core::whitelist::Pattern::FinderMetadata => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [r"C:\Users\alice\Projects\keep", r"C:\Users\alice\x"]
+    );
+}
+
+#[test]
+fn a_tilde_followed_by_a_drive_stops_the_load() {
+    let err = load("~/ok\n~/D:\\work\n").unwrap_err();
+    assert!(err.to_string().contains("line 2"), "{err}");
+}

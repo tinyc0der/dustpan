@@ -96,6 +96,8 @@ pub enum LoadError {
 pub enum EntryError {
     Shape(ShapeError),
     Glob(GlobError),
+    /// `~/C:\x` on Windows: the home's name is followed by a whole path of its own.
+    OutsideHome,
 }
 
 impl fmt::Display for EntryError {
@@ -103,6 +105,7 @@ impl fmt::Display for EntryError {
         match self {
             Self::Shape(why) => why.fmt(f),
             Self::Glob(why) => why.fmt(f),
+            Self::OutsideHome => f.write_str("it starts at the home folder but names another"),
         }
     }
 }
@@ -129,8 +132,6 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-/// What follows a leading `~`, `$HOME` or `${HOME}` that ends at a separator or the line's end,
-/// with every separator after it dropped, so `~//x` is the home's `x` and never `/x`.
 fn under_home(os: Os, raw: &str) -> Option<&str> {
     let rest = ["~", "$HOME", "${HOME}"]
         .iter()
@@ -144,7 +145,13 @@ fn expand(os: Os, home: &AbsPath, raw: &str) -> Result<Pattern, EntryError> {
         return Ok(Pattern::FinderMetadata);
     }
     let expanded = match under_home(os, raw) {
-        Some(rest) => home.as_path().join(rest),
+        Some(rest) => {
+            let joined = home.as_path().join(rest);
+            if !joined.starts_with(home.as_path()) {
+                return Err(EntryError::OutsideHome);
+            }
+            joined
+        }
         None => raw.into(),
     };
     let path = AbsPath::parse(expanded.as_os_str()).map_err(EntryError::Shape)?;
@@ -188,9 +195,9 @@ impl Whitelist {
 /// Parses the whitelist `file` as the binary read it.
 ///
 /// A line is trimmed (so CRLF endings and trailing spaces do not matter), and blank lines and
-/// lines that start with `#` are skipped. A line that cannot name a place, such as a relative
-/// path, one with `..`, or a bracket Mole's shell would read another way, stops the load:
-/// skipping it would protect less than the user wrote.
+/// lines that start with `#` are skipped. A line that cannot name a place stops the load: a
+/// relative path, one with `..`, an unknown class, a backward range, or a bracket element of
+/// more than one character.
 pub fn load(os: Os, home: &AbsPath, file: &AbsPath, read: Read) -> Result<Whitelist, LoadError> {
     let text = match read {
         Read::Missing => return Ok(Whitelist::defaults(os, home)),

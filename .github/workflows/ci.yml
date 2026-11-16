@@ -55,3 +55,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  parity:
+    name: parity (macos-latest)
+    runs-on: macos-latest
+    env:
+      MOLE_VERSION: "1.67.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Mole
+        run: brew install mole
+      - name: Record the Mole version
+        run: |
+          mo --version | tee mole-version.txt
+          grep -q "Mole version ${MOLE_VERSION}\$" mole-version.txt || {
+            echo "::error::Homebrew installed a Mole other than the pinned ${MOLE_VERSION}. Check the parsers against it, then update MOLE_VERSION and SUPPORTED_MOLE."
+            exit 1
+          }
+      - name: Unit tests
+        run: cargo test --test parity
+      - name: Parity on the standard fixture
+        run: |
+          for c in clean purge installer; do
+            echo "### scripts/parity.sh $c" | tee -a "$GITHUB_STEP_SUMMARY"
+            scripts/parity.sh "$c" --save "$RUNNER_TEMP/mole-captures" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mole-captures-${{ env.MOLE_VERSION }}
+          path: ${{ runner.temp }}/mole-captures
+          if-no-files-found: error

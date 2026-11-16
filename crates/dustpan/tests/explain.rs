@@ -318,3 +318,112 @@ fn xdg_config_home_names_the_folder_the_whitelist_is_read_from() {
         "{out}"
     );
 }
+
+/// Runs `explain` against a whitelist that must stop it. The deadline turns a read that blocks
+/// into a failure instead of a hung test.
+#[cfg(unix)]
+fn stops_on_the_whitelist(home: &Path, cause: &str) {
+    explain(home)
+        .timeout(std::time::Duration::from_secs(20))
+        .arg("~/Projects/keep/a")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::contains("cannot read the whitelist"))
+        .stderr(predicate::str::contains(cause));
+}
+
+#[cfg(unix)]
+fn config_dir(home: &Path) -> std::path::PathBuf {
+    let dir = home.join(".config").join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_that_links_to_a_missing_file_stops_the_command() {
+    let home = fixture_home();
+    let link = config_dir(home.path()).join("whitelist");
+    std::os::unix::fs::symlink(home.path().join("gone").join("whitelist"), &link).unwrap();
+    stops_on_the_whitelist(home.path(), "does not exist");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_config_folder_that_links_to_an_unmounted_volume_stops_the_command() {
+    let home = fixture_home();
+    let config = home.path().join(".config");
+    std::os::unix::fs::symlink("/Volumes/dustpan-test-no-such-volume/config", &config).unwrap();
+    stops_on_the_whitelist(home.path(), config.to_str().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_that_is_a_fifo_stops_the_command() {
+    let home = fixture_home();
+    let fifo = config_dir(home.path()).join("whitelist");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    stops_on_the_whitelist(home.path(), "not a regular file");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_that_links_to_a_device_stops_the_command() {
+    let home = fixture_home();
+    let link = config_dir(home.path()).join("whitelist");
+    std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+    stops_on_the_whitelist(home.path(), "not a regular file");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_larger_than_a_hand_kept_list_stops_the_command() {
+    let home = fixture_home();
+    let body = "# padding line for the size cap test\n".repeat(64 * 1024);
+    write_whitelist(home.path(), &body);
+    stops_on_the_whitelist(home.path(), "larger than");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_xdg_config_home_that_holds_dot_dot_is_named_as_the_cause() {
+    let home = fixture_home();
+    let xdg = fresh_dir();
+    let spelled = xdg.path().join("..").join(xdg.path().file_name().unwrap());
+    explain(home.path())
+        .env("XDG_CONFIG_HOME", &spelled)
+        .arg("~/Projects/keep/a")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(spelled.to_str().unwrap()))
+        .stderr(predicate::str::contains("`..`"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_entry_written_through_a_symlinked_folder_keeps_the_folder_behind_it() {
+    let home = fixture_home();
+    std::fs::create_dir_all(home.path().join("data/keep/x")).unwrap();
+    std::os::unix::fs::symlink(home.path().join("data"), home.path().join("alias")).unwrap();
+    let entry = home.path().join("alias/keep");
+    write_whitelist(home.path(), &format!("{}\n", entry.to_str().unwrap()));
+    let out = stdout(explain(home.path()).args(["~/data/keep/x", "~/data"]));
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].contains("protected by your whitelist"), "{out}");
+    assert!(lines[1].contains("protected by your whitelist"), "{out}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn an_entry_keeps_a_folder_stored_in_the_other_normalization_form() {
+    let home = fixture_home();
+    std::fs::create_dir_all(home.path().join("Docs/Cafe\u{301}/sub")).unwrap();
+    write_whitelist(home.path(), "~/Docs/Caf\u{e9}\n");
+    let out = stdout(explain(home.path()).arg("~/Docs/Cafe\u{301}/sub"));
+    assert!(out.contains("protected by your whitelist"), "{out}");
+}

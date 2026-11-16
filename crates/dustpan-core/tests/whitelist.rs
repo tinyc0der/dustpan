@@ -267,3 +267,281 @@ fn the_finder_sentinel_keeps_ds_store_files() {
     );
     assert_eq!(outcome(&v), "whitelist/whitelisted");
 }
+
+#[test]
+fn a_tilde_followed_by_doubled_separators_still_names_the_home_folder() {
+    let wl = text("~//Projects/keep\n~///a\n~//\n");
+    assert_eq!(
+        patterns(&wl, Origin::User),
+        [
+            "/Users/alice/Projects/keep",
+            "/Users/alice/a",
+            "/Users/alice"
+        ]
+    );
+}
+
+#[test]
+fn home_variables_expand_like_a_tilde() {
+    let wl = text("$HOME/Projects/keep\n${HOME}/b\n$HOME\n${HOME}//c\n");
+    assert_eq!(
+        patterns(&wl, Origin::User),
+        [
+            "/Users/alice/Projects/keep",
+            "/Users/alice/b",
+            "/Users/alice",
+            "/Users/alice/c"
+        ]
+    );
+    let err = load(Read::Text("~/ok\n$HOMEX/y\n".into())).unwrap_err();
+    assert!(err.to_string().contains("line 2"), "{err}");
+}
+
+fn judge_on(os: Os, home: &str, fs: &FakeProbe, wl: Whitelist, path: &str) -> Verdict {
+    let env = |_: &str| None;
+    let guard = Guard::new(
+        GuardInputs {
+            os,
+            home: p(home),
+            env: &env,
+            whitelist: wl,
+        },
+        fs,
+    )
+    .unwrap();
+    guard.pass(fs).evaluate(p(path)).verdict().clone()
+}
+
+fn kept(fs: &FakeProbe, entries: &str, cases: &[(&str, &str)]) {
+    for &(path, want) in cases {
+        let got = outcome(&judge(fs, text(entries), path));
+        assert_eq!(got, want, "entries {entries:?}, path {path}");
+    }
+}
+
+#[test]
+fn question_marks_and_brackets_match_one_character_as_in_mole() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Library/Caches/com.foo.bar")
+        .dir("/Users/alice/Library/Caches/com.foo.bbar")
+        .dir("/Users/alice/Library/Caches/com.goo.bar")
+        .dir("/Users/alice/Library/Caches/com.zoo.bar")
+        .dir("/Users/alice/Library/Caches/v1")
+        .dir("/Users/alice/Library/Caches/vx")
+        .dir("/Users/alice/Library/Caches/Stra\u{df}e");
+    let w = "whitelist/whitelisted";
+    kept(
+        &fs,
+        "~/Library/Caches/com.foo.?ar\n",
+        &[
+            ("/Users/alice/Library/Caches/com.foo.bar", w),
+            ("/Users/alice/Library/Caches/com.foo.bbar", "eligible"),
+        ],
+    );
+    kept(
+        &fs,
+        "~/Library/Caches/com.[f-h]oo.bar\n",
+        &[
+            ("/Users/alice/Library/Caches/com.goo.bar", w),
+            ("/Users/alice/Library/Caches/com.zoo.bar", "eligible"),
+        ],
+    );
+    kept(
+        &fs,
+        "~/Library/Caches/com.[!z]oo.bar\n",
+        &[
+            ("/Users/alice/Library/Caches/com.foo.bar", w),
+            ("/Users/alice/Library/Caches/com.zoo.bar", "eligible"),
+        ],
+    );
+    kept(
+        &fs,
+        "~/Library/Caches/v[[:digit:]]\n",
+        &[
+            ("/Users/alice/Library/Caches/v1", w),
+            ("/Users/alice/Library/Caches/vx", "eligible"),
+        ],
+    );
+    kept(
+        &fs,
+        "~/Library/Caches/Stra?e\n",
+        &[("/Users/alice/Library/Caches/Stra\u{df}e", w)],
+    );
+}
+
+#[test]
+fn a_bracket_in_a_real_folder_name_still_keeps_that_folder() {
+    let fs = FakeProbe::new().dir("/Users/alice/Projects/mix/[2020] Album/disc");
+    kept(
+        &fs,
+        "~/Projects/mix/[2020] Album\n",
+        &[
+            (
+                "/Users/alice/Projects/mix/[2020] Album/disc",
+                "whitelist/whitelisted",
+            ),
+            (
+                "/Users/alice/Projects/mix",
+                "whitelist/contains-whitelisted",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_bracket_that_cannot_be_matched_as_mole_would_stops_the_load() {
+    for bad in ["~/a/[[:nope:]]", "~/a/[z-a]", "~/a/[[=e=]]"] {
+        let err = load(Read::Text(format!("~/ok\n{bad}\n"))).unwrap_err();
+        let said = err.to_string();
+        assert!(said.contains("line 2"), "{bad}: {said}");
+    }
+}
+
+const NFC: &str = "Caf\u{e9}";
+const NFD: &str = "Cafe\u{301}";
+
+#[test]
+fn an_entry_keeps_a_folder_stored_in_the_other_normalization_form() {
+    let nfd_disk = FakeProbe::new().dir(&format!("/Users/alice/Docs/{NFD}/sub"));
+    kept(
+        &nfd_disk,
+        &format!("~/Docs/{NFC}\n"),
+        &[
+            (
+                &format!("/Users/alice/Docs/{NFD}/sub"),
+                "whitelist/whitelisted",
+            ),
+            (&format!("/Users/alice/Docs/{NFD}"), "whitelist/whitelisted"),
+        ],
+    );
+    kept(
+        &nfd_disk,
+        &format!("~/Docs/{NFC}/sub\n"),
+        &[(
+            &format!("/Users/alice/Docs/{NFD}"),
+            "whitelist/contains-whitelisted",
+        )],
+    );
+    let nfc_disk = FakeProbe::new().dir(&format!("/Users/alice/Docs/{NFC}/sub/f"));
+    kept(
+        &nfc_disk,
+        &format!("~/Docs/{NFD}/sub\n"),
+        &[
+            (
+                &format!("/Users/alice/Docs/{NFC}/sub/f"),
+                "whitelist/whitelisted",
+            ),
+            (
+                &format!("/Users/alice/Docs/{NFC}"),
+                "whitelist/contains-whitelisted",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn an_entry_keeps_a_folder_whose_name_differs_only_in_non_ascii_case() {
+    let fs = FakeProbe::new().dir("/Users/alice/V/\u{e9}t\u{e9}/f");
+    let w = "whitelist/whitelisted";
+    kept(
+        &fs,
+        "~/V/\u{c9}T\u{c9}\n",
+        &[("/Users/alice/V/\u{e9}t\u{e9}/f", w)],
+    );
+    kept(
+        &fs,
+        "~/V/E\u{301}*\n",
+        &[("/Users/alice/V/\u{e9}t\u{e9}/f", w)],
+    );
+}
+
+#[test]
+fn an_entry_written_through_a_symlinked_folder_keeps_the_folder_behind_it() {
+    let fs = FakeProbe::new()
+        .symlink("/tmp", "private/tmp")
+        .dir("/private/tmp/w/keep/x");
+    kept(
+        &fs,
+        "/tmp/w/keep\n",
+        &[
+            ("/private/tmp/w/keep/x", "whitelist/whitelisted"),
+            ("/private/tmp/w", "whitelist/contains-whitelisted"),
+        ],
+    );
+    kept(
+        &fs,
+        "/tmp/w/keep/later/*\n",
+        &[("/private/tmp/w/keep", "whitelist/contains-whitelisted")],
+    );
+}
+
+#[test]
+fn an_entry_that_is_a_link_keeps_what_lies_behind_it() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Library/Caches/build-1/x")
+        .symlink("/Users/alice/latest", "/Users/alice/Library/Caches/build-1");
+    kept(
+        &fs,
+        "~/latest\n",
+        &[(
+            "/Users/alice/Library/Caches/build-1/x",
+            "whitelist/whitelisted",
+        )],
+    );
+}
+
+#[test]
+fn an_entry_under_a_linked_home_root_keeps_the_physical_home_on_linux() {
+    let fs = FakeProbe::new()
+        .symlink("/home", "var/home")
+        .dir("/var/home/alice/keep/x");
+    let home = "/var/home/alice";
+    let wl = whitelist::load(
+        Os::Linux,
+        &p(home),
+        &p("/var/home/alice/.config/dustpan/whitelist"),
+        Read::Text("/home/alice/keep\n".into()),
+    )
+    .unwrap();
+    let v = judge_on(Os::Linux, home, &fs, wl, "/var/home/alice/keep/x");
+    assert_eq!(outcome(&v), "whitelist/whitelisted");
+}
+
+#[test]
+fn an_entry_spelled_through_the_data_volume_firmlink_keeps_the_root_spelling() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Projects/keep/child")
+        .alias("/System/Volumes/Data/Users", "/Users");
+    kept(
+        &fs,
+        "/System/Volumes/Data/Users/alice/Projects/keep\n",
+        &[
+            ("/Users/alice/Projects/keep/child", "whitelist/whitelisted"),
+            ("/Users/alice/Projects", "whitelist/contains-whitelisted"),
+        ],
+    );
+}
+
+#[test]
+fn an_entry_whose_folders_cannot_be_inspected_stops_the_guard_build() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Projects")
+        .unreadable("/Users/alice/Locked");
+    let env = |_: &str| None;
+    let built = Guard::new(
+        GuardInputs {
+            os: Os::MacOs,
+            home: p(HOME),
+            env: &env,
+            whitelist: text("~/Locked/keep\n"),
+        },
+        &fs,
+    );
+    let Err(err) = built else {
+        panic!("a whitelist entry whose spellings cannot be found must not build a guard");
+    };
+    assert!(
+        err.to_string().contains("/Users/alice/Locked/keep"),
+        "{err}"
+    );
+}

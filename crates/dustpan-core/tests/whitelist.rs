@@ -348,10 +348,21 @@ fn question_marks_and_brackets_match_one_character_as_in_mole() {
     );
     kept(
         &fs,
+        "~/Library/Caches/v[!0-9]\n",
+        &[
+            ("/Users/alice/Library/Caches/vx", w),
+            ("/Users/alice/Library/Caches/v1", "eligible"),
+        ],
+    );
+    kept(
+        &fs,
         "~/Library/Caches/com.[!z]oo.bar\n",
         &[
             ("/Users/alice/Library/Caches/com.foo.bar", w),
-            ("/Users/alice/Library/Caches/com.zoo.bar", "eligible"),
+            (
+                "/Users/alice/Library/Caches/com.zoo.bar",
+                "whitelist/whitelisted",
+            ),
         ],
     );
     kept(
@@ -487,6 +498,25 @@ fn an_entry_that_is_a_link_keeps_what_lies_behind_it() {
             "/Users/alice/Library/Caches/build-1/x",
             "whitelist/whitelisted",
         )],
+    );
+}
+
+#[test]
+fn a_folder_reached_through_a_link_is_matched_by_its_name_as_stored() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Library/Caches/[z-a]/*/x")
+        .dir("/Users/alice/Library/Caches/[z-a]/other/x")
+        .symlink("/Users/alice/latest", "/Users/alice/Library/Caches/[z-a]/*");
+    kept(
+        &fs,
+        "~/latest\n",
+        &[
+            (
+                "/Users/alice/Library/Caches/[z-a]/*/x",
+                "whitelist/whitelisted",
+            ),
+            ("/Users/alice/Library/Caches/[z-a]/other/x", "eligible"),
+        ],
     );
 }
 

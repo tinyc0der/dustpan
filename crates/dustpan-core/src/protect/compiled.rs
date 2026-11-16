@@ -236,7 +236,7 @@ impl Policy {
             id_rows: Vec::new(),
             data_volume: None,
             live: LiveRules::compile(table, inputs)?,
-            whitelist: Whitelisted::compile(&inputs.whitelist, table.fold_case),
+            whitelist: Whitelisted::empty(table.fold_case),
         };
         let is_home = |row: &&Row| matches!(row.at, Anchor::Home(_));
         let rooted = table.critical.iter().filter(|r| !is_home(r));
@@ -281,6 +281,12 @@ impl Policy {
             }
         }
         policy.data_volume = Self::verified_firmlinks(table, probe)?;
+        policy.whitelist = Whitelisted::compile(
+            &inputs.whitelist,
+            table.fold_case,
+            |path| policy.canonical(path).into_owned(),
+            probe,
+        )?;
         Ok(policy)
     }
 

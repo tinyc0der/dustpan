@@ -3,6 +3,8 @@
 mod os;
 mod privilege;
 mod probe;
+mod terminal;
+mod volume;
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -31,3 +33,5 @@ mod windows {
 pub use os::os_facts;
 pub use privilege::is_root;
 pub use probe::LiveProbe;
+pub use terminal::{console_is_utf8, on_termination};
+pub use volume::{BootVolume, boot_volume};

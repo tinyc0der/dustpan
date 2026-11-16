@@ -671,6 +671,7 @@ mod tests {
         assert_eq!(state(50, 12).focus(), Focus::Commands);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_paste_fills_the_field_and_enter_checks_it() {
         let dir = tempfile::tempdir().unwrap();

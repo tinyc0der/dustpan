@@ -318,6 +318,7 @@ mod tests {
         ])
     }
 
+    #[cfg(unix)]
     fn lines(view: &CheckView) -> Vec<String> {
         rows(&Look::new(false, true), view, 100)
             .iter()
@@ -325,6 +326,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_plain_folder_in_the_home_is_eligible_in_plain_words() {
         let dir = tempdir();
@@ -343,16 +345,13 @@ mod tests {
         assert!(view.input.is_empty() && view.error.is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_protected_path_is_kept_with_the_reason_explain_prints() {
         let dir = tempdir();
         let env = fixture_env(dir.path());
         let mut view = CheckView::open(&env);
-        let protected = if cfg!(windows) {
-            r"C:\Windows"
-        } else {
-            "/System"
-        };
+        let protected = if cfg!(windows) { r"C:\Windows" } else { "/usr" };
         view.paste(protected);
         view.submit(&env);
         let lines = lines(&view);
@@ -368,6 +367,7 @@ mod tests {
         assert!(lines[1].contains(&expected) || lines[2].contains(&expected));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_tilde_path_is_checked_against_the_home_folder() {
         let dir = tempdir();
@@ -383,6 +383,7 @@ mod tests {
         assert!(!shown.contains('~'), "{shown}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn results_stack_newest_first() {
         let dir = tempdir();

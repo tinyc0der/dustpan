@@ -176,6 +176,7 @@ fn check_starts_with_a_placeholder_and_a_promise_to_only_read() {
     insta::assert_snapshot!(text);
 }
 
+#[cfg(unix)]
 #[test]
 fn check_shows_typed_text_and_stacks_two_verdicts_newest_first() {
     let (_dir, root) = canonical_home();
@@ -190,11 +191,7 @@ fn check_shows_typed_text_and_stacks_two_verdicts_newest_first() {
     );
     let s = type_in(s, "~/scratch");
     let s = update(s, Input::Open);
-    let protected = if cfg!(windows) {
-        "C:\\Windows"
-    } else {
-        "/System"
-    };
+    let protected = if cfg!(windows) { "C:\\Windows" } else { "/usr" };
     let s = type_in(s, protected);
     let s = update(s, Input::Open);
     let text = screen(&s);
@@ -204,14 +201,11 @@ fn check_shows_typed_text_and_stacks_two_verdicts_newest_first() {
     assert!(text.contains("dustpan may clean this when Clean arrives"));
 }
 
+#[cfg(unix)]
 #[test]
 fn check_at_the_smallest_size_keeps_the_field_and_a_result() {
     let (_home, env) = home_with_log(None);
-    let protected = if cfg!(windows) {
-        "C:\\Windows"
-    } else {
-        "/System"
-    };
+    let protected = if cfg!(windows) { "C:\\Windows" } else { "/usr" };
     let s = check(unicode(), 60, 16, env);
     let s = update(type_in(s, protected), Input::Open);
     let text = screen(&s);
@@ -223,6 +217,7 @@ fn check_at_the_smallest_size_keeps_the_field_and_a_result() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_pasted_escaped_path_with_a_trailing_space_is_checked_as_the_real_path() {
     if cfg!(windows) {
@@ -251,7 +246,7 @@ fn ascii_mode_draws_only_ascii_and_no_color_draws_no_color_on_every_screen() {
                 &[Input::Jump(key), Input::Open],
             );
             let s = if key == 0 {
-                update(type_in(s, "/System"), Input::Open)
+                update(type_in(s, "/usr"), Input::Open)
             } else {
                 s
             };

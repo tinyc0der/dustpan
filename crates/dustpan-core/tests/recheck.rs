@@ -118,7 +118,11 @@ fn a_file_opened_after_discovery_is_refused_at_the_sink() {
     let candidate = discover(&guard, &fs);
     let snapshots = fs.open_file_calls();
     approve(&guard, &fs, candidate).unwrap();
-    assert_eq!(fs.open_file_calls(), snapshots + 1);
+    assert_eq!(
+        fs.open_file_calls(),
+        snapshots + 2,
+        "one for the folder, one after its survey"
+    );
 }
 
 #[test]
@@ -255,7 +259,11 @@ fn recheck_takes_its_own_process_table() {
     let candidate = discover(&guard, &fs);
     let before = fs.process_calls();
     let _ = approve(&guard, &fs, candidate);
-    assert_eq!(fs.process_calls(), before + 1);
+    assert_eq!(
+        fs.process_calls(),
+        before + 2,
+        "one for the folder, one after its survey"
+    );
 }
 
 #[test]
@@ -322,7 +330,8 @@ fn no_lease_takes_fresh_evidence_for_every_candidate() {
     batch.approve(second).unwrap();
     assert_eq!(
         (fs.process_calls(), fs.open_file_calls()),
-        (before.0 + 2, before.1 + 2)
+        (before.0 + 4, before.1 + 4),
+        "each folder takes both before and after its survey"
     );
 }
 
@@ -442,4 +451,112 @@ fn a_name_with_a_control_byte_is_judged_not_refused() {
 #[test]
 fn a_link_inside_is_judged_as_a_link_not_by_its_target() {
     approves(&fixture().symlink(&format!("{CACHE}/docs"), "/Users/alice/Documents"));
+}
+
+/// Approves `at` in a batch on `clock`, after `arm` has set what happens during the survey.
+#[expect(
+    clippy::result_large_err,
+    reason = "mirrors Recheck::approve, which hands the candidate back"
+)]
+fn approve_during(
+    fs: &FakeProbe,
+    at: &str,
+    lease: Lease,
+    arm: impl FnOnce(&FakeProbe, Arc<FixedClock>),
+) -> Result<Approved, Refused> {
+    let guard = guard(fs);
+    let candidate = discover_at(&guard, fs, at);
+    let clock = Arc::new(clock());
+    arm(fs, Arc::clone(&clock));
+    guard.recheck(fs, &*clock, lease).approve(candidate)
+}
+
+#[test]
+fn a_survey_that_outlasts_its_deadline_in_its_last_listing_is_refused() {
+    let fs = fixture()
+        .file(&format!("{CACHE}/one"))
+        .file(&format!("{CACHE}/two"));
+    let refused = approve_during(&fs, CACHE, Lease::NONE, |fs, clock| {
+        fs.after_listing(CACHE, move |_| clock.advance(Duration::from_secs(31)));
+    })
+    .unwrap_err();
+    assert!(
+        matches!(
+            refused.rejection,
+            Rejection::Kept(KeptReason::Contents(ContentsReason::Unbounded(
+                Bound::Deadline(_)
+            )))
+        ),
+        "{:?}",
+        refused.rejection
+    );
+}
+
+#[test]
+fn a_file_opened_during_the_survey_keeps_the_folder() {
+    let held = format!("{CACHE}/one");
+    let fs = fixture().file(&held);
+    let opened = held.clone();
+    let refused = approve_during(&fs, CACHE, Lease::NONE, move |fs, _| {
+        fs.after_listing(CACHE, move |fs| fs.open_now(9, &opened));
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&refused.rejection, Rejection::Kept(KeptReason::Live(LiveReason::InUse { pid, file }))
+            if pid.0 == 9 && *file == p(&held)),
+        "{:?}",
+        refused.rejection
+    );
+}
+
+/// A batch keeps its evidence while it is younger than the lease, even across a survey; once
+/// the survey has aged it past the lease, the candidate is judged again on new evidence.
+#[test]
+fn a_survey_longer_than_the_lease_takes_the_evidence_again() {
+    let held = format!("{CACHE}/one");
+    let open_after = |by: Duration| {
+        let fs = fixture().file(&held);
+        let opened = held.clone();
+        approve_during(&fs, CACHE, Lease::BATCH, move |fs, clock| {
+            fs.after_listing(CACHE, move |fs| {
+                fs.open_now(9, &opened);
+                clock.advance(by);
+            });
+        })
+    };
+    assert!(open_after(Duration::from_millis(500)).is_ok());
+    let refused = open_after(Duration::from_millis(1500)).unwrap_err();
+    assert!(
+        matches!(
+            refused.rejection,
+            Rejection::Kept(KeptReason::Live(LiveReason::InUse { .. }))
+        ),
+        "{:?}",
+        refused.rejection
+    );
+}
+
+/// A whole container holds a cache scope its app names. The app starting while the survey
+/// runs keeps the container, though the container itself names no owner.
+#[test]
+fn an_app_that_starts_during_the_survey_keeps_the_container_whose_caches_it_owns() {
+    const CONTAINER: &str = "/Users/alice/Library/Containers/com.example.other";
+    let fs = fixture().file(&format!("{CONTAINER}/Data/Library/Caches/blob"));
+    let refused = approve_during(&fs, CONTAINER, Lease::NONE, |fs, _| {
+        fs.after_listing(CONTAINER, |fs| {
+            fs.app_starts_now(
+                44,
+                "/Applications/Other.app/Contents/MacOS/Other",
+                "com.example.other",
+            );
+        });
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&refused.rejection,
+            Rejection::Kept(KeptReason::Contents(ContentsReason::Holds { reason, .. }))
+                if matches!(**reason, KeptReason::Live(LiveReason::OwnerRunning { .. }))),
+        "{:?}",
+        refused.rejection
+    );
 }

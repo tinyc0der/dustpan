@@ -133,18 +133,20 @@ pub enum SinkWord {
 }
 
 /// The `(detail)` of an item row: `sink=delete size=1500000 reason=owner-running inner=...`,
-/// fields in that order, absent ones left out. Every value is a code, a number, `N+` or
-/// `unknown`, so none holds a space or a parenthesis, and a reader splits a row at its last
-/// ` (` however the path is spelled.
+/// fields in that order, absent ones left out. Every value is a code, a number, `N+`,
+/// `unknown`, or a path with its spaces and parentheses escaped (`to=`), so none holds a space
+/// or a parenthesis, and a reader splits a row at its last ` (` however the path is spelled.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct Detail {
+pub struct Detail<'a> {
     pub sink: Option<SinkWord>,
     /// Allocated bytes freed by a removal, or moved by a Trash move.
     pub size: Option<Size>,
-    /// A `KeptReason::code`, a `FailCause::code`, or `gone`.
+    /// A `KeptReason::code`, a `FailCause::code`, `gone` or `trashed-other`.
     pub reason: Option<&'static str>,
     /// For `holds-kept`, the code of what is kept inside.
     pub inner: Option<&'static str>,
+    /// For a Trash move, where the item landed, when the row must say it (`trashed-other`).
+    pub to: Option<&'a AbsPath>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -152,7 +154,7 @@ pub struct Row<'a> {
     pub at: WallTime,
     pub action: Action,
     pub path: &'a AbsPath,
-    pub detail: Detail,
+    pub detail: Detail<'a>,
 }
 
 /// One line of the log.
@@ -284,7 +286,7 @@ fn command_field(session: &Session) -> String {
     )
 }
 
-fn detail_field(detail: &Detail) -> String {
+fn detail_field(detail: &Detail<'_>) -> String {
     let mut fields: Vec<String> = Vec::with_capacity(4);
     if let Some(sink) = detail.sink {
         fields.push(match sink {
@@ -305,7 +307,23 @@ fn detail_field(detail: &Detail) -> String {
     if let Some(inner) = detail.inner {
         fields.push(format!("inner={inner}"));
     }
+    if let Some(to) = detail.to {
+        fields.push(format!("to={}", detail_value(to)));
+    }
     fields.join(" ")
+}
+
+/// A path as a detail value: escaped like a row's path, and with every space and parenthesis
+/// written as `\xNN`, so the value holds neither and the row still splits at its last ` (`.
+fn detail_value(path: &AbsPath) -> String {
+    let mut out = String::new();
+    for c in escaped(path.as_path().as_os_str()).to_string().chars() {
+        match c {
+            ' ' | '(' | ')' => out.push_str(&format!("\\x{:02X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Writes one line in Mole's grammar. The path goes through `escaped`, the one escaping rule,

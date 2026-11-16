@@ -25,9 +25,14 @@ const MAX_LINK_HOPS: usize = 40;
 pub struct FakeProbe {
     tree: Mutex<Tree>,
     processes: Seen<ProcessTable>,
+    /// Processes that started after the fixture was built, listed from the next probe on.
+    started: Mutex<Vec<Proc>>,
     open: Mutex<Seen<OpenFiles>>,
     swap_on_process_probe: Mutex<Option<PathBuf>>,
     before_sink: Mutex<Option<Change>>,
+    during_trash: Mutex<Option<Change>>,
+    after_listing: Mutex<Option<(PathBuf, Change)>>,
+    on_process_probe: Mutex<Option<Change>>,
     trash_unavailable: bool,
     node_calls: AtomicUsize,
     process_calls: AtomicUsize,
@@ -254,6 +259,10 @@ impl FakeProbe {
             open: Mutex::new(Seen::Found(OpenFiles::default())),
             swap_on_process_probe: Mutex::new(None),
             before_sink: Mutex::new(None),
+            during_trash: Mutex::new(None),
+            started: Mutex::new(Vec::new()),
+            after_listing: Mutex::new(None),
+            on_process_probe: Mutex::new(None),
             trash_unavailable: false,
             node_calls: AtomicUsize::new(0),
             process_calls: AtomicUsize::new(0),
@@ -365,6 +374,21 @@ impl FakeProbe {
     /// A process whose executable sits in the bundle `bundle_id`.
     pub fn running_app(self, pid: u32, exe: &str, bundle_id: &str) -> Self {
         self.process(pid, exe, App::Bundles(Box::new([bundle_id.into()])))
+    }
+
+    /// An app in the bundle `bundle_id` starts now: the next process table lists it.
+    pub fn app_starts_now(&self, pid: u32, exe: &str, bundle_id: &str) {
+        self.started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Proc {
+                pid: Pid(pid),
+                exe: OsString::from(exe),
+                args: OsString::new(),
+                app: App::Bundles(Box::new([bundle_id.into()])),
+                signing_id: None,
+                app_groups: Box::default(),
+            });
     }
 
     /// A process the probe could not identify, such as one whose executable was deleted. Only
@@ -517,6 +541,27 @@ impl FakeProbe {
         *self.before_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
     }
 
+    /// Runs `change` inside the next Trash move, after its identity check and before the move:
+    /// the window in which another program can put something else under the candidate's name.
+    pub fn during_trash(&self, change: impl FnOnce(&FakeProbe) + Send + 'static) {
+        *self.during_trash.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
+    }
+
+    /// Runs `change` right after the guard lists `dir`, as during a survey: a file opened, a
+    /// signal, or time passing while the survey runs.
+    pub fn after_listing(&self, dir: &str, change: impl FnOnce(&FakeProbe) + Send + 'static) {
+        *self.after_listing.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((abs(dir).as_path().to_path_buf(), Box::new(change)));
+    }
+
+    /// Runs `change` at the next process table probe, as during a recheck's live checks.
+    pub fn on_process_probe(&self, change: impl FnOnce(&FakeProbe) + Send + 'static) {
+        *self
+            .on_process_probe
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
+    }
+
     /// Every Trash move fails with `NoTrash`, as with no Trash on the volume (SAFE-12).
     pub fn trash_unavailable(self) -> Self {
         Self {
@@ -611,7 +656,20 @@ impl Probe for FakeProbe {
         if let Some(path) = swap {
             self.swap_at(&path);
         }
-        self.processes.clone()
+        let change = self
+            .on_process_probe
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(change) = change {
+            change(self);
+        }
+        let mut table = self.processes.clone();
+        if let Seen::Found(table) = &mut table {
+            let started = self.started.lock().unwrap_or_else(|e| e.into_inner());
+            table.procs.extend(started.iter().cloned());
+        }
+        table
     }
 
     fn open_files(&self) -> Seen<OpenFiles> {
@@ -620,11 +678,20 @@ impl Probe for FakeProbe {
     }
 
     fn list(&self, dir: &AbsPath, out: &mut Vec<DirEntry>) -> Seen<FileId> {
-        let tree = self.tree();
-        let opened = tree.open_nofollow(dir.as_path()).and_then(|handle| {
-            tree.list(&handle.key, out)?;
-            Ok(handle.id)
-        });
+        let opened = {
+            let tree = self.tree();
+            tree.open_nofollow(dir.as_path()).and_then(|handle| {
+                tree.list(&handle.key, out)?;
+                Ok(handle.id)
+            })
+        };
+        let mut hook = self.after_listing.lock().unwrap_or_else(|e| e.into_inner());
+        if hook.as_ref().is_some_and(|(at, _)| at == dir.as_path())
+            && let Some((_, change)) = hook.take()
+        {
+            drop(hook);
+            change(self);
+        }
         match opened {
             Ok(id) => Seen::Found(id),
             Err(DiskError::NotFound) => Seen::Missing,
@@ -702,16 +769,29 @@ impl Disk for FakeProbe {
         if self.trash_unavailable {
             return Err(DiskError::NoTrash);
         }
-        let mut tree = self.tree();
         let name = path.name().ok_or(DiskError::NotAFolder)?;
-        let key = tree.held(at)?.join(name);
-        let arrived = tree.dir_entry(&key)?.node.id;
-        if arrived != expect {
-            return Err(DiskError::NotAFolder);
+        let key = {
+            let tree = self.tree();
+            let key = tree.held(at)?.join(name);
+            if tree.dir_entry(&key)?.node.id != expect {
+                return Err(DiskError::NotAFolder);
+            }
+            key
+        };
+        let change = self
+            .during_trash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(change) = change {
+            change(self);
         }
+        let mut tree = self.tree();
+        let arrived = tree.dir_entry(&key)?.node.id;
         tree.drop_tree(&key);
-        tree.trashed.push(key);
+        tree.trashed.push(key.clone());
         Ok(Trashed {
+            from: key,
             at: Path::new("/.Trash").join(name),
             arrived,
         })

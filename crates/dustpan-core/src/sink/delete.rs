@@ -116,6 +116,9 @@ pub(super) fn delete<D: Disk>(
     if let Some((cause, at)) = stopped {
         return failed(approved, cause, Some(at), freed);
     }
+    if cancel.is_set() {
+        return failed(approved, FailCause::Interrupted, None, freed);
+    }
     match disk.unlink(&parent, &name, Unlink::Dir, &seal) {
         Ok(()) | Err(DiskError::NotFound) => (
             approved.into_candidate(),

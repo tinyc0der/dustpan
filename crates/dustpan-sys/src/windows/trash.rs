@@ -55,6 +55,7 @@ pub(crate) fn trash(
     let landed = AbsPath::parse(at.as_os_str()).map_err(|_| DiskError::NoTrash)?;
     match node(&landed) {
         Seen::Found(arrived) => Ok(Trashed {
+            from: path.as_path().to_path_buf(),
             at,
             arrived: arrived.id,
         }),

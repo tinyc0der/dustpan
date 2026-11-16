@@ -44,6 +44,8 @@ struct Live {
     bundles: HashMap<Box<str>, OwnerState>,
     app_groups: HashMap<Box<str>, OwnerState>,
     open: Option<Arc<OpenIndex>>,
+    /// Each scope owner the pass asked about, with the first path that asked.
+    asked: Vec<(Owner, AbsPath)>,
 }
 
 /// The live snapshots one `Recheck` batch shares between its passes: the process table and the
@@ -143,6 +145,17 @@ impl<'a> Pass<'a> {
         pass.follows_leaf_link = false;
         pass.bundles = Bundles::Ignored;
         pass
+    }
+
+    /// Each scope owner this pass asked about, with the first path that asked. `Recheck` asks
+    /// them again on fresh evidence after a survey.
+    pub(super) fn scopes_asked(&self) -> &[(Owner, AbsPath)] {
+        &self.live.asked
+    }
+
+    /// Whether `owner` keeps a path, by this pass's process table.
+    pub(super) fn owner_refusal(&mut self, owner: &Owner) -> Option<LiveReason> {
+        refusal_for(owner, owner.state_in(self.processes()))
     }
 
     /// The live evidence this pass holds now, seeded or taken, for `Recheck` to share.
@@ -297,15 +310,15 @@ impl<'a> Pass<'a> {
         let mut refusal = live.powerlog.then_some(LiveReason::LiveDatabase);
         if refusal.is_none() {
             refusal = owners.iter().find_map(|owner| match owner {
-                Owner::BundleId(id) => self.scope_refusal(ScopeOwner::Bundle(id)),
-                Owner::AppGroup(folder) => self.scope_refusal(ScopeOwner::AppGroup(folder)),
+                Owner::BundleId(id) => self.scope_refusal(ScopeOwner::Bundle(id), path),
+                Owner::AppGroup(folder) => self.scope_refusal(ScopeOwner::AppGroup(folder), path),
                 Owner::Process(_) => refusal_for(owner, owner.state_in(self.processes())),
             });
         }
         if refusal.is_none()
             && let Some(owner) = live.scope_owner
         {
-            refusal = self.scope_refusal(owner);
+            refusal = self.scope_refusal(owner, path);
         }
         if refusal.is_none() && live.edr {
             refusal = Some(LiveReason::EndpointSecurity);
@@ -407,7 +420,7 @@ impl<'a> Pass<'a> {
     /// Whether the app with this bundle id, or an app of this group, keeps the path. Asked
     /// once per name in a pass: every path in one cache folder shares the answer, and the
     /// table behind it does not change.
-    fn scope_refusal(&mut self, scope: ScopeOwner<'_>) -> Option<LiveReason> {
+    fn scope_refusal(&mut self, scope: ScopeOwner<'_>, path: &AbsPath) -> Option<LiveReason> {
         let (name, states) = match scope {
             ScopeOwner::Bundle(id) => (id, &self.live.bundles),
             ScopeOwner::AppGroup(folder) => (folder, &self.live.app_groups),
@@ -421,6 +434,7 @@ impl<'a> Pass<'a> {
             ScopeOwner::AppGroup(folder) => Owner::AppGroup(folder.into()),
         };
         let state = known.unwrap_or_else(|| {
+            self.live.asked.push((owner.clone(), path.clone()));
             let state = owner.state_in(self.processes());
             let states = match scope {
                 ScopeOwner::Bundle(_) => &mut self.live.bundles,

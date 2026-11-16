@@ -297,6 +297,173 @@ fn trash_lane() {
     assert!(!item.exists());
 }
 
+/// The Trash sink against a parent folder swapped for a symlink while it runs: the folder is
+/// renamed aside and a link to a victim folder takes its name, at a moment spread over the
+/// sink's own duration. The victim holds an entry with the candidate's name and was never
+/// approved, so it must never reach the Trash. Run it with `DUSTPAN_SINK_FIXTURE_HOME` on a
+/// scratch volume, since the Trash it fills is that volume's. `DUSTPAN_RACE_ATTEMPTS` sets the
+/// number of attempts (2000 by default).
+#[test]
+#[ignore = "fills a volume Trash; run by hand with the fixture home on a scratch disk image"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the race swaps and clears the fixture's own folders"
+)]
+fn trash_race_lane() {
+    use std::time::{Duration, Instant};
+    let fixture = Fixture::new(&format!("race-{:x}", nonce()));
+    let victims = fixture.at("victims");
+    let parent = fixture.at("Library/Caches/parent");
+    let aside = fixture.at("Library/Caches/parent.aside");
+    let item = parent.join("com.example.item");
+    let victim = victims.join("com.example.item");
+    let attempts: u32 = std::env::var("DUSTPAN_RACE_ATTEMPTS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(2000);
+    let probe = LiveProbe::new();
+    let guard = fixture.guard(&probe);
+    let clock = SystemClock::new();
+    let cancel = Cancel::default();
+    let mut log = OpLog::new(FileStore::new(fixture.log_dir()), |w: &LogWarning| {
+        eprintln!("dustpan: {w}");
+    });
+    let disk = LiveDisk::new();
+    let services = Services {
+        guard: &guard,
+        probe: &probe,
+        clock: &clock,
+        lease: Lease::BATCH,
+        journal: &mut log,
+        cancel: &cancel,
+    };
+    let id = RunId::new(clock.wall(), std::process::id(), nonce());
+    let mut executor = Executor::start(Mode::Apply(&disk), Command::named("race"), id, services);
+    let mut outcomes = std::collections::BTreeMap::<String, u32>::new();
+    let mut typical = Duration::MAX;
+    let mut hits = 0;
+    for n in 0..attempts {
+        std::fs::create_dir_all(item.join("d")).unwrap();
+        std::fs::write(item.join("d/f"), b"approved").unwrap();
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("precious.txt"), b"never approved").unwrap();
+        let path = abs(&item);
+        let Seen::Found(node) = probe.node(&path) else {
+            panic!("fixture has no {path}")
+        };
+        let candidate = guard
+            .pass(&probe)
+            .candidate(path, node, &rule(Sink::Trash))
+            .unwrap();
+        // The first rounds only measure how long one item takes; the rest swap the parent at
+        // a point spread from the start of the run to just past its end.
+        let swap_at = (n >= 5).then(|| typical.mul_f64(f64::from(n % 100) / 100.0 * 1.1));
+        let (from, to, link) = (parent.clone(), aside.clone(), victims.clone());
+        let started = Instant::now();
+        let swapper = std::thread::spawn(move || {
+            let Some(after) = swap_at else { return false };
+            while started.elapsed() < after {
+                std::hint::spin_loop();
+            }
+            std::fs::rename(&from, &to).unwrap();
+            std::os::unix::fs::symlink(&link, &from).unwrap();
+            true
+        });
+        let (_, outcome) = executor.run(candidate);
+        let took = started.elapsed();
+        let swapped = swapper.join().unwrap();
+        if n < 5 {
+            typical = typical.min(took);
+        }
+        let victim_moved = !victim.join("precious.txt").exists();
+        hits += u32::from(victim_moved);
+        let word = match &outcome {
+            Outcome::Failed(f) => format!("failed {}", f.cause.code()),
+            Outcome::Kept(r) => format!("kept {}", r.code()),
+            other => format!("{other:?}").split('(').next().unwrap().to_owned(),
+        };
+        *outcomes
+            .entry(format!("{word}, victim moved: {victim_moved}"))
+            .or_default() += 1;
+        if swapped {
+            std::fs::remove_file(&parent).unwrap();
+            std::fs::rename(&aside, &parent).unwrap();
+        }
+        if item.exists() {
+            std::fs::remove_dir_all(&item).unwrap();
+        }
+        if victim.exists() {
+            std::fs::remove_dir_all(&victim).unwrap();
+        }
+    }
+    executor.finish();
+    drop(log);
+    println!("one item takes about {typical:?}");
+    for (outcome, count) in &outcomes {
+        println!("{count:5}  {outcome}");
+    }
+    println!("victim moved to the Trash in {hits} of {attempts} attempts");
+    assert_eq!(hits, 0);
+}
+
+/// The folder at the top of the volume `path` is on: the last ancestor on the same device.
+#[cfg(target_os = "macos")]
+fn mount_point(path: &Path) -> PathBuf {
+    use std::os::unix::fs::MetadataExt as _;
+    let device = std::fs::metadata(path).unwrap().dev();
+    path.ancestors()
+        .take_while(|up| std::fs::metadata(up).is_ok_and(|meta| meta.dev() == device))
+        .last()
+        .unwrap()
+        .to_path_buf()
+}
+
+/// SAFE-12 and SAFE-13: the user's Trash on the item's volume (`.Trashes/<uid>`) is a link to
+/// another folder. The move is refused as `trash-failed`, the item stays, and nothing reaches
+/// the link's target. Run it with `DUSTPAN_SINK_FIXTURE_HOME` on a scratch disk image, whose
+/// Trash it changes and then restores.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "swaps a volume's Trash for a link; run by hand with the fixture home on a scratch disk image"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test moves the scratch volume's own Trash aside and back"
+)]
+fn trash_symlink_lane() {
+    let fixture = Fixture::new(&format!("symlinked-trash-{:x}", nonce()));
+    let volume = mount_point(&fixture.home);
+    assert_ne!(volume, Path::new("/"), "needs a scratch volume");
+    // SAFETY: getuid takes no arguments and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let trashes = volume.join(".Trashes");
+    let trash = trashes.join(uid.to_string());
+    let aside = trashes.join(format!("{uid}.aside-{:x}", nonce()));
+    let elsewhere = volume.join(format!("elsewhere-{:x}", nonce()));
+    std::fs::create_dir_all(&trash).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::rename(&trash, &aside).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &trash).unwrap();
+    let name = "com.example.symlinked-trash";
+    let item = fixture.at(&format!("Library/Caches/{name}"));
+    fixture.tree(&format!("Library/Caches/{name}"), 1, 2);
+    let ran = run(&fixture, std::slice::from_ref(&item), || Sink::Trash);
+    let reached = std::fs::read_dir(&elsewhere).unwrap().count();
+    std::fs::remove_file(&trash).unwrap();
+    std::fs::rename(&aside, &trash).unwrap();
+    println!(
+        "{:?}; item in place: {}; entries in the link's target: {reached}",
+        ran.outcomes[0],
+        item.exists()
+    );
+    assert!(
+        matches!(&ran.outcomes[0], Outcome::Failed(f) if f.cause.code() == "trash-failed"),
+        "{:?}",
+        ran.outcomes[0]
+    );
+    assert!(item.join("d0/f0").exists());
+    assert_eq!(reached, 0);
+}
+
 /// Lane 7: a disk image mounted inside a fixture folder keeps the folder, and the files on the
 /// image survive.
 #[cfg(target_os = "macos")]

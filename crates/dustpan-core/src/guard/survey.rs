@@ -10,6 +10,7 @@ use super::verdict::{Bound, ContentsReason, KeptReason, ShapeReason};
 use crate::identity::{DirEntry, FileId, NodeKind};
 use crate::path::AbsPath;
 use crate::probe::{Probe, Seen, Unseen};
+use crate::sink::Cancel;
 use crate::time::Clock;
 use std::time::Duration;
 
@@ -60,11 +61,14 @@ fn unreadable(at: AbsPath, why: Unseen) -> KeptReason {
 
 /// Lists every folder below `root` through `Probe::list` and judges every entry with `pass`,
 /// which shares the batch's live evidence and never follows a leaf link. The first kept entry
-/// keeps the whole candidate. Depth first, so sibling entries share the pass's frames.
+/// keeps the whole candidate. Depth first, so sibling entries share the pass's frames. A set
+/// `cancel` stops it before the next listing (SAFE-20). The deadline is checked before and
+/// after every listing and once more at the end, so no survey longer than it approves.
 pub(super) fn survey(
     pass: &mut Pass<'_>,
     probe: &dyn Probe,
     clock: &dyn Clock,
+    cancel: Option<&Cancel>,
     root: &AbsPath,
     target: FileId,
     kind: NodeKind,
@@ -73,17 +77,28 @@ pub(super) fn survey(
         return Ok(Manifest::Leaf);
     }
     let deadline = clock.elapsed() + DEADLINE;
+    let late = || {
+        (clock.elapsed() > deadline)
+            .then(|| kept(ContentsReason::Unbounded(Bound::Deadline(DEADLINE))))
+    };
     let volume = target.volume();
     let mut dirs = vec![target.file()];
     let mut stack = vec![(root.clone(), target, 0)];
     let mut entries: Vec<DirEntry> = Vec::new();
     let mut seen: u64 = 0;
     while let Some((dir, expect, depth)) = stack.pop() {
-        if clock.elapsed() > deadline {
-            return Err(kept(ContentsReason::Unbounded(Bound::Deadline(DEADLINE))));
+        if cancel.is_some_and(Cancel::is_set) {
+            return Err(Rejection::Cancelled);
+        }
+        if let Some(late) = late() {
+            return Err(late);
         }
         entries.clear();
-        match probe.list(&dir, &mut entries) {
+        let listed = probe.list(&dir, &mut entries);
+        if let Some(late) = late() {
+            return Err(late);
+        }
+        match listed {
             Seen::Found(id) if id == expect => {}
             // A folder that vanished or became another object while being listed: something is
             // writing in the tree, which is exactly when it must not be removed.
@@ -120,6 +135,9 @@ pub(super) fn survey(
                 stack.push((path, entry.node.id, depth + 1));
             }
         }
+    }
+    if let Some(late) = late() {
+        return Err(late);
     }
     dirs.sort_unstable();
     Ok(Manifest::Tree {

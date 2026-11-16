@@ -63,10 +63,13 @@ pub enum DiskError {
     Other(i32),
 }
 
-/// Where a Trash move put the item, for "Reveal in Trash", and what arrived there. A move on one
-/// volume keeps the `FileId`, so core compares `arrived` with the approved target.
+/// What a Trash move moved and where it put it, for "Reveal in Trash". A move on one volume
+/// keeps the `FileId`, so core compares `arrived` with the approved target. `from` is where the
+/// moved entry was at the moment of the move, which differs from the candidate's path when its
+/// folder moved meanwhile.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Trashed {
+    pub from: PathBuf,
     pub at: PathBuf,
     pub arrived: FileId,
 }
@@ -108,7 +111,8 @@ pub trait Disk {
 
     /// Moves `path`, whose folder is `at`, to the invoking user's Trash, after checking with
     /// `fstatat` that the entry is still `expect`, and reports the `FileId` that arrived. macOS:
-    /// `NSFileManager trashItemAtURL` (spike S2). Linux: the freedesktop home or volume Trash.
+    /// `renameatx_np` from `at` into the home or volume Trash. Linux: the freedesktop home or
+    /// volume Trash.
     /// Windows: the Recycle Bin through `IFileOperation`, refusing a permanent delete. Never
     /// falls back to removal (SAFE-12).
     fn trash(

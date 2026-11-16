@@ -65,9 +65,16 @@ fn trash_as(
         .node
         .id;
     Ok(Trashed {
+        from: folder_path(parent).join(name),
         at: bin.folder.join("files").join(&reserved),
         arrived,
     })
+}
+
+/// Where the open folder is now, from `/proc/self/fd`, which may differ from where the guard
+/// saw it. The path given is the fallback when `/proc` cannot say.
+fn folder_path(dir: &DirHandle) -> PathBuf {
+    std::fs::read_link(format!("/proc/self/fd/{}", dir.0.as_raw_fd())).unwrap_or_default()
 }
 
 /// Who owns the Trash, and where the home Trash is.
@@ -413,6 +420,7 @@ mod tests {
         assert_eq!(
             moved,
             Trashed {
+                from: item.clone(),
                 at: landed.clone(),
                 arrived: before
             }

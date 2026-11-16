@@ -13,7 +13,7 @@ use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
 use dustpan_core::probe::{Probe, Seen};
-use dustpan_core::sink::{Cancel, Executor, FailCause, Mode, Outcome, Services, Tally};
+use dustpan_core::sink::{Cancel, Executor, FailCause, Mode, Moved, Outcome, Services, Tally};
 use dustpan_core::size::Size;
 use dustpan_core::time::{Clock, FixedClock, WallTime};
 use dustpan_core::whitelist::Whitelist;
@@ -385,4 +385,93 @@ fn a_log_that_cannot_be_written_warns_once_and_never_stops_a_delete() {
     drop(log);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(!fs.exists(CACHE) && !fs.exists(&format!("{CACHES}/second")));
+}
+
+/// One candidate through a fresh executor whose cancel `arm` may set during the run.
+fn run_signalled(
+    fs: &FakeProbe,
+    at: &str,
+    sink: Sink,
+    arm: impl FnOnce(&FakeProbe, Arc<Cancel>),
+) -> Run {
+    let guard = guard(fs);
+    let clock = clock();
+    let cancel = Arc::new(Cancel::default());
+    let mut log = OpLog::new(MemoryStore::default(), |_: &_| {});
+    let candidate = discover(&guard, fs, at, sink);
+    arm(fs, Arc::clone(&cancel));
+    let services = Services {
+        guard: &guard,
+        probe: fs,
+        clock: &clock,
+        lease: Lease::BATCH,
+        journal: &mut log,
+        cancel: &cancel,
+    };
+    let run = RunId::new(clock.wall(), 1, 1);
+    let mut executor = Executor::start(Mode::Apply(fs), Command::named("test"), run, services);
+    let (_, outcome) = executor.run(candidate);
+    let tally = executor.finish();
+    Run {
+        outcome,
+        tally,
+        log: log.into_store(),
+    }
+}
+
+#[test]
+fn a_signal_during_the_recheck_of_a_file_stops_before_the_sink() {
+    for sink in [Sink::Delete, Sink::Trash] {
+        let fs = fixture();
+        let ran = run_signalled(&fs, BLOB, sink, |fs, cancel| {
+            fs.on_process_probe(move |_| cancel.set());
+        });
+        assert_eq!(ran.outcome, Outcome::Cancelled);
+        assert!(fs.exists(BLOB));
+        assert!(fs.removed().is_empty() && fs.trashed().is_empty());
+    }
+}
+
+#[test]
+fn a_signal_during_the_survey_stops_it_before_any_sink() {
+    let empty = format!("{CACHES}/com.example.empty");
+    for (at, sink) in [
+        (CACHE, Sink::Delete),
+        (empty.as_str(), Sink::Delete),
+        (CACHE, Sink::Trash),
+    ] {
+        let fs = fixture().dir(&empty);
+        let ran = run_signalled(&fs, at, sink, |fs, cancel| {
+            fs.after_listing(at, move |_| cancel.set());
+        });
+        assert_eq!(ran.outcome, Outcome::Cancelled, "{at}");
+        assert!(fs.exists(at));
+        assert!(fs.removed().is_empty() && fs.trashed().is_empty());
+    }
+}
+
+#[test]
+fn a_trash_move_that_takes_another_object_logs_what_moved_and_where() {
+    let fs = fixture();
+    let ran = run_signalled(&fs, CACHE, Sink::Trash, |fs, _| {
+        fs.during_trash(|fs| fs.swap(CACHE));
+    });
+    assert_eq!(
+        ran.outcome,
+        Outcome::TrashedOther(Moved {
+            from: p(CACHE),
+            to: p("/.Trash/com.example.app"),
+        })
+    );
+    assert_eq!(ran.tally.failed, 1);
+    assert_eq!(ran.tally.moved_to_trash, Size::Known(0));
+    let rows = String::from_utf8_lossy(&ran.log.current);
+    assert!(
+        rows.contains("FAILED /Users/alice/Library/Caches/com.example.app (sink=trash size=0 reason=trashed-other)"),
+        "{rows}"
+    );
+    assert!(
+        rows.contains("TRASHED /Users/alice/Library/Caches/com.example.app (sink=trash size=unknown reason=trashed-other to=/.Trash/com.example.app)"),
+        "{rows}"
+    );
 }

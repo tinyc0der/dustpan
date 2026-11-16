@@ -26,7 +26,8 @@ pub enum Mode<'a, D> {
 }
 
 /// What happened to one candidate. Preview yields `WouldRemove`, `WouldTrash`, `Gone`, `Kept`
-/// and `Cancelled`; apply yields `Removed`, `Trashed`, `Gone`, `Kept`, `Failed` and `Cancelled`.
+/// and `Cancelled`; apply yields `Removed`, `Trashed`, `TrashedOther`, `Gone`, `Kept`, `Failed`
+/// and `Cancelled`.
 /// One enum serves both, so a report, a JSON item and a TUI row have one shape.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Outcome {
@@ -44,7 +45,12 @@ pub enum Outcome {
     Kept(KeptReason),
     /// The sink started and could not finish.
     Failed(Failure),
-    /// A signal came before this candidate. No probe or sink ran for it (SAFE-20).
+    /// The Trash move took another object than the approved one: something replaced the
+    /// candidate in its folder between the sink's check and the move. That object is in the
+    /// Trash, recoverable; the candidate failed (`trashed-other`).
+    TrashedOther(Moved),
+    /// A signal came before this candidate's sink. No later probe or sink ran for it
+    /// (SAFE-20).
     Cancelled,
 }
 
@@ -56,6 +62,13 @@ pub struct Failure {
     /// The entry the sink was working on: the candidate, or a path inside it.
     pub at: AbsPath,
     pub freed: Size,
+}
+
+/// What a Trash move moved that was not approved, and where it landed. Both are logged.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Moved {
+    pub from: AbsPath,
+    pub to: AbsPath,
 }
 
 /// Each cause has a stable code for the row and `--json` (SAFE-35).
@@ -75,9 +88,6 @@ pub enum FailCause {
     /// `trash-failed`: the Trash refused or does not exist. The item stays; it is never deleted
     /// instead (SAFE-12).
     TrashFailed,
-    /// `trashed-other`: the object that reached the Trash is not the one approved. It is in the
-    /// Trash, recoverable, at `Failure::at`.
-    TrashedOther,
     /// `io-error`.
     Io,
 }
@@ -91,7 +101,6 @@ impl FailCause {
             Self::Changed => "changed-during-removal",
             Self::Interrupted => "interrupted",
             Self::TrashFailed => "trash-failed",
-            Self::TrashedOther => "trashed-other",
             Self::Io => "io-error",
         }
     }
@@ -180,6 +189,7 @@ impl Tally {
                 self.failed += 1;
                 self.freed = self.freed.plus(failure.freed);
             }
+            Outcome::TrashedOther(_) => self.failed += 1,
             Outcome::Cancelled => self.cancelled += 1,
         }
     }
@@ -234,7 +244,7 @@ impl<'a, D: Disk> Executor<'a, D> {
         Self {
             mode,
             session,
-            recheck: guard.recheck(probe, clock, lease),
+            recheck: guard.recheck(probe, clock, lease).stop_on(cancel),
             clock,
             journal,
             cancel,
@@ -258,6 +268,12 @@ impl<'a, D: Disk> Executor<'a, D> {
                 candidate,
                 rejection: Rejection::Kept(reason),
             }) => (candidate, Outcome::Kept(reason)),
+            Err(Refused {
+                candidate,
+                rejection: Rejection::Cancelled,
+            }) => (candidate, Outcome::Cancelled),
+            // A signal during the recheck: the approval stands for nothing (SAFE-20).
+            Ok(approved) if self.cancel.is_set() => (approved.into_candidate(), Outcome::Cancelled),
             Ok(approved) => match &self.mode {
                 Mode::Preview => {
                     let candidate = approved.into_candidate();
@@ -271,13 +287,13 @@ impl<'a, D: Disk> Executor<'a, D> {
                 }
                 Mode::Apply(disk) => match approved.sink() {
                     Sink::Delete => delete::delete(approved, *disk, self.cancel),
-                    Sink::Trash => trash::trash(approved, *disk),
+                    Sink::Trash => trash::trash(approved, *disk, self.cancel),
                     Sink::OwnerCommand(never) => match *never {},
                     Sink::Privileged(never) => match *never {},
                 },
             },
         };
-        if let Some(row) = row(&candidate, &outcome, self.clock) {
+        for row in rows(&candidate, &outcome, self.clock).into_iter().flatten() {
             self.journal.write(Line::Item {
                 session: &self.session,
                 row,
@@ -301,10 +317,15 @@ impl<'a, D: Disk> Executor<'a, D> {
     }
 }
 
-/// The one map from an outcome to its row. Every mutation and every refusal has one, in both
+/// The one map from an outcome to its rows. Every mutation and every refusal has one, in both
 /// modes; a would-be removal and a cancelled candidate have none, since nothing happened and
-/// nothing was judged.
-fn row<'c>(candidate: &'c Candidate, outcome: &Outcome, clock: &dyn Clock) -> Option<Row<'c>> {
+/// nothing was judged. A `TrashedOther` has two: the candidate's failure, and the move of the
+/// object that did reach the Trash, named where it was and where it went.
+fn rows<'c>(
+    candidate: &'c Candidate,
+    outcome: &'c Outcome,
+    clock: &dyn Clock,
+) -> [Option<Row<'c>>; 2] {
     let sink = match &candidate.rule().sink {
         Sink::Delete => SinkWord::Delete,
         Sink::Trash => SinkWord::Trash,
@@ -316,13 +337,23 @@ fn row<'c>(candidate: &'c Candidate, outcome: &Outcome, clock: &dyn Clock) -> Op
         size,
         reason,
         inner,
+        to: None,
     };
-    let (action, detail) = match outcome {
-        Outcome::WouldRemove(_) | Outcome::WouldTrash(_) | Outcome::Cancelled => return None,
-        Outcome::Removed(size) => (Action::Removed, detail(Some(*size), None, None)),
-        Outcome::Trashed(size) => (Action::Trashed, detail(Some(*size), None, None)),
-        Outcome::Gone => (Action::Skipped, detail(None, Some("gone"), None)),
-        Outcome::Kept(reason) => (
+    let row = |action, path, detail| {
+        Some(Row {
+            at: clock.wall(),
+            action,
+            path,
+            detail,
+        })
+    };
+    let own = |action, detail| [row(action, candidate.path(), detail), None];
+    match outcome {
+        Outcome::WouldRemove(_) | Outcome::WouldTrash(_) | Outcome::Cancelled => [None, None],
+        Outcome::Removed(size) => own(Action::Removed, detail(Some(*size), None, None)),
+        Outcome::Trashed(size) => own(Action::Trashed, detail(Some(*size), None, None)),
+        Outcome::Gone => own(Action::Skipped, detail(None, Some("gone"), None)),
+        Outcome::Kept(reason) => own(
             Action::Skipped,
             detail(
                 None,
@@ -330,15 +361,27 @@ fn row<'c>(candidate: &'c Candidate, outcome: &Outcome, clock: &dyn Clock) -> Op
                 reason.inner().map(KeptReason::code),
             ),
         ),
-        Outcome::Failed(failure) => (
+        Outcome::Failed(failure) => own(
             Action::Failed,
             detail(Some(failure.freed), Some(failure.cause.code()), None),
         ),
-    };
-    Some(Row {
-        at: clock.wall(),
-        action,
-        path: candidate.path(),
-        detail,
-    })
+        Outcome::TrashedOther(moved) => [
+            row(
+                Action::Failed,
+                candidate.path(),
+                detail(Some(Size::Known(0)), Some(TRASHED_OTHER), None),
+            ),
+            row(
+                Action::Trashed,
+                &moved.from,
+                Detail {
+                    to: Some(&moved.to),
+                    ..detail(Some(Size::Unknown), Some(TRASHED_OTHER), None)
+                },
+            ),
+        ],
+    }
 }
+
+/// The reason both rows of a `TrashedOther` carry.
+pub const TRASHED_OTHER: &str = "trashed-other";

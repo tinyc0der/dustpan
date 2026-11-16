@@ -108,4 +108,26 @@ Five runs of each side, alternated, 2026-11-16, same machine, load average 4.5 t
 
 **History.** The first working build measured 415,627 for `scan` at a load average near 7. Two changes followed: `*x*` bundle patterns are grouped by first byte, and a cache folder's owner is looked up without building an owner value per file. The same fixture then measured 874,594 at the same load.
 
+**After fix round 4 (a held file the snapshot cannot place).** No measurable difference for `scan`: 660,862 before and 664,166 after, medians of five runs each, and the ranges overlap (451,097 to 697,492 before, 608,524 to 700,379 after). It passes at 3.3 times the budget.
+
+Five runs of each side, alternated, 2026-11-16, same machine, load average 2.9 to 8.5 from other agents' builds. "Before" is an export of `f3c8ce7` and "after" an export of the fix round 4 tree, in two sibling folders whose paths have the same length. Each cell is the median of five rounds in paths per second. The last column is the number of paths in a snapshot of open files taken right after the run.
+
+| Run | Side | Load | `scan` | `explain` | `cpu` | Open paths |
+|---|---|---|---|---|---|---|
+| 1 | before | 2.92 | 451,097 | 121,975 | 745,911 | 6,373 |
+| 1 | after | 5.33 | 656,786 | 167,022 | 931,932 | 6,374 |
+| 2 | before | 5.12 | 679,191 | 173,645 | 921,049 | 7,175 |
+| 2 | after | 7.46 | 608,524 | 151,623 | 916,098 | 9,025 |
+| 3 | before | 8.48 | 620,821 | 168,852 | 901,742 | 9,005 |
+| 3 | after | 8.48 | 664,166 | 172,457 | 926,418 | 8,996 |
+| 4 | before | 8.02 | 660,862 | 171,380 | 951,413 | 8,996 |
+| 4 | after | 7.18 | 700,379 | 179,814 | 956,606 | 8,996 |
+| 5 | before | 6.23 | 697,492 | 180,713 | 953,191 | 8,986 |
+| 5 | after | 5.57 | 696,864 | 182,627 | 961,059 | 8,987 |
+
+- The change adds one `lstat` for each reported path of 768 bytes or more, and the host has none among 6,267, so a snapshot makes the same calls as before. That is why nothing moved. The check for a socket address is the `realpath` round 3 already made.
+- Run 1 "before" is an outlier in all three shapes, `cpu` included, which makes no system call. Its five `scan` rounds spanned 162.7 to 298.2 ms. Another agent's build is the likely cause; it was not traced. Without that run the "before" median is 670,027.
+- The snapshot of open files took 11.8 to 22.5 ms, each the median of seven in one process, and followed the number of open paths, which rose from 6,373 to about 9,000 during the runs on both sides.
+- The work happened: every run of both sides reports 99,998 of 100,000 eligible for `scan` and `explain` and 99,999 for `cpu`, and no process of this user was unlisted. No run failed the budget.
+
 **Not measured.** Linux and Windows. A cold fixture. More than one thread: a scan uses one `Pass` per worker, and the passes share nothing but the read-only policy.

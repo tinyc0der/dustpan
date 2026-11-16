@@ -428,6 +428,35 @@ A third adversarial review, on the fix round 2 diff, broke "a running app's data
 
 **Tests.** `guard.rs` has the rules against the fake: a vendor-named folder kept at every depth with the pid and file named, an unlisted process of this user and of another, a SQLite family that is free once closed, one snapshot per pass and none for a protected path. `recheck.rs` opens a file after discovery. `crates/dustpan-sys/tests/open_files.rs` holds a file, a folder and a socket open in a child process and reads the real snapshot, on macOS and Linux. `crates/dustpan/tests/owners.rs` runs `explain` against a child that holds a file in `Library/Caches/BraveSoftware`, then closes it and stays alive. `hostile_plist.rs` runs a process below the deep tree. Both live tests and the check script failed at `a2b9f07`.
 
+### Fix round 4: a held file the snapshot cannot place
+
+A fourth adversarial review, on the fix round 3 diff, reached `Approved` twice for a folder in which a live process held something. Both times the snapshot of open files took a path on trust that it could not confirm. The evidence files are in `/tmp/swarm-m0-3/fix4/`.
+
+**R4-F1. A path longer than the kernel reports.** `proc_pidfdinfo(PROC_PIDFDVNODEPATHINFO)` answers in a buffer of `MAXPATHLEN`, 1,024 bytes. For a longer path the kernel returns no error. It reports the end of the path, and that end starts with `/` like a whole path.
+
+- A file held six 200-byte folders below `Library/Caches/vendor` was listed at `/dddd…/held.db`. The folder read `Eligible`, and `recheck` approved it with the holder alive.
+- A crafted chain made the reported end spell a file in another folder. That idle folder read `Kept · process N has <file> open`, and the folder that was held read `Eligible`.
+
+**R4-F2. A socket address that does not resolve.** A socket bound to `/.vol/<device>/<inode>/s.sock` is in the folder with that inode. `realpath` answers `ENOENT` for the volfs folder, and round 3 then kept the address as spelled, so it matched no folder.
+
+**The rule.** A descriptor is at a path, nowhere, or unconfirmed (`Handle` in `crates/dustpan-sys/src/probe.rs`). An unconfirmed one reports its process in `OpenFiles::unlisted` as a process of this user. That is round 3's unknown: every path no rule protects is kept, and the refusal names the process. The snapshot does not try to rebuild the true path. `OpenFiles::files` still holds what else the process has open, so a folder it holds at a short path keeps the better answer.
+
+- **A reported path is confirmed when it leads to the open file.** The kernel's answer also holds the device and inode of the file the descriptor is open on (`vip_vi.vi_stat`). One `lstat` of the reported path must give the same two numbers. A mismatch, a missing path and a failed `lstat` are all unconfirmed.
+- **Only a path of 768 bytes or more is asked.** The kernel builds a path from the file's name upward and stops at the first name that does not fit, with its separator. A name is 255 bytes at most (`NAME_MAX`), so what it reports for a path that was cut is at least 1,024 − 255 − 1 = 768 bytes. 400 files below chains of random name lengths, each at a path of 1,024 bytes or more, all reported 768 bytes or more (`trunc.py`).
+- **A shorter path is taken as reported**, as in round 3. Checking every path would not be the same rule: on the bench host 51 of 6,267 reported paths do not lead to their open file (41 are gone, 5 name another file and 5 refuse `lstat`), and each would keep every path. None of the 51 is 768 bytes or longer (`measure.py`).
+- **A socket address is confirmed when its folder resolves** to a physical path. A folder that does not resolve is unconfirmed, on macOS and on Linux. On the bench host all 119 absolute addresses resolve.
+
+**Cost.** Nothing measurable. The bench host has no reported path of 768 bytes or more among 6,267, so a snapshot makes no extra call. `scan` measured 660,862 evaluations per second before and 664,166 after, medians of five alternated runs, and the ranges overlap. `docs/perf.md` has the runs.
+
+**Not covered.**
+
+- A relative socket address is still left out, as in round 3. `run.sh relsock` reads `Eligible` before and after. Docker Desktop holds one on the bench host (`docker-desktop-build.sock`), 1 of 120. Counting it as unconfirmed would keep every path no rule protects on any host where Docker runs.
+- A file opened through a hard link under another name still reads as held at the one path the kernel reports (`run.sh hardlink`). The same holds past 768 bytes: if the reported end of a long path names a hard link to the held file, it is confirmed.
+- A path of 768 bytes or more whose file was unlinked or replaced while open, or that sits where `lstat` is refused, makes its process unlisted. That keeps more and removes nothing.
+- Linux reports a descriptor's path through a link in `/proc/<pid>/fd`, and a link that cannot be read is skipped. Whether a path longer than a page reads that way was not run. M9 decides.
+
+**Tests.** `crates/dustpan-sys/tests/unconfirmed_handles.rs` runs the real probe and the real guard against a child process, on macOS. Three tests failed at `f3c8ce7`: a file held past 1,024 bytes, the crafted chain, and the volfs socket. Each asserts that the folder is kept and that `recheck` refuses a candidate found before the child started. A fourth holds the bound from the other side: a file at a 900-byte path is listed by its path under its holder. Unit tests in `macos/open.rs` and `probe.rs` hold the rule for a path that matches, mismatches or is missing on each side of 768 bytes, and for a socket address that resolves, does not, or is relative. `recheck.rs` holds the refusal for an unlisted process at the sink against the fake.
+
 ### SAFE rules this code governs
 
 Each test fails when its guard is removed. The owner ran one mutation per rule marked with a star and saw the named test go red.

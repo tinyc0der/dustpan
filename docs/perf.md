@@ -225,6 +225,18 @@ All three runs use the same bench binary (`eb09327` changes only a test). The ru
 - Run 2 overlapped a second bench process started by mistake.
 - Run 3 (`rm -rf` 8.438 s, sink 6.273 s, ratio 0.74) overlapped a local test build for about a minute.
 
+### Fix round 1
+
+Interrogate round 1 changed the sink's path: the recheck takes live evidence again when its survey aged it past the lease, the survey checks its deadline after every listing, and the bench's fixture folders get random names (`FixtureDir`). The same bench ran three more times at `467922b`, with nothing else of this PR's running.
+
+| Run | Load (1 min, start to end) | `rm -rf` median | Sink median | Ratio |
+|---|---|---|---|---|
+| 1 | 3.0 to 3.5 | 7.848 s | 5.845 s | 0.74 |
+| 2 | 3.5 to 31.0 | 9.878 s | 7.020 s | 0.71 |
+| 3 | 31.0 to 10.8 | 10.380 s | 7.452 s | 0.72 |
+
+The rule passes in all three. Runs 2 and 3 met a load spike from other work on the machine (load average 31; round 7 of run 2 took 27 s for `rm -rf`), which moved both sides together, so the ratio held. Run 1 is the clean one.
+
 ### The evidence lease (SAFE-10)
 
 **Question.** Is a 1 s lease on the process table and the snapshot of open files the right window?
@@ -232,3 +244,5 @@ All three runs use the same bench binary (`eb09327` changes only a test). The ru
 **Probe.** `cargo run --release -p dustpan-sys --example lease_cost`. It builds 200 small cache folders, then runs one preview-mode executor over all of them with `Lease::NONE` (a fresh process table and snapshot per candidate) and with `Lease::BATCH`, interleaved over five rounds. A preview holds no disk. Each rule names an owner, as M3's cache rows do, so every recheck consults the process table.
 
 **Result.** One process table plus one snapshot of open files costs 90.4 ms (median of 5). Rechecking all 200 candidates took 21,759 ms with `Lease::NONE` (108.79 ms each) and 145 ms with `Lease::BATCH` (0.73 ms each), medians of 5 rounds. Every candidate came out as a would-be removal in both modes. At 90.4 ms per snapshot pair, a 1 s lease spends at most 9% of each second taking evidence; a 250 ms lease would spend 36%. The window stays 1 s.
+
+**Fix round 1.** With the evidence taken again after each folder's survey, `Lease::NONE` now takes two snapshot pairs per folder: 211.73 ms per candidate (42,346 ms for 200), against 0.81 ms with `Lease::BATCH` (163 ms). One pair cost 98.7 ms on a loaded machine (load average 10 to 18), so a 1 s lease spends at most 9.9% of each second on evidence. The window stays 1 s.

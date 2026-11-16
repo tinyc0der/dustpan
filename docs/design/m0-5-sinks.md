@@ -223,7 +223,9 @@ What changed from the candidate 1 sketch, and why:
 
 ## Open questions and risks
 
+- **Windows and Linux are built but not yet adversarially verified.** M0-5 proves macOS first (operator's scope, fix round 1). The Linux freedesktop Trash, the Windows Delete and Recycle Bin sinks, and the Linux and Windows halves of the log store compile, pass clippy and their unit tests on CI, but no adversarial review has been run against them. They are verified when those platforms are taken up. Live lanes 9 (Windows) and 10 (Linux) are deferred until then; the open points are listed in the PR under "Deferred: Windows and Linux".
+- The Windows Trash sink checks the item's identity relative to its parent and then moves it by path through `IFileOperation`, the same shape as the macOS race fixed in round 1 (A2-F2). A parent swapped for a junction in between could send another item to the Recycle Bin, where it is recoverable. Deferred with the Windows review.
 - `O_NOFOLLOW_ANY` needs macOS 11.
 - The survey's entry bound has no unit test; building a million-entry fake tree in a test costs more than it proves. The deadline has one.
-- Windows: the guard keeps every path on Windows until M8 lists open files (`file-open-unknown`), so no Windows candidate reaches a sink in M0. The Windows sinks are built and unit-tested on the Windows CI runners; live lane 9 is operator-run.
+- Windows: the guard keeps every path on Windows until M8 lists open files (`file-open-unknown`), so no Windows candidate reaches a sink in M0. The Windows sinks are built and unit-tested on the Windows CI runners; live lane 9 is deferred.
 - Windows Trash: the case SAFE-12 exists for, a bin that refuses an item so that the shell would delete it for good, cannot be produced on CI without changing the user's registry. Only the progress sink's answer is tested. The classic-disposition fallback never runs on CI, whose disks are NTFS.

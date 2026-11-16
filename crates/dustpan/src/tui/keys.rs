@@ -104,7 +104,7 @@ pub const HOME: [KeyDoc; 9] = [
     QUIT_NOW,
     doc(
         "Wheel, click",
-        "Wheel moves, click selects, click again opens",
+        "Wheel moves, click selects or opens",
         None,
         false,
     ),

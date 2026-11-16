@@ -20,13 +20,13 @@ pub fn run(args: &[OsString], json: bool, out: &mut dyn Write) -> Exit {
         Ok(checker) => checker,
         Err(e) => return fail(format_args!("{e}"), Exit::Failed),
     };
-    let mut rows = Vec::with_capacity(args.len());
-    for arg in args {
-        match checker.check(arg) {
-            Ok(row) => rows.push(row),
-            Err(e) => return fail(format_args!("{e}"), Exit::Usage),
-        }
-    }
+    let rows: Result<Vec<Checked>, String> = checker
+        .check_each(args.iter().map(|a| a.as_os_str()))
+        .collect();
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(e) => return fail(format_args!("{e}"), Exit::Usage),
+    };
 
     // A closed pipe is not a failure of the command (M0-1's rule for `--version`).
     let _ = if json {

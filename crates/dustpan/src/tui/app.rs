@@ -262,7 +262,7 @@ fn update_check(mut state: State, input: Input) -> State {
     };
     match input {
         Input::Text(c) => view.type_char(c),
-        Input::Paste(pasted) => view.paste(&pasted),
+        Input::Paste(pasted) => view.paste(&pasted, &env),
         Input::Erase => view.erase(),
         Input::Clear => view.clear(),
         Input::Open => view.submit(&env),

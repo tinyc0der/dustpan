@@ -2,19 +2,19 @@
 source: crates/dustpan/tests/tui_snapshots.rs
 expression: "screen(&after(state(unicode(), 60, 16), &[Input::Help]))"
 ---
- dustpan › Home                    Macintosh HD  88 GB free
-──┌ 🧹 Help for Home ────────────────────────────────────┐──
- W│ ↑ ↓ j k       Move the cursor                        │
- ➤│ Enter → l     Open the entry                         │on
-  │ 0..9          Jump to an entry                       │on
+ d┌ 🧹 Help for Home ────────────────────────────────────┐e
+──│ ↑ ↓ j k       Move the cursor                        │──
+ W│ Enter → l     Open the entry                         │
+ ➤│ 0..9          Jump to an entry                       │on
   │ Tab           Swap list and detail below 100 columns │on
   │ ,             Settings                               │on
   │ ?             Show or close this help                │on
   │ q             Quit                                   │on
   │ Ctrl+C        Quit now                               │on
-  │ Wheel, click  Wheel moves, click selects, click again│on
-  │ Jump keys                                            │dy
+  │ Wheel, click  Wheel moves, click selects or opens    │on
+  │ Jump keys                                            │on
   │ 1 Clean  2 Uninstall  3 Analyze  4 Optimize          │dy
-  │ 5 Status  6 Purge  7 Installers  8 Slim  9 History   │
+  │ 5 Status  6 Purge  7 Installers  8 Slim  9 History   │dy
+  │ 0 Check a path                                       │
 ──└ ? or Esc closes ─────────────────────────────────────┘──
  ↑↓ Move  Enter Open  0-9 Jump  Tab Detail  ? Help  q Quit

@@ -24,7 +24,7 @@ expression: "screen(&after(state(unicode(), 120, 40), &[Input::Help]))"
                             │ ?             Show or close this help                        │
                             │ q             Quit                                           │
                             │ Ctrl+C        Quit now                                       │
-                            │ Wheel, click  Wheel moves, click selects, click again opens  │
+                            │ Wheel, click  Wheel moves, click selects or opens            │
                             │ Jump keys                                                    │
                             │ 1 Clean  2 Uninstall  3 Analyze  4 Optimize  5 Status        │
                             │ 6 Purge  7 Installers  8 Slim  9 History  0 Check a path     │

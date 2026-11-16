@@ -1,7 +1,7 @@
 //! The Check screen: type or paste a path and see whether dustpan keeps it. It asks the guard
 //! through `dustpan::check`, the code `dustpan explain` uses, and only reads.
 use super::facts::Environment;
-use super::frame::{self, cut_end, cut_middle};
+use super::frame::{self, cut_end};
 use super::rows::{self, Row, Tone};
 use super::theme::Look;
 use crate::check::{Checked, Checker};
@@ -11,18 +11,17 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use std::ffi::OsStr;
-use std::fmt;
-use std::rc::Rc;
 use unicode_width::UnicodeWidthStr;
 
 pub const PLACEHOLDER: &str = "Type or paste a path, e.g. ~/Library/Caches";
 pub const ELIGIBLE: &str = "dustpan may clean this when Clean arrives";
-const FIELD_ROWS: u16 = 3;
 const MAX_INPUT: usize = 4096;
+const EMPTY_HINT: &str = "Try a folder like ~/Library/Caches, or drag one in from Finder.";
 
-#[derive(Clone)]
+/// The field holds the paths literally. A newline between two of them comes only from a paste
+/// of several paths, because a typed key never makes one.
+#[derive(Clone, Debug)]
 pub struct CheckView {
-    guard: Result<Rc<Checker>, String>,
     pub input: String,
     /// Newest first.
     pub results: Vec<Checked>,
@@ -30,43 +29,41 @@ pub struct CheckView {
     pub scroll: usize,
 }
 
-impl fmt::Debug for CheckView {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CheckView")
-            .field("guard", &self.guard.as_ref().map(|_| "built"))
-            .field("input", &self.input)
-            .field("results", &self.results.len())
-            .field("error", &self.error)
-            .finish()
-    }
-}
-
-fn build(env: &Environment) -> Result<Rc<Checker>, String> {
-    Checker::open(&|name| env.get(name)).map(Rc::new)
-}
-
 impl CheckView {
-    /// Builds the guard once, here. A guard that cannot be built keeps its error on screen.
+    /// The guard is built again on every Enter. Opening only checks that it can be built, so a
+    /// problem shows before the first path is typed.
     pub fn open(env: &Environment) -> Self {
-        let guard = build(env);
         CheckView {
-            error: guard.as_ref().err().cloned(),
-            guard,
+            error: Checker::open(&|name| env.get(name)).err(),
             input: String::new(),
             results: Vec::new(),
             scroll: 0,
         }
     }
 
+    /// Typed text is taken as it is, the way `dustpan explain` takes its arguments.
     pub fn type_char(&mut self, c: char) {
         if !c.is_control() && self.input.len() < MAX_INPUT {
             self.input.push(c);
         }
     }
 
-    pub fn paste(&mut self, pasted: &str) {
-        for c in pasted.chars() {
-            self.type_char(c);
+    /// Pasted text may hold Terminal's escapes, quotes, or several paths. See [`pasted_paths`].
+    pub fn paste(&mut self, pasted: &str, env: &Environment) {
+        let exists = |path: &str| {
+            let full = match (path.strip_prefix('~'), env.get("HOME")) {
+                (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
+                    format!("{home}{rest}")
+                }
+                _ => path.to_owned(),
+            };
+            std::fs::symlink_metadata(full).is_ok()
+        };
+        for (i, path) in pasted_paths(pasted, exists).iter().enumerate() {
+            if i > 0 && self.input.len() < MAX_INPUT {
+                self.input.push('\n');
+            }
+            path.chars().for_each(|c| self.type_char(c));
         }
     }
 
@@ -78,27 +75,31 @@ impl CheckView {
         self.input.clear();
     }
 
-    /// Enter. Each check runs a fresh pass. A guard that failed to build is tried again, so
-    /// fixing the whitelist file and pressing Enter works.
+    /// Enter. One check and one result for each path in the field, from a guard built now so it
+    /// reads the whitelist as it is now.
     pub fn submit(&mut self, env: &Environment) {
-        let path = parse_typed(&self.input);
-        if path.is_empty() {
+        let paths: Vec<&str> = self
+            .input
+            .split('\n')
+            .filter(|path| !path.trim().is_empty())
+            .collect();
+        if paths.is_empty() {
             self.error = Some("Type or paste a path first.".to_owned());
             return;
         }
-        if self.guard.is_err() {
-            self.guard = build(env);
-        }
-        let checker = match &self.guard {
+        let checker = match Checker::open(&|name| env.get(name)) {
             Ok(checker) => checker,
             Err(message) => {
-                self.error = Some(message.clone());
+                self.error = Some(message);
                 return;
             }
         };
-        match checker.check(OsStr::new(&path)) {
+        let judged: Result<Vec<Checked>, String> = checker
+            .check_each(paths.iter().map(|path| OsStr::new(*path)))
+            .collect();
+        match judged {
             Ok(checked) => {
-                self.results.insert(0, checked);
+                self.results.splice(0..0, checked);
                 self.input.clear();
                 self.error = None;
                 self.scroll = 0;
@@ -108,20 +109,8 @@ impl CheckView {
     }
 }
 
-/// The path the user meant from what a terminal handed over. Terminal.app escapes a dragged
-/// file's name with backslashes (`My\ Folder`), and a copied one may sit in quotes or carry a
-/// trailing space.
-pub fn parse_typed(raw: &str) -> String {
-    let trimmed = raw.trim();
-    for quote in ['\'', '"'] {
-        if let Some(inner) = trimmed
-            .strip_prefix(quote)
-            .and_then(|rest| rest.strip_suffix(quote))
-        {
-            return inner.to_owned();
-        }
-    }
-    let mut chars: Vec<(char, bool)> = Vec::new();
+fn unescape(raw: &str) -> Vec<(char, bool)> {
+    let mut chars = Vec::new();
     let mut rest = raw.chars();
     while let Some(c) = rest.next() {
         match (c, cfg!(windows)) {
@@ -132,24 +121,70 @@ pub fn parse_typed(raw: &str) -> String {
             _ => chars.push((c, false)),
         }
     }
-    let blank = |&(c, escaped): &(char, bool)| !escaped && c.is_whitespace();
+    chars
+}
+
+fn blank(&(c, escaped): &(char, bool)) -> bool {
+    !escaped && c.is_whitespace()
+}
+
+fn text(chars: &[(char, bool)]) -> String {
+    chars.iter().map(|&(c, _)| c).collect()
+}
+
+/// The paths a terminal pasted. Each line is its own path. Terminal.app escapes a dragged
+/// file's name with backslashes (`My\ Folder`), puts a plain space between several dragged
+/// files, and a copied path may sit in quotes or carry a trailing space. A line that is not
+/// itself an existing path, and splits on its unescaped spaces into pieces that all start with
+/// `/` or `~`, is several paths. Any other line is one path, so a plain `/Users/x/My Folder`
+/// stays whole. Paths are never glued together.
+pub fn pasted_paths(raw: &str, exists: impl Fn(&str) -> bool) -> Vec<String> {
+    raw.split(['\n', '\r'])
+        .flat_map(|line| line_paths(line, &exists))
+        .collect()
+}
+
+fn line_paths(line: &str, exists: &impl Fn(&str) -> bool) -> Vec<String> {
+    let trimmed = line.trim();
+    for quote in ['\'', '"'] {
+        if let Some(inner) = trimmed
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            return vec![inner.to_owned()];
+        }
+    }
+    let chars = unescape(line);
     let start = chars.iter().position(|c| !blank(c)).unwrap_or(chars.len());
     let end = chars
         .iter()
         .rposition(|c| !blank(c))
         .map_or(start, |i| i + 1);
-    chars[start..end].iter().map(|&(c, _)| c).collect()
+    let chars = &chars[start..end];
+    let whole = text(chars);
+    if whole.is_empty() {
+        return Vec::new();
+    }
+    if exists(&whole) {
+        return vec![whole];
+    }
+    let pieces: Vec<String> = chars
+        .split(blank)
+        .filter(|piece| !piece.is_empty())
+        .map(text)
+        .collect();
+    if pieces.len() > 1 && pieces.iter().all(|p| p.starts_with(['/', '~'])) {
+        pieces
+    } else {
+        vec![whole]
+    }
 }
 
-fn verdict_rows(look: &Look, checked: &Checked, width: usize) -> Vec<Row> {
-    let ellipsis = look.glyphs.ellipsis;
-    let mut rows = vec![Row::of(
-        Tone::Bold,
-        format!(
-            " {}",
-            cut_middle(&checked.path, width.saturating_sub(2), ellipsis)
-        ),
-    )];
+fn verdict_rows(checked: &Checked, width: usize) -> Vec<Row> {
+    let mut rows: Vec<Row> = frame::wrap_exact(&checked.path, width.saturating_sub(2))
+        .into_iter()
+        .map(|line| Row::of(Tone::Bold, format!(" {line}")))
+        .collect();
     let (label, tone, reason) = match &checked.verdict {
         Verdict::Eligible => ("Eligible", Tone::Accent, ELIGIBLE.to_owned()),
         Verdict::Kept(reason) => ("Kept", Tone::Bold, reason.to_string()),
@@ -164,81 +199,96 @@ fn verdict_rows(look: &Look, checked: &Checked, width: usize) -> Vec<Row> {
         });
     }
     if let Some(physical) = &checked.physical {
-        rows.push(Row::of(
-            Tone::Dim,
-            format!(
-                "   physical path: {}",
-                cut_middle(
-                    &physical.to_string(),
-                    room.saturating_sub(15).max(10),
-                    ellipsis
-                )
-            ),
-        ));
+        let lead = "   physical path: ";
+        let room = width.saturating_sub(lead.width() + 1).max(10);
+        for (i, line) in frame::wrap_exact(&physical.to_string(), room)
+            .into_iter()
+            .enumerate()
+        {
+            let pad = if i == 0 { lead } else { "                  " };
+            rows.push(Row::of(Tone::Dim, format!("{pad}{line}")));
+        }
     }
     rows
 }
 
-pub fn rows(look: &Look, view: &CheckView, width: usize) -> Vec<Row> {
+pub fn rows(view: &CheckView, width: usize) -> Vec<Row> {
     if view.results.is_empty() {
-        return vec![
-            Row::of(Tone::Plain, " Results show here, newest first."),
-            Row::of(
-                Tone::Dim,
-                " Try a folder like ~/Library/Caches, or drag one in from Finder.",
-            ),
-        ];
+        let mut rows = vec![Row::of(Tone::Plain, " Results show here, newest first.")];
+        rows.extend(
+            frame::wrap(EMPTY_HINT, width.saturating_sub(2))
+                .into_iter()
+                .map(|line| Row::of(Tone::Dim, format!(" {line}"))),
+        );
+        return rows;
     }
     let mut rows = Vec::new();
     for (i, checked) in view.results.iter().enumerate() {
         if i > 0 {
             rows.push(Row::blank());
         }
-        rows.extend(verdict_rows(look, checked, width));
+        rows.extend(verdict_rows(checked, width));
     }
     rows
 }
 
-fn results_height(body: Rect) -> u16 {
-    body.height.saturating_sub(FIELD_ROWS)
+/// The rows under the field: the error, wrapped so its cause stays readable, or the promise.
+fn note_rows(look: &Look, view: &CheckView, body: Rect) -> Vec<Row> {
+    let Some(message) = &view.error else {
+        return vec![Row::of(
+            Tone::Dim,
+            " Enter checks it. Nothing is changed or removed.",
+        )];
+    };
+    let width = body.width as usize;
+    let max_rows = usize::from(body.height.saturating_sub(4)).max(1);
+    let mut lines = frame::wrap(message, width.saturating_sub(2));
+    if lines.len() > max_rows {
+        lines.truncate(max_rows);
+        if let Some(last) = lines.last_mut() {
+            *last = cut_end(
+                &format!("{last}{}", look.glyphs.ellipsis),
+                width.saturating_sub(2),
+                look.glyphs.ellipsis,
+            );
+        }
+    }
+    lines
+        .into_iter()
+        .map(|line| Row::of(Tone::Accent, format!(" {line}")))
+        .collect()
+}
+
+fn results_height(body: Rect, note_rows: usize) -> u16 {
+    body.height
+        .saturating_sub(2 + u16::try_from(note_rows).unwrap_or(u16::MAX))
 }
 
 pub fn max_scroll(look: &Look, view: &CheckView, body: Rect) -> usize {
+    let width = body.width as usize;
     rows::max_scroll(
-        rows(look, view, body.width as usize).len(),
-        results_height(body),
+        rows(view, width).len(),
+        results_height(body, note_rows(look, view, body).len()),
     )
 }
 
 pub fn render(frame: &mut Frame, look: &Look, view: &CheckView, body: Rect) {
     let width = body.width as usize;
+    let note = note_rows(look, view, body);
+    let note_height = u16::try_from(note.len()).unwrap_or(u16::MAX);
     let field = Rect::new(body.x, body.y, body.width, 1);
-    let note = Rect::new(body.x, body.y + 1, body.width, 1);
-    let rule = Rect::new(body.x, body.y + 2, body.width, 1);
+    let note_area = Rect::new(body.x, body.y + 1, body.width, note_height);
+    let rule = Rect::new(body.x, body.y + 1 + note_height, body.width, 1);
     let results = Rect::new(
         body.x,
-        body.y + FIELD_ROWS.min(body.height),
+        body.y + (2 + note_height).min(body.height),
         body.width,
-        results_height(body),
+        results_height(body, note.len()),
     );
     frame.render_widget(Paragraph::new(field_line(look, &view.input, width)), field);
-    let note_line = match &view.error {
-        Some(message) => Line::styled(
-            format!(
-                " {}",
-                cut_end(message, width.saturating_sub(2), look.glyphs.ellipsis)
-            ),
-            look.accent(),
-        ),
-        None => Line::styled(
-            " Enter checks it. Nothing is changed or removed.",
-            look.dim(),
-        ),
-    };
-    frame.render_widget(Paragraph::new(note_line), note);
+    rows::render(frame, look, &note, 0, note_area);
     frame.render_widget(Paragraph::new(look.glyphs.hline.repeat(width)), rule);
-    let rows = rows(look, view, width);
-    rows::render(frame, look, &rows, view.scroll, results);
+    rows::render(frame, look, &rows(view, width), view.scroll, results);
 }
 
 fn field_line<'a>(look: &Look, input: &str, width: usize) -> Line<'a> {
@@ -252,20 +302,19 @@ fn field_line<'a>(look: &Look, input: &str, width: usize) -> Line<'a> {
             look.dim(),
         ));
     } else {
-        let tail: String = {
-            let mut shown: Vec<char> = Vec::new();
-            let mut used = 0;
-            for c in input.chars().rev() {
-                let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                if used + cell > room.saturating_sub(1) {
-                    break;
-                }
-                used += cell;
-                shown.push(c);
+        let divider = format!(" {} ", look.glyphs.bullet);
+        let shown = input.replace('\n', &divider);
+        let mut tail: Vec<char> = Vec::new();
+        let mut used = 0;
+        for c in shown.chars().rev() {
+            let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            if used + cell > room.saturating_sub(1) {
+                break;
             }
-            shown.iter().rev().collect()
-        };
-        spans.push(Span::raw(tail));
+            used += cell;
+            tail.push(c);
+        }
+        spans.push(Span::raw(tail.iter().rev().collect::<String>()));
         spans.push(Span::styled(" ", look.selected()));
     }
     Line::from(spans)
@@ -275,33 +324,73 @@ fn field_line<'a>(look: &Look, input: &str, width: usize) -> Line<'a> {
 mod tests {
     use super::*;
 
+    fn never(_: &str) -> bool {
+        false
+    }
+
+    fn pasted(raw: &str) -> Vec<String> {
+        pasted_paths(raw, never)
+    }
+
     #[test]
     fn a_dragged_in_path_loses_its_backslashes_and_trailing_space() {
         if cfg!(windows) {
             return;
         }
         assert_eq!(
-            parse_typed(r"/Users/me/My\ Folder\ \(1\)/  "),
-            "/Users/me/My Folder (1)/"
+            pasted(r"/Users/me/My\ Folder\ \(1\)/  "),
+            ["/Users/me/My Folder (1)/"]
         );
-        assert_eq!(parse_typed(r"/a/b\\c"), r"/a/b\c");
-        assert_eq!(parse_typed(r"/a/trailing\ "), "/a/trailing ");
-        assert_eq!(parse_typed("/a/b\\"), "/a/b\\");
+        assert_eq!(pasted(r"/a/b\\c"), [r"/a/b\c"]);
+        assert_eq!(pasted(r"/a/trailing\ "), ["/a/trailing "]);
+        assert_eq!(pasted("/a/b\\"), ["/a/b\\"]);
     }
 
     #[test]
     fn quotes_around_a_path_are_removed_and_spaces_inside_stay() {
-        assert_eq!(parse_typed("'/Users/me/My Folder'"), "/Users/me/My Folder");
-        assert_eq!(parse_typed("  \"/Users/me/x y\"  "), "/Users/me/x y");
-        assert_eq!(parse_typed("'/it's'"), "/it's");
+        assert_eq!(pasted("'/Users/me/My Folder'"), ["/Users/me/My Folder"]);
+        assert_eq!(pasted("  \"/Users/me/x y\"  "), ["/Users/me/x y"]);
+        assert_eq!(pasted("'/it's'"), ["/it's"]);
     }
 
     #[test]
     fn a_plain_or_tilde_path_is_kept_and_blank_input_is_empty() {
-        assert_eq!(parse_typed("~/Library/Caches"), "~/Library/Caches");
-        assert_eq!(parse_typed("   "), "");
-        assert_eq!(parse_typed(""), "");
-        assert_eq!(parse_typed("'"), "'");
+        assert_eq!(pasted("~/Library/Caches"), ["~/Library/Caches"]);
+        assert!(pasted("   ").is_empty());
+        assert!(pasted("").is_empty());
+        assert_eq!(pasted("'"), ["'"]);
+    }
+
+    #[test]
+    fn lines_are_separate_paths() {
+        assert_eq!(pasted("/a/one\n/a/two"), ["/a/one", "/a/two"]);
+        assert_eq!(pasted("/a/one\r\n/a/two\r\n"), ["/a/one", "/a/two"]);
+        assert_eq!(pasted("/a/one\n\n  \n~/two"), ["/a/one", "~/two"]);
+    }
+
+    #[test]
+    fn terminals_two_file_drag_is_two_paths() {
+        if cfg!(windows) {
+            return;
+        }
+        assert_eq!(
+            pasted(r"/a/My\ Folder /b/keepme "),
+            ["/a/My Folder", "/b/keepme"]
+        );
+        assert_eq!(pasted("~/one /b/two"), ["~/one", "/b/two"]);
+    }
+
+    #[test]
+    fn a_path_with_a_plain_space_stays_one_path() {
+        assert_eq!(pasted("/Users/x/My Folder"), ["/Users/x/My Folder"]);
+        assert_eq!(pasted("/Users/x/a /b c"), ["/Users/x/a /b c"]);
+    }
+
+    #[test]
+    fn a_line_that_is_an_existing_path_is_not_split() {
+        let exists = |p: &str| p == "/a/b /c";
+        assert_eq!(pasted_paths("/a/b /c", exists), ["/a/b /c"]);
+        assert_eq!(pasted_paths("/a/b /d", exists), ["/a/b", "/d"]);
     }
 
     fn tempdir() -> tempfile::TempDir {
@@ -320,10 +409,7 @@ mod tests {
 
     #[cfg(unix)]
     fn lines(view: &CheckView) -> Vec<String> {
-        rows(&Look::new(false, true), view, 100)
-            .iter()
-            .map(Row::text)
-            .collect()
+        rows(view, 100).iter().map(Row::text).collect()
     }
 
     #[cfg(unix)]
@@ -334,14 +420,13 @@ mod tests {
         let folder = dir.path().join("scratch");
         std::fs::create_dir_all(&folder).unwrap();
         let mut view = CheckView::open(&env);
-        view.paste(&folder.to_string_lossy());
+        view.paste(&folder.to_string_lossy(), &env);
         view.submit(&env);
         let lines = lines(&view);
-        assert!(
-            lines[0].starts_with(" ") && lines[0].ends_with("scratch"),
-            "{lines:?}"
-        );
-        assert_eq!(lines[1], format!("   Eligible  {ELIGIBLE}"));
+        let eligible = lines.iter().position(|l| l.contains("Eligible")).unwrap();
+        let shown: String = lines[..eligible].iter().map(|l| &l[1..]).collect();
+        assert_eq!(shown, folder.to_string_lossy(), "{lines:?}");
+        assert_eq!(lines[eligible], format!("   Eligible  {ELIGIBLE}"));
         assert!(view.input.is_empty() && view.error.is_none());
     }
 
@@ -351,14 +436,15 @@ mod tests {
         let dir = tempdir();
         let env = fixture_env(dir.path());
         let mut view = CheckView::open(&env);
-        let protected = if cfg!(windows) { r"C:\Windows" } else { "/usr" };
-        view.paste(protected);
+        view.paste("/usr", &env);
         view.submit(&env);
         let lines = lines(&view);
         assert!(lines[1].starts_with("   Kept  "), "{lines:?}");
-        let expected = Checker::open(&|name| env.get(name))
+        let checker = Checker::open(&|name| env.get(name)).unwrap();
+        let expected = checker
+            .check_each([OsStr::new("/usr")])
+            .next()
             .unwrap()
-            .check(OsStr::new(protected))
             .unwrap()
             .verdict
             .kept()
@@ -373,13 +459,10 @@ mod tests {
         let dir = tempdir();
         let env = fixture_env(dir.path());
         let mut view = CheckView::open(&env);
-        view.paste("~/Library/Caches");
+        view.paste("~/Library/Caches", &env);
         view.submit(&env);
         let shown = &lines(&view)[0];
-        assert!(
-            shown.ends_with("Library/Caches") || shown.ends_with(r"Library\Caches"),
-            "{shown}"
-        );
+        assert!(shown.ends_with("Library/Caches"), "{shown}");
         assert!(!shown.contains('~'), "{shown}");
     }
 
@@ -390,7 +473,7 @@ mod tests {
         let env = fixture_env(dir.path());
         let mut view = CheckView::open(&env);
         for name in ["first", "second"] {
-            view.paste(&dir.path().join(name).to_string_lossy());
+            view.paste(&dir.path().join(name).to_string_lossy(), &env);
             view.submit(&env);
         }
         let paths: Vec<_> = view.results.iter().map(|r| r.path.clone()).collect();
@@ -398,6 +481,45 @@ mod tests {
             paths[0].ends_with("second") && paths[1].ends_with("first"),
             "{paths:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_paste_of_two_paths_is_checked_as_two_paths() {
+        let dir = tempdir();
+        let env = fixture_env(dir.path());
+        let (scratch, keepme) = (dir.path().join("scratch"), dir.path().join("keepme"));
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::create_dir_all(&keepme).unwrap();
+        for raw in [
+            format!("{}\n{}", scratch.display(), keepme.display()),
+            format!("{} {} ", scratch.display(), keepme.display()),
+        ] {
+            let mut view = CheckView::open(&env);
+            view.paste(&raw, &env);
+            view.submit(&env);
+            let paths: Vec<_> = view.results.iter().map(|r| r.path.clone()).collect();
+            assert_eq!(
+                paths,
+                [
+                    scratch.to_string_lossy().into_owned(),
+                    keepme.to_string_lossy().into_owned()
+                ],
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_typed_backslash_is_part_of_the_path() {
+        let dir = tempdir();
+        let env = fixture_env(dir.path());
+        let mut view = CheckView::open(&env);
+        let typed = format!("{}/back\\slash", dir.path().display());
+        typed.chars().for_each(|c| view.type_char(c));
+        view.submit(&env);
+        assert_eq!(view.results[0].path, typed);
     }
 
     #[test]
@@ -416,7 +538,7 @@ mod tests {
                 .unwrap()
                 .contains("home folder is not set")
         );
-        broken.paste("/x");
+        broken.paste("/x", &none);
         broken.submit(&none);
         assert!(broken.error.is_some() && broken.results.is_empty());
         assert_eq!(

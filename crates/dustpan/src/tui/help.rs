@@ -1,3 +1,4 @@
+use super::frame;
 use super::home::ENTRIES;
 use super::keys::{self, Help};
 use super::theme::Look;
@@ -16,15 +17,22 @@ pub fn lines(look: &Look, help: Help, inner: usize) -> Vec<Line<'static>> {
         .map(|doc| keys::expand(doc.keys, &look.glyphs).width())
         .max()
         .unwrap_or(0);
+    let room = inner.saturating_sub(key_width + 4).max(8);
     let mut lines = Vec::new();
     for doc in docs {
         let keys = keys::expand(doc.keys, &look.glyphs);
         let pad = " ".repeat(key_width - keys.width());
-        lines.push(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(keys, look.bold()),
-            Span::raw(format!("{pad}  {}", doc.action)),
-        ]));
+        for (i, action) in frame::wrap(doc.action, room).into_iter().enumerate() {
+            lines.push(if i == 0 {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(keys.clone(), look.bold()),
+                    Span::raw(format!("{pad}  {action}")),
+                ])
+            } else {
+                Line::raw(format!(" {}  {action}", " ".repeat(key_width)))
+            });
+        }
     }
     if help == Help::Home {
         lines.push(Line::styled(" Jump keys", look.bold()));
@@ -52,7 +60,7 @@ pub fn render(frame: &mut Frame, look: &Look, help: Help) {
     let area = frame.area();
     let width = area.width.saturating_sub(4).min(MAX_WIDTH);
     let content = lines(look, help, width.saturating_sub(2) as usize);
-    let height = (content.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let height = (content.len() as u16 + 2).min(area.height);
     let rect = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,

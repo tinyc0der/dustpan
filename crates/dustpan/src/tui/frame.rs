@@ -293,8 +293,6 @@ fn take_cells(chars: impl Iterator<Item = char>, budget: usize) -> String {
     out
 }
 
-/// Breaks  into lines of at most  cells at spaces. A word wider than a line is
-/// broken across lines, so a long path is never cut off.
 /// Breaks `text` into lines of at most `width` cells at spaces. A word wider than a line is
 /// broken across lines, so a long path is never cut off.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
@@ -325,6 +323,23 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     }
     if !line.is_empty() {
         lines.push(line);
+    }
+    lines
+}
+
+/// Breaks `text` into lines of exactly `width` cells, except the last, with no regard for
+/// spaces, so a path is shown as it is spelled.
+pub fn wrap_exact(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut head = take_cells(rest.chars(), width);
+        if head.is_empty() {
+            head.extend(rest.chars().next());
+        }
+        rest = &rest[head.len()..];
+        lines.push(head);
     }
     lines
 }
@@ -361,6 +376,13 @@ mod tests {
         let lines = wrap("see /a/very/long/path ok", 8);
         assert_eq!(lines, ["see", "/a/very/", "long/pat", "h ok"]);
         assert_eq!(wrap("abc", 0), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn wrap_exact_keeps_every_character_and_every_space() {
+        let lines = wrap_exact("/a/b  c/日本", 4);
+        assert_eq!(lines, ["/a/b", "  c/", "日本"]);
+        assert_eq!(lines.concat(), "/a/b  c/日本");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The guard's verdict for a path, shared by `dustpan explain` and the Check screen. Read-only.
-//! A [`Checker`] builds the guard once. Each [`Checker::check`] runs a fresh pass, so live
-//! evidence is never older than the check.
+//! A [`Checker`] builds the guard, so it reads the whitelist as it is now. Build one per run, or
+//! per press of Enter on the Check screen. [`Checker::check_each`] runs one pass over the
+//! arguments it is given.
 use crate::config;
 use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, ShapeReason, Verdict};
 use dustpan_core::path::{AbsPath, escaped};
@@ -52,35 +53,43 @@ impl Checker {
         Ok(Self { guard, probe, home })
     }
 
-    /// The error is the working folder being gone while `arg` is relative.
-    pub fn check(&self, arg: &OsStr) -> Result<Checked, String> {
+    /// One pass judges every argument, as `dustpan explain` always has, so the pass's evidence
+    /// is gathered once. Each item is an error only when the working folder is gone while its
+    /// argument is relative.
+    pub fn check_each<'a>(
+        &'a self,
+        args: impl IntoIterator<Item = &'a OsStr> + 'a,
+    ) -> impl Iterator<Item = Result<Checked, String>> + 'a {
         let cwd = std::env::current_dir().ok();
-        let Some(typed) = absolute(arg, &self.home, cwd.as_deref()) else {
-            return Err(format!(
-                "cannot resolve {}: the working folder is gone; give an absolute path",
-                escaped(arg)
-            ));
-        };
-        Ok(match AbsPath::parse(typed.as_os_str()) {
-            Ok(path) => {
-                let judgment = self.guard.pass(&self.probe).evaluate(path);
-                let physical = match judgment.verdict() {
-                    Verdict::Kept(KeptReason::Shape(ShapeReason::LinkedAncestor { .. })) => {
-                        physical_spelling(&self.probe, judgment.path())
+        let mut pass = self.guard.pass(&self.probe);
+        args.into_iter().map(move |arg| {
+            let Some(typed) = absolute(arg, &self.home, cwd.as_deref()) else {
+                return Err(format!(
+                    "cannot resolve {}: the working folder is gone; give an absolute path",
+                    escaped(arg)
+                ));
+            };
+            Ok(match AbsPath::parse(typed.as_os_str()) {
+                Ok(path) => {
+                    let judgment = pass.evaluate(path);
+                    let physical = match judgment.verdict() {
+                        Verdict::Kept(KeptReason::Shape(ShapeReason::LinkedAncestor {
+                            ..
+                        })) => physical_spelling(&self.probe, judgment.path()),
+                        _ => None,
+                    };
+                    Checked {
+                        path: judgment.path().to_string(),
+                        verdict: judgment.verdict().clone(),
+                        physical,
                     }
-                    _ => None,
-                };
-                Checked {
-                    path: judgment.path().to_string(),
-                    verdict: judgment.verdict().clone(),
-                    physical,
                 }
-            }
-            Err(e) => Checked {
-                path: escaped(typed.as_os_str()).to_string(),
-                verdict: Verdict::Kept(KeptReason::Shape(ShapeReason::Malformed(e))),
-                physical: None,
-            },
+                Err(e) => Checked {
+                    path: escaped(typed.as_os_str()).to_string(),
+                    verdict: Verdict::Kept(KeptReason::Shape(ShapeReason::Malformed(e))),
+                    physical: None,
+                },
+            })
         })
     }
 }

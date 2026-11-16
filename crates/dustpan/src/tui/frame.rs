@@ -293,18 +293,35 @@ fn take_cells(chars: impl Iterator<Item = char>, budget: usize) -> String {
     out
 }
 
+/// Breaks  into lines of at most  cells at spaces. A word wider than a line is
+/// broken across lines, so a long path is never cut off.
+/// Breaks `text` into lines of at most `width` cells at spaces. A word wider than a line is
+/// broken across lines, so a long path is never cut off.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let word = cut_end(word, width, "");
+        let mut word = word;
+        while word.width() > width {
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            let mut head = take_cells(word.chars(), width);
+            if head.is_empty() {
+                head.extend(word.chars().next());
+            }
+            let taken = head.len();
+            lines.push(head);
+            word = &word[taken..];
+        }
         if !line.is_empty() && line.width() + 1 + word.width() > width {
             lines.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
             line.push(' ');
         }
-        line.push_str(&word);
+        line.push_str(word);
     }
     if !line.is_empty() {
         lines.push(line);
@@ -337,6 +354,13 @@ mod tests {
     fn cut_counts_wide_glyphs_as_two_cells() {
         assert_eq!(cut_end("🧹🧹🧹🧹", 5, "…").width(), 5);
         assert!(cut_middle("🧹🧹🧹🧹🧹🧹", 7, "…").width() <= 7);
+    }
+
+    #[test]
+    fn wrap_breaks_a_word_wider_than_the_line_instead_of_cutting_it() {
+        let lines = wrap("see /a/very/long/path ok", 8);
+        assert_eq!(lines, ["see", "/a/very/", "long/pat", "h ok"]);
+        assert_eq!(wrap("abc", 0), ["a", "b", "c"]);
     }
 
     #[test]

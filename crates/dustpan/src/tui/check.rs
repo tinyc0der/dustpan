@@ -185,7 +185,7 @@ pub fn rows(look: &Look, view: &CheckView, width: usize) -> Vec<Row> {
             Row::of(Tone::Plain, " Results show here, newest first."),
             Row::of(
                 Tone::Dim,
-                " dustpan only reads. Nothing is changed or removed.",
+                " Try a folder like ~/Library/Caches, or drag one in from Finder.",
             ),
         ];
     }

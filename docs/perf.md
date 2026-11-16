@@ -131,3 +131,70 @@ Five runs of each side, alternated, 2026-11-16, same machine, load average 2.9 t
 - The work happened: every run of both sides reports 99,998 of 100,000 eligible for `scan` and `explain` and 99,999 for `cpu`, and no process of this user was unlisted. No run failed the budget.
 
 **Not measured.** Linux and Windows. A cold fixture. More than one thread: a scan uses one `Pass` per worker, and the passes share nothing but the read-only policy.
+
+## Guard with a 500-line whitelist (M0-4)
+
+**Budget.** The head's `scan` median must not be more than 25 percent below the M0-3 head's (`a2b9f07`), with a 500-line whitelist loaded.
+
+**Probe.** `cargo bench -p dustpan-core --bench guard`, from two exports of the repository in sibling folders with paths of the same length (`side-a` holds `a2b9f07`, `side-b` holds `c5dd004`). The M0-3 bench has no whitelist, so the head's bench loads 500 user lines (250 literals under `~/Projects`, 150 literal cache folders, 100 cache globs beside the fixture's) that name none of the fixture paths. Every path is still judged eligible, so the number is what layer 5 costs to say no. The bench checks that a path the whitelist names is kept.
+
+**Baseline.** Trunk median for `scan`, recorded first: 822,299 evaluations per second.
+
+**Runs.** Three runs of each side, alternated (trunk, head, trunk, head, trunk, head), 2026-11-16. Each cell is the median of five rounds in paths per second.
+
+| Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
+|---|---|---|---|---|---|
+| 1 | trunk | 5.77 | 814,402 | 210,888 | 1,265,907 |
+| 1 | head | 5.63 | 827,668 | 211,821 | 1,289,325 |
+| 2 | trunk | 5.44 | 826,197 | 211,641 | 1,296,806 |
+| 2 | head | 5.57 | 828,388 | 210,286 | 1,282,668 |
+| 3 | trunk | 5.33 | 822,299 | 199,214 | 1,296,313 |
+| 3 | head | 5.22 | 750,732 | 185,167 | 1,233,515 |
+
+Medians of the three runs: `scan` 822,299 on trunk and 827,668 on head (0.7% faster, inside the spread); `explain` 210,888 and 210,286; `cpu` 1,296,313 and 1,282,668. The rule passes by a wide margin. Run 3 of the head was the slowest cell, and its trunk neighbour was the slowest trunk cell for `explain`, so a background process most likely caused both.
+
+**What limits the number.** A `Pass` keeps one position in the whitelist trie per ancestor folder, so a path outside every entry costs one comparison and a path in a folder with entries costs one hash lookup plus a glob match per glob in that folder. A first version walked every component from the top for each path and measured 445,000 for `scan` (48% slower), almost all of it per-component allocation. The 100 cache globs are matched only for the 100 cache folders, not for the 100,000 files below them.
+
+**The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain` on both sides, the same count as M0-3.
+
+**Machine.** Apple M1 Pro, 10 cores, 32 GB, macOS 26.6.2. Other agents were building on the machine, load average 5.2 to 5.8.
+
+### Fix round 1
+
+The fix round folds non-ASCII names, matches `?` and `[...]` by bytes and by key, and resolves every entry through the probe at `Guard::new`. The same bench ran from fresh exports (`side-a` at `a2b9f07`, `side-c` at `18bffa6`) under `/tmp/swarm-m0-4/fix1/bench`, alternated, three runs each, on 2026-11-16.
+
+| Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
+|---|---|---|---|---|---|
+| 1 | trunk | 1.79 | 911,483 | 221,818 | 1,294,886 |
+| 1 | head | 1.74 | 852,462 | 212,607 | 1,238,278 |
+| 2 | trunk | 2.00 | 851,319 | 209,891 | 1,269,127 |
+| 2 | head | 1.92 | 906,049 | 217,583 | 1,273,155 |
+| 3 | trunk | 1.85 | 917,736 | 219,692 | 1,288,759 |
+| 3 | head | 1.78 | 894,829 | 216,763 | 1,272,893 |
+
+Medians: `scan` 911,483 on trunk and 894,829 on head (1.8% slower, inside the spread of 851,319 to 917,736 on both sides), `explain` 219,692 and 216,763, `cpu` 1,288,759 and 1,272,893 (1.2% slower). The rule passes. Two earlier rounds at `5126bf5`, under a load of 4 to 7, gave `scan` medians of 842,309 and 845,294 on the warm round and swung from 433,003 to 802,047 on the round that built the fixtures.
+
+**What limits the number.** The same as above. An all-ASCII name takes the ASCII fold, so the bench's names cost what they did. Resolution runs at `Guard::new`, outside the timed rounds. `explain` as a process, which includes it, took 10.6 ms at this head and 7.5 ms at `13d50e0`, as means of 100 alternated runs with the same 500 lines.
+
+**The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain`, and the bench still checks that a path the whitelist names is kept.
+
+### Restack onto main
+
+The branch merged `main` at `a2d839c`, which adds M0-3's open-file layer. Layer 5 runs before the open-file question. The same bench ran from fresh exports (`side-m` at `a2d839c` with no whitelist, `side-r` at the merge with 500 lines) under `/tmp/swarm-m0-4/restack/bench`, alternated, on 2026-11-16. A first pair built the fixtures and is left out.
+
+| Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
+|---|---|---|---|---|---|
+| 1 | main | 9.11 | 607,385 | 171,438 | 1,054,424 |
+| 1 | merge | 8.10 | 609,073 | 168,638 | 1,043,849 |
+| 2 | main | 7.71 | 619,038 | 170,726 | 1,045,522 |
+| 2 | merge | 7.41 | 603,573 | 167,511 | 1,030,900 |
+| 3 | main | 6.65 | 605,858 | 169,700 | 1,050,431 |
+| 3 | merge | 5.93 | 578,483 | 164,566 | 1,040,260 |
+| 4 | main | 6.51 | 590,902 | 161,832 | 1,027,416 |
+| 4 | merge | 6.39 | 588,675 | 165,244 | 1,033,420 |
+| 5 | main | 6.36 | 579,215 | 163,496 | 1,036,957 |
+| 5 | merge | 6.51 | 592,089 | 164,911 | 1,020,164 |
+
+Medians: `scan` 605,858 on main and 592,089 at the merge (2.3% slower, inside the spread of 579,215 to 619,038 on main and 578,483 to 609,073 at the merge), `explain` 169,700 and 165,244, `cpu` 1,045,522 and 1,033,420. The rule passes, and `scan` passes at 2.96 times the budget. Both sides sit below the fix round 1 numbers. M0-3's fix round 3 measured its snapshot of open files at 12% of `scan`, and the load here was 5.9 to 9.1 against 1.8 then. No profile was taken, so how the gap splits between the two is inferred.
+
+**The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain` on both sides, and the merge's bench checks that a path the whitelist names is kept.

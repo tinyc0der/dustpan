@@ -2,6 +2,7 @@
 
 mod cli;
 mod cmd;
+mod config;
 mod debug;
 mod exit;
 

@@ -34,12 +34,14 @@ fn main() -> std::process::ExitCode {
 #[cfg(unix)]
 mod unix {
     use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
-    use dustpan_core::guard::{Guard, GuardInputs, Verdict};
+    use dustpan_core::config::Read;
+    use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Verdict};
     use dustpan_core::identity::Node;
     use dustpan_core::path::AbsPath;
     use dustpan_core::paths::Os;
     use dustpan_core::probe::fake::FakeProbe;
     use dustpan_core::probe::{OpenFiles, Probe, ProcessTable, Seen};
+    use dustpan_core::whitelist::{self, Whitelist};
     use dustpan_sys::LiveProbe;
     use std::hint::black_box;
     use std::path::{Path, PathBuf};
@@ -198,6 +200,29 @@ mod unix {
         }
     }
 
+    fn big_whitelist(home: &AbsPath) -> Whitelist {
+        let mut text = String::from("# bench whitelist\n");
+        for n in 0..250 {
+            text.push_str(&format!("~/Projects/app{n}/node_modules/.cache\n"));
+        }
+        for n in 0..150 {
+            text.push_str(&format!("~/Library/Caches/org.vendor.{n}\n"));
+        }
+        for n in 0..100 {
+            text.push_str(&format!("~/Library/Caches/com.vendor.{n}.*\n"));
+        }
+        let file = AbsPath::parse(home.as_path().join(".config/dustpan/whitelist").as_os_str())
+            .expect("the whitelist path is absolute");
+        let list = whitelist::load(Os::current(), home, &file, Read::Text(text))
+            .expect("the bench whitelist parses");
+        assert_eq!(
+            list.entries().len(),
+            500 + 11,
+            "500 user lines and the safety entries"
+        );
+        list
+    }
+
     pub fn run() -> ExitCode {
         let (home, cached) = fixture();
         let home = home.canonicalize().expect("fixture home resolves");
@@ -220,10 +245,23 @@ mod unix {
             os: Os::current(),
             home: home.clone(),
             env: &env,
+            whitelist: big_whitelist(&home),
         };
         let live = LiveProbe::new();
         let live_guard = Guard::new(inputs(), &live).expect("the policy loads on this host");
         let live_nodes = nodes(&live, &paths);
+        let listed = AbsPath::parse(
+            home.as_path()
+                .join("Projects/app7/node_modules/.cache/x")
+                .as_os_str(),
+        )
+        .expect("the path is absolute");
+        let verdict = live_guard.pass(&live).evaluate(listed);
+        assert!(
+            matches!(verdict.verdict().kept(), Some(KeptReason::Whitelisted(_))),
+            "the bench whitelist keeps the paths it names: {:?}",
+            verdict.verdict()
+        );
 
         let mut fake = FakeProbe::new();
         for (path, node) in found.iter().zip(&live_nodes) {

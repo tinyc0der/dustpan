@@ -6,6 +6,7 @@ use dustpan_core::guard::{Guard, GuardInputs, KeptReason, PolicyError, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
+use dustpan_core::whitelist::Whitelist;
 
 const HOME: &str = r"C:\Users\alice";
 
@@ -45,6 +46,7 @@ fn guard(fs: &FakeProbe, env: &dyn Fn(&str) -> Option<String>) -> Guard {
             os: Os::Windows,
             home: p(HOME),
             env,
+            whitelist: Whitelist::defaults(Os::Windows, &p(HOME)),
         },
         fs,
     )
@@ -194,6 +196,7 @@ fn a_profile_that_is_a_system_tree_means_no_guard() {
                 os: Os::Windows,
                 home: p(home),
                 env: &env,
+                whitelist: Whitelist::defaults(Os::Windows, &p(home)),
             },
             &windows(),
         );
@@ -217,4 +220,37 @@ fn docker_state_keeps_the_folders_that_hold_it() {
         matches!(&verdict, Verdict::Kept(KeptReason::Protected(_))),
         "{verdict:?}"
     );
+}
+
+fn load(body: &str) -> Result<Whitelist, dustpan_core::whitelist::LoadError> {
+    dustpan_core::whitelist::load(
+        Os::Windows,
+        &p(HOME),
+        &p(r"C:\Users\alice\AppData\Roaming\dustpan\whitelist"),
+        dustpan_core::config::Read::Text(body.into()),
+    )
+}
+
+#[test]
+fn a_tilde_with_doubled_backslashes_still_names_the_home_folder() {
+    let wl = load("~\\\\Projects\\keep\r\n~/\\x\r\n").unwrap();
+    let named: Vec<String> = wl
+        .entries()
+        .iter()
+        .take(2)
+        .map(|e| match &e.pattern {
+            dustpan_core::whitelist::Pattern::Path(path) => path.to_string(),
+            dustpan_core::whitelist::Pattern::FinderMetadata => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [r"C:\Users\alice\Projects\keep", r"C:\Users\alice\x"]
+    );
+}
+
+#[test]
+fn a_tilde_followed_by_a_drive_stops_the_load() {
+    let err = load("~/ok\n~/D:\\work\n").unwrap_err();
+    assert!(err.to_string().contains("line 2"), "{err}");
 }

@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod candidate;
+pub mod config;
 pub mod facts;
 pub mod guard;
 pub mod identity;
@@ -14,3 +15,4 @@ pub mod probe;
 mod protect;
 pub mod size;
 pub mod time;
+pub mod whitelist;

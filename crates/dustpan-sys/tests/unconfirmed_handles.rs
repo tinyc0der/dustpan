@@ -8,6 +8,7 @@ use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Rejection, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::{OpenFiles, Pid, Probe, Seen};
+use dustpan_core::whitelist::Whitelist;
 use dustpan_sys::LiveProbe;
 use std::ffi::CString;
 use std::io::{BufRead as _, BufReader};
@@ -129,9 +130,11 @@ impl Home {
         }
         let probe = LiveProbe::new();
         let env = |_: &str| None;
+        let home = AbsPath::parse(home.as_ref()).unwrap();
         let inputs = GuardInputs {
             os: Os::MacOs,
-            home: AbsPath::parse(home.as_ref()).unwrap(),
+            whitelist: Whitelist::defaults(Os::MacOs, &home),
+            home,
             env: &env,
         };
         Self {

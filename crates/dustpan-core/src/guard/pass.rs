@@ -5,7 +5,7 @@ use crate::candidate::{Candidate, Rule};
 use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
 use crate::probe::{self, Owner, OwnerState, Probe, ProcessTable, Seen};
-use crate::protect::{LiveChecks, Policy, ScopeOwner, Step};
+use crate::protect::{LiveChecks, Policy, Position, ScopeOwner, Step};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -48,6 +48,7 @@ struct Frame {
     path: AbsPath,
     state: Dir,
     step: Step,
+    listed: Position,
     /// Whether no process holds anything open in this folder, once a path in it has asked.
     quiet: Option<bool>,
 }
@@ -146,8 +147,8 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// Layers 1 to 4 in order; the first refusal decides. `seen` skips the leaf `lstat`.
-    /// Layer 3 asks its last question, who holds the path open, after layer 4.
+    /// Layers 1 to 5 in order; the first refusal decides. `seen` skips the leaf `lstat`.
+    /// Layer 3 asks its last question, who holds the path open, after layer 5.
     ///
     /// A path that every layer passes is then judged under the spelling the file system stores
     /// for it, which can only refuse (SAFE-03). A scanned entry was named by a directory read,
@@ -274,6 +275,14 @@ impl<'a> Pass<'a> {
                 };
                 return (Verdict::Kept(KeptReason::Protected(hit)), identity);
             }
+        }
+        let listing = &policy.whitelist;
+        let listed = match (parent, path.name()) {
+            (Some(at), Some(name)) => listing.hit(&self.frames[at].listed, name, &mut self.scratch),
+            _ => listing.here(&listing.start(path, &mut self.scratch)),
+        };
+        if let Some(hit) = listed {
+            return (Verdict::Kept(KeptReason::Whitelisted(hit)), identity);
         }
         // Open files are asked about last. Every path that would be eligible reaches this
         // line, so no allowlist skips it (SAFE-06). A path kept above takes no snapshot and
@@ -417,10 +426,16 @@ impl<'a> Pass<'a> {
             }
             _ => self.policy.root_step(&path, id, &mut self.scratch),
         };
+        let listing = &self.policy.whitelist;
+        let listed = match (parent, path.name()) {
+            (Some(parent), Some(name)) => listing.step(&parent.listed, name, &mut self.scratch),
+            _ => listing.start(&path, &mut self.scratch),
+        };
         self.frames.push(Frame {
             path,
             state,
             step,
+            listed,
             quiet: None,
         });
     }

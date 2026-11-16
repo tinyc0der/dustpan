@@ -2,7 +2,7 @@
 
 use dustpan_parity::error::Error;
 use dustpan_parity::fixture_home::{Fixture, Manifest, assert_under_temp};
-use dustpan_parity::mole_runner::{MoleRunner, real_home, sandbox_profile};
+use dustpan_parity::mole_runner::{CREATE_PROBE, MoleRunner, real_home, sandbox_profile};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -78,6 +78,12 @@ fn a_real_home_is_never_a_temp_root() {
 
 #[test]
 fn a_stop_signal_kills_mole_and_removes_the_fixture() {
+    for signal in ["-TERM", "-INT", "-HUP"] {
+        stop_with(signal);
+    }
+}
+
+fn stop_with(stop: &str) {
     let work = tempfile::Builder::new()
         .prefix("dustpan-signal-test.")
         .tempdir_in("/private/tmp")
@@ -123,9 +129,9 @@ fn a_stop_signal_kills_mole_and_removes_the_fixture() {
         signal("-0", &mole_pid),
         "Mole is not running before the stop"
     );
-    assert!(signal("-TERM", &harness.id().to_string()));
+    assert!(signal(stop, &harness.id().to_string()));
     let status = harness.wait().unwrap();
-    assert_eq!(status.code(), Some(130));
+    assert_eq!(status.code(), Some(130), "{stop}");
     assert!(
         !signal("-0", &mole_pid),
         "Mole {mole_pid} outlived the harness"
@@ -136,4 +142,49 @@ fn a_stop_signal_kills_mole_and_removes_the_fixture() {
         .filter(|n| n.starts_with("dustpan-parity"))
         .collect();
     assert!(left.is_empty(), "fixture left behind: {left:?}");
+}
+
+#[test]
+fn a_profile_that_denies_only_file_creation_fails_the_self_test() {
+    let home = real_home().unwrap();
+    let profile = format!(
+        "(version 1)(allow default)(deny file-write-create (subpath \"{h}\"))(deny file-read-data (subpath \"{h}\"))",
+        h = home.display()
+    );
+    let message = refusal(&profile);
+    assert!(message.contains("not denied"), "{message}");
+    assert!(leftover_probes().is_empty());
+}
+
+#[test]
+fn a_write_carve_out_under_the_real_home_fails_the_self_test() {
+    let home = real_home().unwrap();
+    let generated = sandbox_profile(&home, Path::new(TRUE)).unwrap();
+    for sub in ["Library", "Library/Caches", ".config"] {
+        let profile = format!(
+            "{generated}(allow file-write* (subpath \"{}/{sub}\"))\n",
+            home.display()
+        );
+        if !home.join(sub).is_dir() {
+            continue;
+        }
+        let message = refusal(&profile);
+        assert!(message.contains(sub), "{sub}: {message}");
+        assert!(leftover_probes().is_empty(), "{sub}");
+    }
+}
+
+#[test]
+fn the_create_probe_never_removes_a_file_that_already_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let existing = dir.path().join("keep");
+    fs::write(&existing, "mine").unwrap();
+    let status = Command::new("/bin/sh")
+        .args(["-c", CREATE_PROBE, "probe"])
+        .arg(&existing)
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert_ne!(status.code(), Some(3));
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "mine");
 }

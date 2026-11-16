@@ -1,0 +1,3 @@
+~/Downloads/Example-1.0.dmg
+~/Downloads/ExampleInstaller.zip
+~/Downloads/Setup.pkg

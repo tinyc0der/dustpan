@@ -1,0 +1,23 @@
+[[file]]
+path = "home/Downloads/a-first.dmg"
+size = 1024
+
+[[file]]
+path = "home/Downloads/b-back\\cslash.dmg"
+size = 1024
+
+[[file]]
+path = "home/Downloads/c-after.dmg"
+size = 1024
+
+[[file]]
+path = "home/Downloads/d-new\\nline.pkg"
+size = 1024
+
+[[file]]
+path = "home/Downloads/sub/Nested.dmg"
+size = 1024
+
+[[file]]
+path = "home/Library/Caches/Homebrew/downloads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa--Firefox.dmg"
+size = 1024

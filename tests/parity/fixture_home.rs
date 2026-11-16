@@ -115,7 +115,9 @@ fn has_control(s: &str) -> bool {
 }
 
 /// APFS is case-insensitive by default, so compare folded names. A link at
-/// `home` or `home/.config` would redirect the config folder as well.
+/// `home` or `home/.config` would redirect the config folder as well, and
+/// APFS opens `.conﬁg` (a ligature) as `.config`, so a non-ASCII name in the
+/// first three parts of the path is refused.
 fn reserved(path: &str, is_link: bool) -> bool {
     let fold = |s: &str| -> Vec<String> {
         Path::new(s)
@@ -123,8 +125,19 @@ fn reserved(path: &str, is_link: bool) -> bool {
             .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
             .collect()
     };
+    let aliases_config = {
+        let parts: Vec<&str> = Path::new(path)
+            .components()
+            .filter_map(|c| c.as_os_str().to_str())
+            .collect();
+        let fold_ascii = |i: usize| parts.get(i).map(|p| p.to_ascii_lowercase());
+        let odd = |i: usize| parts.get(i).is_some_and(|p| !p.is_ascii());
+        odd(0)
+            || (fold_ascii(0).as_deref() == Some("home")
+                && (odd(1) || (fold_ascii(1).as_deref() == Some(".config") && odd(2))))
+    };
     let (path, config) = (fold(path), fold(MOLE_CONFIG));
-    path.starts_with(&config) || (is_link && config.starts_with(&path))
+    aliases_config || path.starts_with(&config) || (is_link && config.starts_with(&path))
 }
 
 fn relative(p: &str) -> Result<&Path> {

@@ -11,6 +11,7 @@ const PURGE_167: &str = include_str!("data/mole-1.67.0/purge.stdout.txt");
 const INSTALLER_167: &str = include_str!("data/mole-1.67.0/installer.stderr.txt");
 const MANY_167: &str = include_str!("data/mole-1.67.0/installers-many.stderr.txt");
 const PURGE_CLOUD_167: &str = include_str!("data/mole-1.67.0/purge-cloud.stdout.txt");
+const ESCAPES_167: &str = include_str!("data/mole-1.67.0/installer-escapes.stderr.txt");
 const PURGE_163: &str = include_str!("data/mole-1.63.0/purge.stdout.txt");
 const INSTALLER_163: &str = include_str!("data/mole-1.63.0/installer.stderr.txt");
 
@@ -263,6 +264,22 @@ mod fixture {
             assert!(Manifest::parse(text).is_err(), "{text}");
         }
         assert!(Manifest::parse("[mole]\nwhitelist = [\"home/Library/Caches/x\"]\n").is_ok());
+    }
+
+    #[test]
+    fn a_ligature_spelling_of_the_config_folder_is_refused() {
+        for name in [
+            "home/.conﬁg/mole/purge_paths",
+            "home/.ᴄonfig/mole/x",
+            "hom\u{0435}/.config/mole/x",
+        ] {
+            let text = format!("[[file]]\npath = {name:?}\nsize = 1\n");
+            assert!(Manifest::parse(&text).is_err(), "{name}");
+        }
+        assert!(
+            Manifest::parse("[[file]]\npath = \"home/Documents/caf\u{e9}.txt\"\nsize = 1\n")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -555,4 +572,94 @@ fn real_mole_purge_lists_cloud_storage_rows_with_the_marker_stripped() {
         ]
     );
     assert!(parsed.outside.is_empty() && parsed.escaped.is_empty());
+}
+
+#[test]
+fn an_empty_purge_is_not_an_unknown_line() {
+    let out = "○ DRY RUN MODE, No project artifacts will be removed\n\nPurge Project Artifacts\n\n✓ Great! No old project artifacts to clean\n";
+    let parsed = parse_purge_stdout(out, home()).unwrap();
+    assert!(parsed.inside.is_empty() && parsed.outside.is_empty());
+}
+
+#[test]
+fn installer_rows_fewer_than_found_markers_fail_the_parse() {
+    let swallowed = "[DEBUG] Found installer:   * /FIXTURE/home/Downloads/b-back[DEBUG] Found installer:   * /FIXTURE/home/Downloads/c-after.dmg\n";
+    let err = parse_installer_debug(swallowed, home()).unwrap_err();
+    assert!(err.to_string().contains("2"), "{err}");
+    assert!(parse_installer_debug(ESCAPES_167, home()).is_err());
+}
+
+#[test]
+fn a_row_with_an_unexpanded_variable_fails_the_parse() {
+    assert!(
+        parse_purge_stdout("✓ [DRY RUN] $HOME/Projects/x/node_modules, 4KB\n", home()).is_err()
+    );
+    assert!(parse_clean_list("$HOME/Library/Caches/x  # 4KB\n", home()).is_err());
+    assert!(
+        parse_installer_debug(
+            "[DEBUG] Found installer:   * $HOME/Downloads/a.dmg\n",
+            home()
+        )
+        .is_err()
+    );
+}
+
+#[cfg(unix)]
+mod on_disk {
+    use super::*;
+    use dustpan_parity::candidates::{escaped_on_disk, missing_on_disk};
+    use dustpan_parity::fixture_home::{Fixture, Manifest};
+
+    fn fixture(manifest: &str) -> Fixture {
+        Fixture::build(&Manifest::parse(manifest).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn rows_that_resolve_outside_the_fixture_home_are_escapes() {
+        let f = fixture(include_str!("manifests/standard.toml"));
+        let h = f.home();
+        let out = format!(
+            "✓ [DRY RUN] {h}/Projects/trapweb/node_modules/keep.js, 4KB\n\
+             ✓ [DRY RUN] ~/Library/Logs/trap-logs/canary.txt, 4KB\n\
+             ✓ [DRY RUN] {h}/../victim/canary.txt, 4KB\n\
+             ✓ [DRY RUN] ~/../victim/node_modules, 4KB\n\
+             ✓ [DRY RUN] ~/Library/Logs/trap-logs, 4KB\n\
+             ✓ [DRY RUN] ~/Projects/oldweb/node_modules, 4KB\n",
+            h = h.display()
+        );
+        let parsed = parse_purge_stdout(&out, &h).unwrap();
+        let mut escaped = escaped_on_disk(&parsed, &h);
+        escaped.sort();
+        assert_eq!(
+            escaped,
+            [
+                "~/../victim/canary.txt",
+                "~/../victim/node_modules",
+                "~/Library/Logs/trap-logs/canary.txt",
+                "~/Projects/trapweb/node_modules/keep.js",
+            ],
+            "the link itself and a real folder stay inside"
+        );
+    }
+
+    #[test]
+    fn installer_rows_naming_no_file_are_missing() {
+        let f = fixture(include_str!("manifests/installer-escapes.toml"));
+        let h = f.home();
+        let stderr = format!(
+            "[DEBUG] Found installer:   * {h}/Downloads/a-first.dmg\n\
+             [DEBUG] Found installer:   * {h}/Downloads/d-new\n",
+            h = h.display()
+        );
+        let parsed = parse_installer_debug(&stderr, &h).unwrap();
+        assert_eq!(missing_on_disk(&parsed, &h), ["~/Downloads/d-new"]);
+    }
+
+    #[test]
+    fn the_real_backslash_capture_is_refused_against_its_fixture() {
+        let f = fixture(include_str!("manifests/installer-escapes.toml"));
+        let h = f.home();
+        let stderr = ESCAPES_167.replace(SAVED_HOME, &h.to_string_lossy());
+        assert!(parse_installer_debug(&stderr, &h).is_err());
+    }
 }

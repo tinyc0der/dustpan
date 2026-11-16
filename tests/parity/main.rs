@@ -15,7 +15,8 @@ fn main() {
 #[cfg(target_os = "macos")]
 mod cli {
     use dustpan_parity::candidates::{
-        Parsed, SAVED_HOME, parse_clean_list, parse_installer_debug, parse_purge_stdout,
+        Parsed, SAVED_HOME, escaped_on_disk, missing_on_disk, parse_clean_list,
+        parse_installer_debug, parse_purge_stdout,
     };
     use dustpan_parity::diff::{KnownDifferences, diff};
     use dustpan_parity::error::{Error, Result, io_err};
@@ -200,8 +201,23 @@ mod cli {
         if args.keep {
             println!("fixture kept at {}", fixture.keep().display());
         }
-        if !parsed.escaped.is_empty() {
-            return Err(Error::Escaped(parsed.escaped));
+        let resolved_outside = escaped_on_disk(&parsed, &home);
+        let missing = if args.command == MoleCommand::Installer {
+            missing_on_disk(&parsed, &home)
+        } else {
+            Vec::new()
+        };
+        let mut escaped = parsed.escaped;
+        escaped.extend(
+            resolved_outside
+                .into_iter()
+                .map(|p| format!("{p} (resolves outside the fixture home)")),
+        );
+        if !escaped.is_empty() {
+            return Err(Error::Escaped(escaped));
+        }
+        if !missing.is_empty() {
+            return Err(Error::MissingRows(missing));
         }
         if drift.is_clean() {
             Ok(())

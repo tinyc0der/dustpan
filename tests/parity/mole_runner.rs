@@ -2,16 +2,31 @@ use crate::error::{Error, Result, SUPPORTED_MOLE, io_err};
 use crate::fixture_home::{Fixture, assert_under_temp};
 use crate::interrupt;
 use std::fs::{self, File};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const SANDBOX_PROFILE: &str = include_str!("deny-writes.sb");
+/// Creates `$1` exclusively (noclobber is O_EXCL), so a file that already
+/// exists is never touched and never removed. Exit 5: the create was refused.
+/// Exit 3: it succeeded and the probe was removed. Exit 4: it succeeded and
+/// the removal failed, leaving the probe behind.
+pub const CREATE_PROBE: &str =
+    "set -C; /usr/bin/true > \"$1\" || exit 5; /bin/rm -f -- \"$1\" || exit 4; exit 3";
+const PROBE_DIRS: &[&str] = &[
+    "",
+    "Library",
+    "Library/Caches",
+    "Library/Logs",
+    "Library/Application Support",
+    ".config",
+    ".cache",
+];
+const DENIED: &str = "Operation not permitted";
 const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 // /bin/ps is setuid, and the sandbox refuses to exec setuid programs. Without a
@@ -164,6 +179,14 @@ pub fn sandbox_profile(real_home: &Path, mo: &Path) -> Result<String> {
     Ok(profile)
 }
 
+fn random_hex() -> Result<String> {
+    let mut bytes = [0u8; 8];
+    File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
+        .map_err(io_err("read /dev/urandom"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 fn quote(p: &Path) -> Result<String> {
     let text = p.to_string_lossy();
     if text.contains(['"', '\\']) || text.chars().any(char::is_control) {
@@ -215,36 +238,13 @@ impl MoleRunner {
     }
 
     fn prove_sandbox(&self, real_home: &Path) -> Result<()> {
-        const DENIED: &str = "Operation not permitted";
-        static PROBES: AtomicUsize = AtomicUsize::new(0);
-        let probe = real_home.join(format!(
-            ".dustpan-parity-probe-{}-{}",
-            std::process::id(),
-            PROBES.fetch_add(1, Ordering::Relaxed)
-        ));
-        let probe_text = probe.to_string_lossy().into_owned();
-        // The sandboxed shell removes the probe itself if the write is allowed,
-        // so a broken profile leaves nothing behind in the real home.
-        let write = self.sandboxed(
-            Path::new("/bin/sh"),
-            &[
-                "-c",
-                "/usr/bin/touch -- \"$1\" || exit 5; /bin/rm -f -- \"$1\"; exit 3",
-                "probe",
-                &probe_text,
-            ],
-            "probe-write",
-        )?;
-        if write.exit != Some(5)
-            || !write.stderr.contains(DENIED)
-            || fs::symlink_metadata(&probe).is_ok()
-        {
-            return Err(Error::Sandbox(format!(
-                "a write to {probe_text} was not denied inside the sandbox (exit {:?}, stderr {:?})",
-                write.exit,
-                write.stderr.trim()
-            )));
+        for sub in PROBE_DIRS {
+            let dir = real_home.join(sub);
+            if dir.is_dir() {
+                self.probe_create(&dir)?;
+            }
         }
+        self.probe_existing_entry(real_home)?;
         let home_text = real_home.to_string_lossy().into_owned();
         let read = self.sandboxed(Path::new("/bin/ls"), &[&home_text], "probe-read")?;
         if read.exit == Some(0) || !read.stderr.contains(DENIED) {
@@ -272,6 +272,69 @@ impl MoleRunner {
             )));
         }
         assert_under_temp(&seen_home)?;
+        Ok(())
+    }
+
+    /// A create in `dir` must be refused. The sandboxed shell removes the probe
+    /// itself if the create is allowed, so a weak profile leaves at most the
+    /// loudly reported path behind.
+    fn probe_create(&self, dir: &Path) -> Result<()> {
+        let probe = dir.join(format!(".dustpan-parity-probe-{}", random_hex()?));
+        let probe_text = probe.to_string_lossy().into_owned();
+        let out = self.sandboxed(
+            Path::new("/bin/sh"),
+            &["-c", CREATE_PROBE, "probe", &probe_text],
+            "probe-create",
+        )?;
+        match out.exit {
+            Some(5) if out.stderr.contains(DENIED) && fs::symlink_metadata(&probe).is_err() => {
+                Ok(())
+            }
+            Some(4) => Err(Error::Sandbox(format!(
+                "LEFTOVER: the sandbox allowed a create at {probe_text} and then refused its removal. Delete that file by hand"
+            ))),
+            _ => Err(Error::Sandbox(format!(
+                "a create at {probe_text} was not denied inside the sandbox (exit {:?}, stderr {:?})",
+                out.exit,
+                out.stderr.trim()
+            ))),
+        }
+    }
+
+    /// Opening an existing file of the user's for append. The shell writes no
+    /// bytes, so nothing changes if the sandbox lets it through, but a profile
+    /// that denies only creation is caught. `rmdir` cannot tell the two apart
+    /// because the read deny already blocks it.
+    fn probe_existing_entry(&self, real_home: &Path) -> Result<()> {
+        let owner = fs::metadata(real_home)
+            .map_err(io_err("stat the real home"))?
+            .uid();
+        let mut files: Vec<PathBuf> = fs::read_dir(real_home)
+            .map_err(io_err("list the real home"))?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                let writable = meta.permissions().mode() & 0o200 != 0;
+                (meta.is_file() && writable && meta.uid() == owner).then(|| e.path())
+            })
+            .collect();
+        files.sort();
+        let Some(file) = files.first() else {
+            return Ok(());
+        };
+        let file_text = file.to_string_lossy().into_owned();
+        let out = self.sandboxed(
+            Path::new("/bin/sh"),
+            &["-c", ": >> \"$1\"", "probe", &file_text],
+            "probe-existing",
+        )?;
+        if out.exit == Some(0) || !out.stderr.contains(DENIED) {
+            return Err(Error::Sandbox(format!(
+                "opening {file_text} for writing was not denied inside the sandbox (exit {:?}, stderr {:?})",
+                out.exit,
+                out.stderr.trim()
+            )));
+        }
         Ok(())
     }
 

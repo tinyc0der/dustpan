@@ -1,0 +1,9 @@
+[DEBUG] Debug logging enabled. Session log: /FIXTURE/home/Library/Logs/mole/mole_debug_session.log
+[DEBUG] === Collect Installers ===
+[DEBUG] Scanning for redundant installer files
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/a-first.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/b-back[DEBUG] Found installer:   * /FIXTURE/home/Downloads/c-after.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/d-new
+line.pkg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/sub/Nested.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Library/Caches/Homebrew/downloads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa--Firefox.dmg

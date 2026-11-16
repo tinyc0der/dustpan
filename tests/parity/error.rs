@@ -13,6 +13,7 @@ pub enum Error {
     Parse(ParseError),
     Sandbox(String),
     Escaped(Vec<String>),
+    MissingRows(Vec<String>),
     Drift(String),
     Interrupted,
     FixtureOutsideTemp(String),
@@ -36,6 +37,7 @@ impl Error {
             Error::Sandbox(_) | Error::FixtureOutsideTemp(_) => 6,
             Error::Usage(_) => 2,
             Error::Escaped(_) => 7,
+            Error::MissingRows(_) => 5,
             Error::Interrupted => 130,
             _ => 1,
         }
@@ -89,6 +91,12 @@ impl fmt::Display for Error {
             Error::Escaped(paths) => write!(
                 f,
                 "Mole listed {} path(s) under the fixture root but outside the fixture home: {}",
+                paths.len(),
+                paths.join(", ")
+            ),
+            Error::MissingRows(paths) => write!(
+                f,
+                "Mole listed {} installer path(s) that do not exist in the fixture: {}",
                 paths.len(),
                 paths.join(", ")
             ),

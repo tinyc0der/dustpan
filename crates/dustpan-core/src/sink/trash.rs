@@ -4,7 +4,7 @@
 use super::{Cancel, FailCause, Failure, Moved, Outcome};
 use crate::candidate::Candidate;
 use crate::disk::{Disk, DiskError, Seal};
-use crate::guard::{Approved, IdentityReason, KeptReason};
+use crate::guard::{Approved, IdentityReason, KeptReason, ShapeReason};
 use crate::path::AbsPath;
 use crate::size::Size;
 
@@ -55,6 +55,8 @@ pub(super) fn trash<D: Disk>(
         }
         Err(DiskError::NotFound) => Outcome::Gone,
         Err(DiskError::NotAFolder) => changed(),
+        // Nothing moved, and nothing would.
+        Err(DiskError::InTrash) => Outcome::Kept(KeptReason::Shape(ShapeReason::InTrash)),
         Err(e) => failure(cause(e), approved.path().clone()),
     };
     (approved.into_candidate(), outcome)

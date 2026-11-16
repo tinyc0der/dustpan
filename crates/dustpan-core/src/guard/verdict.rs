@@ -68,6 +68,9 @@ pub enum ShapeReason {
     /// The path is the root of another volume than its parent's: a mount point (SAFE-38).
     /// Decided from the two `FileId`s the pass already holds; no extra syscall.
     MountPoint,
+    /// The item already lies in the Trash the Trash sink would move it to. Only that sink
+    /// decides it, right before the move; the guard does not judge the Trash itself (M3).
+    InTrash,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -260,6 +263,7 @@ impl KeptReason {
             Self::Shape(ShapeReason::AliasOfKept { .. }) => "alias-of-kept",
             Self::Shape(ShapeReason::ParentNotFound { .. }) => "parent-not-found",
             Self::Shape(ShapeReason::MountPoint) => "mount-point",
+            Self::Shape(ShapeReason::InTrash) => "already-in-trash",
             Self::Critical(hit) | Self::Protected(hit) => match hit.how {
                 How::Contains { .. } => "contains-protected",
                 _ => hit.kind.code(),
@@ -404,6 +408,7 @@ impl fmt::Display for KeptReason {
             Self::Shape(ShapeReason::MountPoint) => {
                 f.write_str("mount point of another volume; eject it instead")
             }
+            Self::Shape(ShapeReason::InTrash) => f.write_str("already in the Trash"),
             Self::Live(LiveReason::OwnerRunning { owner, pids }) => {
                 write!(f, "{owner} is running (pid")?;
                 for pid in pids.iter().take(3) {

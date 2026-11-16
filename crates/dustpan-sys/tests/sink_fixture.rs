@@ -601,6 +601,45 @@ fn trash_acl_lane() {
     assert_eq!(reached, 0);
 }
 
+/// An item already in the user's Trash on its volume is kept as `already-in-trash`: nothing
+/// moves, the log has a SKIPPED row for it and no TRASHED row. Run it with
+/// `DUSTPAN_SINK_FIXTURE_HOME` on a scratch disk image, whose Trash it adds to and then clears.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "puts an item in a volume's Trash; run by hand with the fixture home on a scratch disk image"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test clears the item it put in the scratch volume's Trash"
+)]
+fn trash_in_trash_lane() {
+    let fixture = Fixture::new(&format!("in-trash-{:x}", nonce()));
+    let volume = mount_point(&fixture.home);
+    assert_ne!(volume, Path::new("/"), "needs a scratch volume");
+    // SAFETY: getuid takes no arguments and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let trash = volume.join(".Trashes").join(uid.to_string());
+    let item = trash.join(format!("dustpan-in-trash-{:x}", nonce()));
+    std::fs::create_dir_all(item.join("d")).unwrap();
+    std::fs::write(item.join("d/f"), b"already trashed").unwrap();
+    let ran = run(&fixture, std::slice::from_ref(&item), || Sink::Trash);
+    let stayed = item.join("d/f").exists();
+    std::fs::remove_dir_all(&item).unwrap();
+    let log = std::fs::read_to_string(fixture.log_dir().join(FileStore::FILE)).unwrap();
+    println!("{:?}; item stayed: {stayed}\n{log}", ran.outcomes[0]);
+    assert!(
+        matches!(
+            &ran.outcomes[0],
+            Outcome::Kept(KeptReason::Shape(dustpan_core::guard::ShapeReason::InTrash))
+        ),
+        "{:?}",
+        ran.outcomes[0]
+    );
+    assert!(stayed);
+    assert_eq!(ran.tally.trashed, 0);
+    assert!(log.contains(" SKIPPED ") && log.contains("reason=already-in-trash"));
+    assert!(!log.contains(" TRASHED "));
+}
+
 /// Lane 7: a disk image mounted inside a fixture folder keeps the folder, and the files on the
 /// image survive.
 #[cfg(target_os = "macos")]

@@ -60,6 +60,9 @@ pub enum DiskError {
     NoTrash,
     /// A dataless placeholder the walk refused to materialize.
     Dataless,
+    /// The item already lies in the Trash the move would take it to, so nothing would move.
+    /// Only a Trash move reports it.
+    InTrash,
     Other(i32),
 }
 

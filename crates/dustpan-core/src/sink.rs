@@ -111,7 +111,7 @@ impl FailCause {
             DiskError::ReadOnly => Self::ReadOnly,
             DiskError::Busy => Self::Busy,
             DiskError::NotEmpty | DiskError::NotAFolder | DiskError::Dataless => Self::Changed,
-            DiskError::NoTrash => Self::TrashFailed,
+            DiskError::NoTrash | DiskError::InTrash => Self::TrashFailed,
             DiskError::NotFound | DiskError::Other(_) => Self::Io,
         }
     }

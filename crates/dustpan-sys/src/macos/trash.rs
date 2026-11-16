@@ -9,7 +9,8 @@
 //! of this user that nobody else can write, by its mode or its ACL, with no link anywhere on the
 //! way to it (`RENAME_NOFOLLOW_ANY`, SAFE-13). Privacy protection forbids reading or listing
 //! `~/.Trash`; it allows opening it to search (`O_SEARCH`), which is enough to check the folder
-//! from its handle, and the move goes by name from the home's handle. The name in the Trash is
+//! from its handle, and the move goes by name from the home's handle. An item already in the
+//! Trash is refused before any move: there is nothing to move it to. The name in the Trash is
 //! picked here with `RENAME_EXCL`, so the move never replaces an entry. Finder keeps no Put
 //! Back record for an item moved this way. One of the files SAFE-01 lets call a move;
 //! `crates/dustpan/tests/seams.rs` lists them.
@@ -83,13 +84,18 @@ fn trash_with_home(
 ) -> Result<Trashed, DiskError> {
     let name = path.name().ok_or(DiskError::NotAFolder)?;
     let bin = bin(home, parent, expect.volume())?;
+    let from = folder_path(parent)?;
+    // A move would land on the item itself, or only move it up inside the Trash.
+    if from.starts_with(folder_path(&bin.handle)?) {
+        return Err(DiskError::InTrash);
+    }
     if stat(parent, name)?.node.id != expect {
         return Err(DiskError::NotAFolder);
     }
     let landed = move_in(parent, name, &bin)?;
     let inside = bin.folder.join(&landed);
     Ok(Trashed {
-        from: folder_path(parent)?.join(name),
+        from: from.join(name),
         arrived: id_at(&bin.root, &inside)?,
         at: bin.root_path.join(inside),
     })
@@ -101,6 +107,8 @@ struct Bin {
     root_path: PathBuf,
     /// `.Trash` or `.Trashes/<uid>`.
     folder: PathBuf,
+    /// The Trash folder itself, open to search only, as checked.
+    handle: DirHandle,
 }
 
 impl Bin {
@@ -124,6 +132,7 @@ impl Bin {
             root,
             root_path,
             folder,
+            handle,
         })
     }
 }
@@ -495,6 +504,29 @@ mod tests {
         let (parent, path, id) = item(&at);
         let moved = trash_with_home(&home, &parent, &path, id).unwrap();
         assert_eq!(moved.at, home.join(".Trash/com.example.item"));
+    }
+
+    /// A move of an item already in the Trash would land on itself, or only move it up: it is
+    /// refused before any move, and the item stays where it is.
+    #[test]
+    fn an_item_already_in_the_trash_is_refused_and_stays() {
+        let (_dir, at) = temp();
+        let home = at.join("home");
+        for inside in ["com.example.item", "a/b/com.example.item"] {
+            let path = home.join(".Trash").join(inside);
+            std::fs::create_dir_all(path.join("d")).unwrap();
+            std::fs::write(path.join("d/f"), b"cache").unwrap();
+            let path = AbsPath::parse(path.as_os_str()).unwrap();
+            let parent = open_path(&path.parent().unwrap()).unwrap();
+            let id = stat(&parent, path.name().unwrap()).unwrap().node.id;
+            assert_eq!(
+                trash_with_home(&home, &parent, &path, id).unwrap_err(),
+                DiskError::InTrash,
+                "{inside}"
+            );
+            assert!(path.as_path().join("d/f").exists(), "{inside}");
+            assert!(!home.join(".Trash/com.example.item 2").exists());
+        }
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub struct FakeProbe {
     after_listing: Mutex<Option<(PathBuf, Change)>>,
     on_process_probe: Mutex<Option<Change>>,
     after_open_files: Mutex<Option<EveryCall>>,
-    trash_unavailable: bool,
+    trash_refusal: Option<DiskError>,
     node_calls: AtomicUsize,
     process_calls: AtomicUsize,
     open_file_calls: AtomicUsize,
@@ -267,7 +267,7 @@ impl FakeProbe {
             after_listing: Mutex::new(None),
             on_process_probe: Mutex::new(None),
             after_open_files: Mutex::new(None),
-            trash_unavailable: false,
+            trash_refusal: None,
             node_calls: AtomicUsize::new(0),
             process_calls: AtomicUsize::new(0),
             open_file_calls: AtomicUsize::new(0),
@@ -576,10 +576,11 @@ impl FakeProbe {
             .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
     }
 
-    /// Every Trash move fails with `NoTrash`, as with no Trash on the volume (SAFE-12).
-    pub fn trash_unavailable(self) -> Self {
+    /// Every Trash move fails with `error`: `NoTrash` as with no Trash on the volume
+    /// (SAFE-12), `InTrash` as for an item already in it.
+    pub fn trash_refuses(self, error: DiskError) -> Self {
         Self {
-            trash_unavailable: true,
+            trash_refusal: Some(error),
             ..self
         }
     }
@@ -788,8 +789,8 @@ impl Disk for FakeProbe {
         expect: FileId,
         _: &Seal,
     ) -> Result<Trashed, DiskError> {
-        if self.trash_unavailable {
-            return Err(DiskError::NoTrash);
+        if let Some(error) = self.trash_refusal {
+            return Err(error);
         }
         let name = path.name().ok_or(DiskError::NotAFolder)?;
         let key = {

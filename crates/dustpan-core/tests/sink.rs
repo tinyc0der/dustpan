@@ -4,6 +4,7 @@
 #![cfg(unix)]
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
+use dustpan_core::disk::DiskError;
 use dustpan_core::guard::{
     ContentsReason, Guard, GuardInputs, Homes, IdentityReason, KeptReason, Lease, ShapeReason,
 };
@@ -256,7 +257,7 @@ fn two_links_inside_the_target_free_their_bytes_once() {
 
 #[test]
 fn a_failed_trash_move_keeps_the_item_and_never_deletes_it() {
-    let fs = fixture().trash_unavailable();
+    let fs = fixture().trash_refuses(DiskError::NoTrash);
     let Run {
         outcome,
         tally,
@@ -271,6 +272,27 @@ fn a_failed_trash_move_keeps_the_item_and_never_deletes_it() {
     assert_eq!(tally.failed, 1);
     let rows = String::from_utf8_lossy(&log.current);
     assert!(rows.contains("FAILED /Users/alice/Library/Caches/com.example.app (sink=trash size=0 reason=trash-failed)"), "{rows}");
+}
+
+/// The sink finds the item already in the Trash it would move it to: nothing moved, so the row
+/// is SKIPPED, never TRASHED.
+#[test]
+fn an_item_already_in_the_trash_is_kept_with_no_trashed_row() {
+    let fs = fixture().trash_refuses(DiskError::InTrash);
+    let Run {
+        outcome,
+        tally,
+        log,
+    } = run(&fs, Sink::Trash, true);
+    assert_eq!(
+        outcome,
+        Outcome::Kept(KeptReason::Shape(ShapeReason::InTrash))
+    );
+    assert!(fs.exists(BLOB) && fs.trashed().is_empty());
+    assert_eq!((tally.kept, tally.trashed), (1, 0));
+    let rows = String::from_utf8_lossy(&log.current);
+    assert!(rows.contains("SKIPPED /Users/alice/Library/Caches/com.example.app (sink=trash reason=already-in-trash)"), "{rows}");
+    assert!(!rows.contains(" TRASHED "), "{rows}");
 }
 
 #[test]

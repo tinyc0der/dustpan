@@ -12,9 +12,7 @@
 #![cfg(unix)]
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
-use dustpan_core::guard::{
-    ContentsReason, Guard, GuardInputs, Homes, KeptReason, Lease, ShapeReason,
-};
+use dustpan_core::guard::{ContentsReason, Guard, GuardInputs, Homes, KeptReason, Lease};
 use dustpan_core::history::{History, Limit};
 use dustpan_core::oplog::{Command, LogWarning, OpLog, RunId};
 use dustpan_core::path::AbsPath;
@@ -346,7 +344,7 @@ fn mount_lane() {
     );
     assert!(
         matches!(&ran.outcomes[0], Outcome::Kept(KeptReason::Contents(ContentsReason::Holds { reason, .. }))
-            if **reason == KeptReason::Shape(ShapeReason::MountPoint)),
+            if **reason == KeptReason::Shape(dustpan_core::guard::ShapeReason::MountPoint)),
         "{:?}",
         ran.outcomes[0]
     );

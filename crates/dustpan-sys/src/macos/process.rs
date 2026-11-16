@@ -17,7 +17,7 @@ type Hidden = (libc::pid_t, Option<i32>);
 /// `/Applications/Ghostty.app/Contents/MacOS/ghostty` does not spell `com.mitchellh.ghostty`.
 /// The entitlements are what tie it to a group container, which several apps share.
 /// Arguments need `KERN_PROCARGS2`, which answers for the caller's own processes alone; M3 adds
-/// them with the open-file probe.
+/// them.
 pub(crate) fn table() -> Seen<ProcessTable> {
     match snapshot() {
         Some((procs, hidden)) => Seen::Found(ProcessTable {
@@ -28,7 +28,8 @@ pub(crate) fn table() -> Seen<ProcessTable> {
     }
 }
 
-fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
+/// Every pid the kernel lists. `None` when it gives no list.
+pub(super) fn pids() -> Option<Vec<libc::pid_t>> {
     // SAFETY: a null buffer of size 0 asks only for the number of processes.
     let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
     let count = usize::try_from(count).ok()?;
@@ -38,7 +39,11 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
     // SAFETY: `pids` is writable for `bytes` bytes.
     let filled = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
     pids.truncate(usize::try_from(filled).ok().filter(|&n| n > 0)?);
+    Some(pids)
+}
 
+fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
+    let pids = pids()?;
     // SAFETY: `geteuid` has no preconditions.
     let me = unsafe { libc::geteuid() };
     // Root reads every process, so none is another user's to set aside.
@@ -112,13 +117,13 @@ fn snapshot() -> Option<(Vec<Proc>, Vec<Hidden>)> {
     Some((procs, hidden))
 }
 
-enum Short {
+pub(super) enum Short {
     Found { name: OsString, uid: libc::uid_t },
     Gone,
     Unreadable(Option<i32>),
 }
 
-fn short_record(pid: libc::pid_t) -> Short {
+pub(super) fn short_record(pid: libc::pid_t) -> Short {
     // SAFETY: a zeroed `proc_bsdshortinfo` is a valid value to overwrite.
     let mut info: libc::proc_bsdshortinfo = unsafe { std::mem::zeroed() };
     let size = size_of::<libc::proc_bsdshortinfo>() as libc::c_int;

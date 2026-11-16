@@ -81,6 +81,27 @@ fn an_untouched_candidate_is_approved_with_discovery_identity() {
 }
 
 #[test]
+fn a_file_opened_after_discovery_is_refused_at_the_sink() {
+    let fs = fixture();
+    let guard = guard(&fs);
+    let candidate = discover(&guard, &fs);
+    let held = format!("{CACHE}/data_0");
+    fs.open_now(31, &held);
+    let rejection = refusal(&guard, &fs, candidate);
+    assert!(
+        matches!(&rejection, Rejection::Kept(KeptReason::Live(LiveReason::InUse { pid, file }))
+            if pid.0 == 31 && *file == p(&held)),
+        "{rejection:?}"
+    );
+
+    fs.close_all();
+    let candidate = discover(&guard, &fs);
+    let snapshots = fs.open_file_calls();
+    guard.recheck(candidate, &fs).unwrap();
+    assert_eq!(fs.open_file_calls(), snapshots + 1);
+}
+
+#[test]
 fn a_swapped_inode_is_refused() {
     let fs = fixture();
     let guard = guard(&fs);

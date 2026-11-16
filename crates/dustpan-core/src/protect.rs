@@ -15,7 +15,7 @@ mod table;
 mod windows;
 
 pub(crate) use compiled::{Policy, Step};
-pub(crate) use live::ScopeOwner;
+pub(crate) use live::{LiveChecks, ScopeOwner};
 
 use crate::paths::Os;
 use table::Table;

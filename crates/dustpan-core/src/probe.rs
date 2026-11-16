@@ -32,9 +32,9 @@ pub trait Probe: Sync {
     /// ([`Owner::state_in`]), so the rule that says who owns a cache is tested without processes.
     fn processes(&self) -> Seen<ProcessTable>;
 
-    /// Whether any process holds any of `files` open, asked once for the whole set so a SQLite
-    /// database and its `-wal`, `-shm` and `-journal` companions are judged as one unit (SAFE-09).
-    fn in_use(&self, files: &[AbsPath]) -> Handles;
+    /// One snapshot of the files every process holds open. Who keeps a path is decided in core
+    /// (`guard::Pass`), which indexes the snapshot once and asks it about every path.
+    fn open_files(&self) -> Seen<OpenFiles>;
 }
 
 /// The tri-state every probe answer takes. `Missing` is a conclusive "does not exist".
@@ -50,11 +50,13 @@ pub enum Seen<T> {
 pub enum Unseen {
     Denied,
     TimedOut,
-    /// This build has no implementation yet (for example `in_use` before M3).
+    /// This build has no implementation yet (for example open files on Windows before M8).
     Unsupported,
     Failed,
     /// This process runs, and the probe could not tell which app it is (SAFE-08).
     Unidentified(Pid),
+    /// This process runs, and the probe could not list the files it holds open (SAFE-09).
+    Unlisted(Pid),
 }
 
 impl Unseen {
@@ -65,6 +67,7 @@ impl Unseen {
             Self::Unsupported => "this build cannot check it yet",
             Self::Failed => "the check failed",
             Self::Unidentified(_) => "a running process cannot be identified",
+            Self::Unlisted(_) => "the open files of a running process cannot be listed",
         }
     }
 }
@@ -118,11 +121,29 @@ impl App {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Pid(pub u32);
 
+/// The files processes hold open, as one snapshot. The probe leaves its own process out: the
+/// folders a scan has open are not another program's live data.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct OpenFiles {
+    pub files: Vec<OpenFile>,
+    /// Running processes whose open files the probe could not list.
+    pub unlisted: Vec<Unlisted>,
+}
+
+/// One file or folder a process holds open, by the path the system reports for it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OpenFile {
+    pub pid: Pid,
+    pub path: PathBuf,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Handles {
-    Closed,
-    Open,
-    Unknown(Unseen),
+pub struct Unlisted {
+    pub pid: Pid,
+    /// It runs as the user dustpan runs as. Another user's process is set aside, as an
+    /// unidentified one is ([`App::Unknown`]): if it were not, a run that is not root could
+    /// call no path free.
+    pub mine: bool,
 }
 
 /// Who may hold a candidate open. Names are literal: no pattern syntax reaches a matcher (SAFE-33).

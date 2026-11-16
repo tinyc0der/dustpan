@@ -6,11 +6,13 @@ mod probe;
 
 #[cfg(target_os = "linux")]
 mod linux {
+    pub(crate) mod open;
     pub(crate) mod process;
 }
 #[cfg(target_os = "macos")]
 mod macos {
     pub(crate) mod bundle;
+    pub(crate) mod open;
     pub(crate) mod plist;
     pub(crate) mod process;
     pub(crate) mod signature;

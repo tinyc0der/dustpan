@@ -1,10 +1,11 @@
 //! One discovery pass: judges many paths and shares the work their ancestors need.
+use super::open::OpenIndex;
 use super::verdict::{Hit, How, KeptReason, LiveReason, ShapeReason, Verdict};
 use crate::candidate::{Candidate, Rule};
 use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
-use crate::probe::{self, Handles, Owner, OwnerState, Probe, ProcessTable, Seen};
-use crate::protect::{Policy, ScopeOwner, Step};
+use crate::probe::{self, Owner, OwnerState, Probe, ProcessTable, Seen};
+use crate::protect::{LiveChecks, Policy, ScopeOwner, Step};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,8 +15,8 @@ use std::sync::Arc;
 /// A new path pops the frames that are not its ancestors and pushes the missing ones, so paths
 /// in depth-first order `lstat` each directory once. A scan hands each leaf's `Node` over from
 /// its directory read, so a scanned candidate costs no leaf syscall at all; `evaluate` (for
-/// `explain`) pays one leaf `lstat`. The pass also holds at most one process table, taken on
-/// first need.
+/// `explain`) pays one leaf `lstat`. The pass also takes at most one process table and one
+/// snapshot of open files, each on first need.
 ///
 /// Everything a pass knows was observed after it started, and it is dropped before the sink:
 /// `Guard::recheck` builds its own pass, so no discovery answer can approve a deletion.
@@ -23,10 +24,7 @@ pub struct Pass<'a> {
     policy: &'a Policy,
     probe: &'a dyn Probe,
     frames: Vec<Frame>,
-    processes: Option<Seen<ProcessTable>>,
-    /// Owner states from this pass's one process table, by bundle id and by app group.
-    bundles: HashMap<Box<str>, OwnerState>,
-    app_groups: HashMap<Box<str>, OwnerState>,
+    live: Live,
     scratch: Vec<u8>,
     /// False in the pass that judges a leaf link's target, which is already physical.
     follows_leaf_link: bool,
@@ -34,11 +32,24 @@ pub struct Pass<'a> {
     checks_spelling: bool,
 }
 
+/// What a pass has observed of the running system. Each part is taken once, on first need. The
+/// pass that judges a link's target borrows it, so one pass costs one snapshot of each kind.
+#[derive(Default)]
+struct Live {
+    processes: Option<Seen<ProcessTable>>,
+    /// Owner states from the one process table, by bundle id and by app group.
+    bundles: HashMap<Box<str>, OwnerState>,
+    app_groups: HashMap<Box<str>, OwnerState>,
+    open: Option<OpenIndex>,
+}
+
 /// What the pass learned about one ancestor directory.
 struct Frame {
     path: AbsPath,
     state: Dir,
     step: Step,
+    /// Whether no process holds anything open in this folder, once a path in it has asked.
+    quiet: Option<bool>,
 }
 
 enum Dir {
@@ -91,9 +102,7 @@ impl<'a> Pass<'a> {
             policy,
             probe,
             frames: Vec::new(),
-            processes: None,
-            bundles: HashMap::new(),
-            app_groups: HashMap::new(),
+            live: Live::default(),
             scratch: Vec::new(),
             follows_leaf_link: true,
             checks_spelling: true,
@@ -138,6 +147,7 @@ impl<'a> Pass<'a> {
     }
 
     /// Layers 1 to 4 in order; the first refusal decides. `seen` skips the leaf `lstat`.
+    /// Layer 3 asks its last question, who holds the path open, after layer 4.
     ///
     /// A path that every layer passes is then judged under the spelling the file system stores
     /// for it, which can only refuse (SAFE-03). A scanned entry was named by a directory read,
@@ -241,18 +251,6 @@ impl<'a> Pass<'a> {
         {
             refusal = self.scope_refusal(owner);
         }
-        if refusal.is_none() && live.family_unreadable {
-            refusal = Some(LiveReason::InUseUnknown(probe::Unseen::Failed));
-        }
-        if refusal.is_none()
-            && let Some(family) = &live.family
-        {
-            refusal = match self.probe.in_use(family) {
-                Handles::Closed => None,
-                Handles::Open => Some(LiveReason::InUse),
-                Handles::Unknown(why) => Some(LiveReason::InUseUnknown(why)),
-            };
-        }
         if refusal.is_none() && live.edr {
             refusal = Some(LiveReason::EndpointSecurity);
         }
@@ -276,7 +274,13 @@ impl<'a> Pass<'a> {
                 return (Verdict::Kept(KeptReason::Protected(hit)), identity);
             }
         }
-        (Verdict::Eligible, identity)
+        // Open files are asked about last, for a path every rule above lets go. The answer can
+        // only keep the path, so no allowlist skips it (SAFE-06), and a protected path keeps
+        // the reason that still holds after the app quits.
+        match self.open_refusal(path, parent, &live) {
+            Some(reason) => (Verdict::Kept(KeptReason::Live(reason)), identity),
+            None => (Verdict::Eligible, identity),
+        }
     }
 
     /// A leaf link is judged by where it points. The target can refuse the link, never grant it
@@ -286,7 +290,10 @@ impl<'a> Pass<'a> {
             Seen::Found(target) => {
                 let mut pass = Pass::new(self.policy, self.probe);
                 pass.follows_leaf_link = false;
-                match pass.judge(&target, None, &[]).0 {
+                pass.live = std::mem::take(&mut self.live);
+                let verdict = pass.judge(&target, None, &[]).0;
+                self.live = pass.live;
+                match verdict {
                     Verdict::Kept(reason) => Some(ShapeReason::LinkToProtected {
                         target,
                         layer: reason.layer(),
@@ -338,8 +345,8 @@ impl<'a> Pass<'a> {
     /// table behind it does not change.
     fn scope_refusal(&mut self, scope: ScopeOwner<'_>) -> Option<LiveReason> {
         let (name, states) = match scope {
-            ScopeOwner::Bundle(id) => (id, &self.bundles),
-            ScopeOwner::AppGroup(folder) => (folder, &self.app_groups),
+            ScopeOwner::Bundle(id) => (id, &self.live.bundles),
+            ScopeOwner::AppGroup(folder) => (folder, &self.live.app_groups),
         };
         let known = states.get(name).cloned();
         if matches!(known, Some(OwnerState::Idle)) {
@@ -352,8 +359,8 @@ impl<'a> Pass<'a> {
         let state = known.unwrap_or_else(|| {
             let state = owner.state_in(self.processes());
             let states = match scope {
-                ScopeOwner::Bundle(_) => &mut self.bundles,
-                ScopeOwner::AppGroup(_) => &mut self.app_groups,
+                ScopeOwner::Bundle(_) => &mut self.live.bundles,
+                ScopeOwner::AppGroup(_) => &mut self.live.app_groups,
             };
             states.insert(name.into(), state.clone());
             state
@@ -409,12 +416,60 @@ impl<'a> Pass<'a> {
             }
             _ => self.policy.root_step(&path, id, &mut self.scratch),
         };
-        self.frames.push(Frame { path, state, step });
+        self.frames.push(Frame {
+            path,
+            state,
+            step,
+            quiet: None,
+        });
     }
 
     /// One process table per pass, taken the first time an owner needs it.
     fn processes(&mut self) -> &Seen<ProcessTable> {
         let probe = self.probe;
-        self.processes.get_or_insert_with(|| probe.processes())
+        self.live.processes.get_or_insert_with(|| probe.processes())
+    }
+
+    /// The direct sign that a path is live: a process holds it open, or a file anywhere below
+    /// it, or a member of its SQLite family (SAFE-09). A folder named for a vendor or a daemon
+    /// has no owner a name leads to, and this still keeps it. One snapshot serves the pass.
+    ///
+    /// `parent` is the frame of the folder that holds `path`. A folder with nothing open in it
+    /// answers for every path in it, and for a SQLite family, whose members share the folder.
+    /// So a scan asks the snapshot once per folder and again only inside a folder that is held.
+    fn open_refusal(
+        &mut self,
+        path: &AbsPath,
+        parent: Option<usize>,
+        live: &LiveChecks<'_>,
+    ) -> Option<LiveReason> {
+        let (probe, fold_case) = (self.probe, self.policy.folds_case());
+        let open = &*self
+            .live
+            .open
+            .get_or_insert_with(|| OpenIndex::new(probe.open_files(), fold_case));
+        let scratch = &mut self.scratch;
+        let quiet = parent.is_some_and(|at| {
+            let folder = &mut self.frames[at];
+            let path = &folder.path;
+            *folder
+                .quiet
+                .get_or_insert_with(|| open.at_or_below(path, scratch).is_none())
+        });
+        let mut family = live.family.iter().flatten();
+        let holder = if quiet {
+            None
+        } else {
+            open.at_or_below(path, scratch)
+                .or_else(|| family.find_map(|member| open.at(member, scratch)))
+        };
+        match holder {
+            Some(held) => Some(LiveReason::InUse {
+                pid: held.pid,
+                file: AbsPath::trusted(held.path.clone()),
+            }),
+            None if live.family_unreadable => Some(LiveReason::InUseUnknown(probe::Unseen::Failed)),
+            None => open.unknown().map(LiveReason::InUseUnknown),
+        }
     }
 }

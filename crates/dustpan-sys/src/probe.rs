@@ -1,6 +1,6 @@
 use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
-use dustpan_core::probe::{Handles, Probe, ProcessTable, Seen, Unseen};
+use dustpan_core::probe::{OpenFiles, Probe, ProcessTable, Seen, Unseen};
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
 
@@ -10,11 +10,11 @@ use crate::unix::identity;
 use crate::windows::identity;
 
 #[cfg(target_os = "linux")]
-use crate::linux::process;
+use crate::linux::{open, process};
 #[cfg(target_os = "macos")]
-use crate::macos::process;
+use crate::macos::{open, process};
 #[cfg(windows)]
-use crate::windows::process;
+use crate::windows::process::{self, open};
 
 /// The real [`Probe`]. Holds nothing between calls, so every answer is a fresh observation and
 /// `Guard::recheck` sees the disk as it is at the sink.
@@ -56,11 +56,24 @@ impl Probe for LiveProbe {
         process::table()
     }
 
-    /// M3 implements this with SAFE-08 and SAFE-09. Until then every SQLite-family and
-    /// partial-download path is kept as "in use unknown", which fails closed.
-    fn in_use(&self, _files: &[AbsPath]) -> Handles {
-        Handles::Unknown(Unseen::Unsupported)
+    fn open_files(&self) -> Seen<OpenFiles> {
+        open::open_files()
     }
+}
+
+/// The physical path of the address a Unix socket is bound to. The kernel keeps the address as
+/// the process spelled it, and `$TMPDIR/x.sock` is below the link `/var` on macOS. `None` for a
+/// relative address: only the folder the process worked in at the time could resolve it.
+#[cfg(unix)]
+pub(crate) fn bound_socket(address: PathBuf) -> Option<PathBuf> {
+    if !address.is_absolute() {
+        return None;
+    }
+    let folder = address.parent().and_then(|dir| dir.canonicalize().ok());
+    Some(match (folder, address.file_name()) {
+        (Some(folder), Some(name)) => folder.join(name),
+        _ => address,
+    })
 }
 
 pub(crate) fn unseen<T>(e: &io::Error) -> Seen<T> {

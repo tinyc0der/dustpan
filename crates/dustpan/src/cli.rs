@@ -35,6 +35,15 @@ pub enum Cmd {
         #[arg(required = true, value_name = "PATH")]
         paths: Vec<OsString>,
     },
+    /// Show past cleanup sessions and what each removed, from the operations log
+    History {
+        /// Print one JSON object with Mole's history fields instead of text
+        #[arg(long)]
+        json: bool,
+        /// How many sessions and items to show, 1 to 200
+        #[arg(long, default_value_t = 20, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=200))]
+        limit: u8,
+    },
 }
 
 /// `--help` prints while clap parses, so color must be decided before parsing.

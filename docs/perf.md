@@ -177,3 +177,24 @@ Medians: `scan` 911,483 on trunk and 894,829 on head (1.8% slower, inside the sp
 **What limits the number.** The same as above. An all-ASCII name takes the ASCII fold, so the bench's names cost what they did. Resolution runs at `Guard::new`, outside the timed rounds. `explain` as a process, which includes it, took 10.6 ms at this head and 7.5 ms at `13d50e0`, as means of 100 alternated runs with the same 500 lines.
 
 **The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain`, and the bench still checks that a path the whitelist names is kept.
+
+### Restack onto main
+
+The branch merged `main` at `a2d839c`, which adds M0-3's open-file layer. Layer 5 runs before the open-file question. The same bench ran from fresh exports (`side-m` at `a2d839c` with no whitelist, `side-r` at the merge with 500 lines) under `/tmp/swarm-m0-4/restack/bench`, alternated, on 2026-11-16. A first pair built the fixtures and is left out.
+
+| Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
+|---|---|---|---|---|---|
+| 1 | main | 9.11 | 607,385 | 171,438 | 1,054,424 |
+| 1 | merge | 8.10 | 609,073 | 168,638 | 1,043,849 |
+| 2 | main | 7.71 | 619,038 | 170,726 | 1,045,522 |
+| 2 | merge | 7.41 | 603,573 | 167,511 | 1,030,900 |
+| 3 | main | 6.65 | 605,858 | 169,700 | 1,050,431 |
+| 3 | merge | 5.93 | 578,483 | 164,566 | 1,040,260 |
+| 4 | main | 6.51 | 590,902 | 161,832 | 1,027,416 |
+| 4 | merge | 6.39 | 588,675 | 165,244 | 1,033,420 |
+| 5 | main | 6.36 | 579,215 | 163,496 | 1,036,957 |
+| 5 | merge | 6.51 | 592,089 | 164,911 | 1,020,164 |
+
+Medians: `scan` 605,858 on main and 592,089 at the merge (2.3% slower, inside the spread of 579,215 to 619,038 on main and 578,483 to 609,073 at the merge), `explain` 169,700 and 165,244, `cpu` 1,045,522 and 1,033,420. The rule passes, and `scan` passes at 2.96 times the budget. Both sides sit below the fix round 1 numbers. M0-3's fix round 3 measured its snapshot of open files at 12% of `scan`, and the load here was 5.9 to 9.1 against 1.8 then. No profile was taken, so how the gap splits between the two is inferred.
+
+**The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain` on both sides, and the merge's bench checks that a path the whitelist names is kept.

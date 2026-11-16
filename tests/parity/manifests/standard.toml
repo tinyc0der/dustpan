@@ -1,0 +1,163 @@
+[[file]]
+path = "victim/canary.txt"
+size = 4096
+
+[[file]]
+path = "victim/node_modules/keep.js"
+size = 4096
+
+[[file]]
+path = "home/Library/Caches/com.example.notes/Cache.db"
+size = 2097152
+
+[[file]]
+path = "home/Library/Caches/com.example.notes/fsCachedData/blob1"
+size = 1048576
+
+[[file]]
+path = "home/Library/Caches/com.example.widget/Cache.bin"
+size = 3145728
+
+[[file]]
+path = "home/Library/Caches/Google/Chrome/Default/Cache/Cache_Data/data_0"
+size = 1048576
+
+[[file]]
+path = "home/Library/Caches/Firefox/Profiles/abcd1234.default-release/cache2/entries/E1"
+size = 1048576
+
+[[file]]
+path = "home/Library/Application Support/Google/Chrome/Default/Code Cache/js/index"
+size = 524288
+
+[[file]]
+path = "home/Library/Application Support/Google/Chrome/Default/GPUCache/data_1"
+size = 524288
+
+[[file]]
+path = "home/Library/Application Support/Google/Chrome/Default/Bookmarks"
+size = 2048
+
+[[file]]
+path = "home/Library/Logs/ExampleApp/app.log"
+size = 1048576
+
+[[file]]
+path = "home/Library/Logs/DiagnosticReports/ExampleApp-2026-10-01.ips"
+size = 65536
+
+[[file]]
+path = "home/.Trash/old-report.pdf"
+size = 131072
+
+[[file]]
+path = "home/Documents/notes.txt"
+size = 1024
+
+[[file]]
+path = "home/Applications/Example.app/Contents/Info.plist"
+size = 64
+
+[[file]]
+path = "home/Projects/oldweb/package.json"
+size = 64
+
+[[file]]
+path = "home/Projects/oldweb/package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Projects/oldweb/node_modules/left-pad/index.js"
+size = 1048576
+
+[[file]]
+path = "home/Projects/oldweb/node_modules/.package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Projects/freshweb/package.json"
+size = 64
+
+[[file]]
+path = "home/Projects/freshweb/package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Projects/freshweb/node_modules/right-pad/index.js"
+size = 1048576
+
+[[file]]
+path = "home/Projects/freshweb/node_modules/.package-lock.json"
+size = 64
+
+[[file]]
+path = "home/Projects/oldrust/Cargo.toml"
+size = 64
+
+[[file]]
+path = "home/Projects/oldrust/target/debug/oldrust"
+size = 2097152
+
+[[file]]
+path = "home/Projects/oldrust/target/.rustc_info.json"
+size = 64
+
+[[file]]
+path = "home/Projects/trapweb/package.json"
+size = 64
+
+[[file]]
+path = "home/Downloads/Example-1.0.dmg"
+size = 1048576
+
+[[file]]
+path = "home/Downloads/Setup.pkg"
+size = 524288
+
+[[zip]]
+path = "home/Downloads/ExampleInstaller.zip"
+entries = ["Example.app/Contents/Info.plist"]
+
+[[zip]]
+path = "home/Downloads/photos.zip"
+entries = ["photo.txt"]
+
+[[symlink]]
+path = "home/Library/Caches/com.trap.victim"
+target = "victim"
+
+[[symlink]]
+path = "home/Library/Caches/com.trap.dangling"
+target = "victim/missing"
+
+[[symlink]]
+path = "home/Library/Caches/com.trap.loop"
+target = "home/Library/Caches"
+
+[[symlink]]
+path = "home/Library/Logs/trap-logs"
+target = "victim"
+
+[[symlink]]
+path = "home/Projects/trapweb/node_modules"
+target = "victim/node_modules"
+
+[[symlink]]
+path = "home/Downloads/trap.dmg"
+target = "victim/canary.txt"
+
+[[age]]
+path = "home/Library/Logs"
+days = 30
+
+[[age]]
+path = "home/Projects/oldweb"
+days = 30
+
+[[age]]
+path = "home/Projects/oldrust"
+days = 30
+
+[[age]]
+path = "home/Projects/trapweb"
+days = 30

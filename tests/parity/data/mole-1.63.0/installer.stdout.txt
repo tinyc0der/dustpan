@@ -1,0 +1,26 @@
+→ DRY RUN MODE, No installer files will be removed
+
+
+[HSelect Installers to Remove , 0B, 0 selected
+[2K
+[2K➤ ○ Example-1.0.dmg                             1.0MB | Downloads 
+[2K  ○ ExampleInstaller.zip                         168B | Downloads 
+[2K  ○ Setup.pkg                                   524KB | Downloads 
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K
+[2K↑↓  |  Space Select  |  Enter Confirm  |  A All  |  I Invert  |  Q Quit
+

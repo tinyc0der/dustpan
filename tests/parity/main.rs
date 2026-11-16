@@ -1,0 +1,159 @@
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("the Mole parity harness runs on macOS only");
+    std::process::exit(2);
+}
+
+#[cfg(target_os = "macos")]
+fn main() {
+    if let Err(e) = cli::run(std::env::args().skip(1).collect()) {
+        eprintln!("parity: {e}");
+        std::process::exit(e.exit_code());
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod cli {
+    use dustpan_parity::candidates::{
+        Parsed, SAVED_HOME, parse_clean_list, parse_installer_stdout, parse_purge_stdout,
+    };
+    use dustpan_parity::diff::{KnownDifferences, diff};
+    use dustpan_parity::error::{Error, Result, io_err};
+    use dustpan_parity::fixture_home::{Fixture, Manifest, drift, snapshot};
+    use dustpan_parity::mole_runner::{
+        DEFAULT_TIMEOUT, MoleCommand, MoleRun, MoleRunner, locate_mo,
+    };
+    use std::fs;
+    use std::path::Path;
+    use std::time::Duration;
+
+    const STANDARD_MANIFEST: &str = include_str!("manifests/standard.toml");
+    const KNOWN_DIFFERENCES: &str = include_str!("known-differences.toml");
+    const DUSTPAN_NOTE: &str = "empty until M3: dustpan has no catalog to list candidates yet";
+    const USAGE: &str = "usage: parity <clean|purge|installer> [--manifest FILE] [--whitelist HOME_RELATIVE_PATH]... [--timeout SECS] [--keep] [--save DIR]";
+
+    struct Args {
+        command: MoleCommand,
+        manifest: Option<String>,
+        whitelist: Vec<String>,
+        timeout: Duration,
+        keep: bool,
+        save: Option<String>,
+    }
+
+    fn parse_args(raw: Vec<String>) -> Result<Args> {
+        let usage = || Error::Usage(USAGE.into());
+        let mut it = raw.into_iter();
+        let command = it
+            .next()
+            .and_then(|c| MoleCommand::parse(&c))
+            .ok_or_else(usage)?;
+        let mut args = Args {
+            command,
+            manifest: None,
+            whitelist: Vec::new(),
+            timeout: DEFAULT_TIMEOUT,
+            keep: false,
+            save: None,
+        };
+        while let Some(flag) = it.next() {
+            match flag.as_str() {
+                "--manifest" => args.manifest = Some(it.next().ok_or_else(usage)?),
+                "--whitelist" => args
+                    .whitelist
+                    .push(format!("home/{}", it.next().ok_or_else(usage)?)),
+                "--timeout" => {
+                    let secs = it.next().and_then(|s| s.parse().ok()).ok_or_else(usage)?;
+                    args.timeout = Duration::from_secs(secs);
+                }
+                "--keep" => args.keep = true,
+                "--save" => args.save = Some(it.next().ok_or_else(usage)?),
+                _ => return Err(usage()),
+            }
+        }
+        Ok(args)
+    }
+
+    pub fn run(raw: Vec<String>) -> Result<()> {
+        let args = parse_args(raw)?;
+        let mo = locate_mo(std::env::var("PARITY_MO").ok().as_deref())?;
+        let text = match &args.manifest {
+            Some(p) => fs::read_to_string(p).map_err(io_err(format!("read manifest {p}")))?,
+            None => STANDARD_MANIFEST.to_string(),
+        };
+        let mut manifest = Manifest::parse(&text)?;
+        manifest.mole.whitelist.extend(args.whitelist);
+        manifest.validate()?;
+
+        let fixture = Fixture::build(&manifest)?;
+        let before = snapshot(fixture.root())?;
+        let runner = MoleRunner::new(mo, &fixture, args.timeout)?;
+        let version = runner.version()?;
+        let mole = runner.run(args.command)?;
+        let home = fixture.home();
+        if let Some(dir) = &args.save {
+            save_capture(dir, args.command, &mole, &home)?;
+        }
+
+        let parsed: Parsed = match args.command {
+            MoleCommand::Clean => {
+                parse_clean_list(mole.clean_list.as_deref().unwrap_or_default(), &home)?
+            }
+            MoleCommand::Purge => parse_purge_stdout(&mole.stdout, &home)?,
+            MoleCommand::Installer => parse_installer_stdout(&mole.stdout)?,
+        };
+        let after = snapshot(fixture.root())?;
+        let drift = drift(&before, &after);
+
+        println!("mole: {version} (verified)");
+        println!(
+            "command: mo {} (dry run, {:.1}s)",
+            args.command.name(),
+            mole.wall.as_secs_f64()
+        );
+        println!(
+            "paths are relative to the fixture home; ignored {} host rows outside it and {} rows counted under another row",
+            parsed.outside.len(),
+            parsed.nested.len()
+        );
+        let mole_paths: Vec<&str> = parsed.inside.iter().map(|c| c.path.as_str()).collect();
+        let known = KnownDifferences::parse(KNOWN_DIFFERENCES)?;
+        let result = diff(mole_paths, std::iter::empty());
+        print!(
+            "{}",
+            result.render(DUSTPAN_NOTE, &known, args.command.name())
+        );
+        println!(
+            "fixture untouched: {} ({} modified, {} removed, {} added)",
+            if drift.is_clean() { "yes" } else { "NO" },
+            drift.modified.len(),
+            drift.removed.len(),
+            drift.added.len()
+        );
+        if args.keep {
+            println!("fixture kept at {}", fixture.keep().display());
+        }
+        if drift.is_clean() {
+            Ok(())
+        } else {
+            Err(Error::MoleFailed {
+                what: format!("mo {}", args.command.name()),
+                detail: format!(
+                    "changed the fixture: {:?} {:?}",
+                    drift.modified, drift.removed
+                ),
+            })
+        }
+    }
+
+    fn save_capture(dir: &str, cmd: MoleCommand, run: &MoleRun, home: &Path) -> Result<()> {
+        let redact = |s: &str| s.replace(&*home.to_string_lossy(), SAVED_HOME);
+        fs::create_dir_all(dir).map_err(io_err(format!("create {dir}")))?;
+        let (name, body) = match &run.clean_list {
+            Some(list) => (format!("{}.clean-list.txt", cmd.name()), redact(list)),
+            None => (format!("{}.stdout.txt", cmd.name()), redact(&run.stdout)),
+        };
+        let path = Path::new(dir).join(name);
+        fs::write(&path, body).map_err(io_err(format!("write {}", path.display())))
+    }
+}

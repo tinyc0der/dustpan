@@ -1,0 +1,26 @@
+[package]
+name = "dustpan-parity"
+description = "Mole parity harness: diffs Mole's dry-run candidate lists against dustpan's."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name = "parity"
+path = "main.rs"
+
+[[test]]
+name = "parity"
+path = "parse.rs"
+
+[dependencies]
+filetime = "0.2"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+toml = "1"

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/dustpan-core", "crates/dustpan-sys", "crates/dustpan"]
+members = ["crates/dustpan-core", "crates/dustpan-sys", "crates/dustpan", "tests/parity"]
 
 [workspace.package]
 version = "0.1.0"

@@ -32,8 +32,9 @@ use std::path::{Path, PathBuf};
 const RENAME_NOFOLLOW_ANY: libc::c_uint = 0x10;
 /// From `<sys/fcntl.h>` (macOS 11): the same for `fstatat`.
 const AT_SYMLINK_NOFOLLOW_ANY: libc::c_int = 0x0800;
-/// How many names `name`, `name 2`, ... `name 99` the move tries before it gives up.
-const NAMES: u32 = 99;
+/// How many names the move tries before it gives up: `name`, `name 2` to `name 9`, then
+/// `name` with the time in nanoseconds, which a Trash full of one name still has free.
+const NAMES: u32 = 20;
 
 /// Moves the entry `path` names in `parent` to the Trash, after checking that it is still
 /// `expect`. Never retried, never deleted (SAFE-12).
@@ -188,13 +189,17 @@ fn id_at(root: &DirHandle, rest: &Path) -> Result<FileId, DiskError> {
 fn move_in(parent: &DirHandle, name: &OsStr, bin: &Bin) -> Result<OsString, DiskError> {
     let from = c_str(name)?;
     for n in 1..=NAMES {
-        let landed = if n == 1 {
-            name.to_os_string()
-        } else {
-            let mut numbered = name.to_os_string();
-            numbered.push(format!(" {n}"));
-            numbered
-        };
+        let mut landed = name.to_os_string();
+        match n {
+            1 => {}
+            2..=9 => landed.push(format!(" {n}")),
+            _ => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_nanos());
+                landed.push(format!(" {now}"));
+            }
+        }
         let to = c_str(bin.folder.join(&landed).as_os_str())?;
         // SAFETY: both folders are open and both paths are NUL-terminated.
         let moved = unsafe {
@@ -289,6 +294,26 @@ mod tests {
         assert_eq!(moved.from, path.as_path());
         assert!(moved.at.join("d/f").exists());
         assert!(!path.as_path().exists());
+    }
+
+    #[test]
+    fn a_trash_full_of_one_name_still_takes_another() {
+        let (_dir, at) = temp();
+        let home = at.join("home");
+        let trash = home.join(".Trash");
+        std::fs::create_dir_all(trash.join("com.example.item")).unwrap();
+        for n in 2..=9 {
+            std::fs::create_dir_all(trash.join(format!("com.example.item {n}"))).unwrap();
+        }
+        let (parent, path, id) = item(&at);
+        let moved = trash_with_home(&home, &parent, &path, id).unwrap();
+        assert_eq!(moved.arrived, id);
+        let landed = moved.at.file_name().unwrap().to_string_lossy().into_owned();
+        let stamp = landed.strip_prefix("com.example.item ").unwrap();
+        assert!(
+            stamp.len() > 9 && stamp.bytes().all(|b| b.is_ascii_digit()),
+            "{landed}"
+        );
     }
 
     #[test]

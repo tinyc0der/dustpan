@@ -199,6 +199,13 @@ pub enum LiveReason {
     LiveDatabase,
     /// An endpoint-security vendor's cache under `/private/var/folders`.
     EndpointSecurity,
+    /// The process table or the snapshot of open files took so long that the evidence was
+    /// `age` old, at least `lease`, when the check ended, and again when it was taken once
+    /// more. A process could have opened a file in that time unseen.
+    SlowProbe {
+        age: std::time::Duration,
+        lease: std::time::Duration,
+    },
 }
 
 impl Verdict {
@@ -268,6 +275,7 @@ impl KeptReason {
                 LiveReason::InUseUnknown(_) => "file-open-unknown",
                 LiveReason::LiveDatabase => "live-database",
                 LiveReason::EndpointSecurity => "edr-cache",
+                LiveReason::SlowProbe { .. } => "slow-probe",
             },
             Self::Identity(IdentityReason::Changed) => "identity-changed",
             Self::Identity(IdentityReason::ReplacedDuringCheck) => "replaced-during-check",
@@ -441,6 +449,13 @@ impl fmt::Display for KeptReason {
             }
             Self::Live(LiveReason::LiveDatabase) => f.write_str("live power log database"),
             Self::Live(LiveReason::EndpointSecurity) => f.write_str("endpoint security cache"),
+            Self::Live(LiveReason::SlowProbe { age, lease }) => write!(
+                f,
+                "the checks for running apps and open files took {} ms, twice, and may answer \
+                 for {} ms; try again",
+                age.as_millis(),
+                lease.as_millis()
+            ),
             Self::Identity(IdentityReason::Changed) => {
                 f.write_str("replaced since the scan; scan again")
             }

@@ -33,6 +33,7 @@ pub struct FakeProbe {
     during_trash: Mutex<Option<Change>>,
     after_listing: Mutex<Option<(PathBuf, Change)>>,
     on_process_probe: Mutex<Option<Change>>,
+    after_open_files: Mutex<Option<EveryCall>>,
     trash_unavailable: bool,
     node_calls: AtomicUsize,
     process_calls: AtomicUsize,
@@ -40,6 +41,8 @@ pub struct FakeProbe {
 }
 
 type Change = Box<dyn FnOnce(&FakeProbe) + Send>;
+/// Runs on every call, with the call's number.
+type EveryCall = Box<dyn Fn(&FakeProbe, usize) + Send + Sync>;
 
 /// Each file the fake lists takes one 4 KiB block.
 const BLOCK: u64 = 4096;
@@ -263,6 +266,7 @@ impl FakeProbe {
             started: Mutex::new(Vec::new()),
             after_listing: Mutex::new(None),
             on_process_probe: Mutex::new(None),
+            after_open_files: Mutex::new(None),
             trash_unavailable: false,
             node_calls: AtomicUsize::new(0),
             process_calls: AtomicUsize::new(0),
@@ -562,6 +566,16 @@ impl FakeProbe {
             .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
     }
 
+    /// Runs `change` after every snapshot of open files is taken, before the probe returns,
+    /// with the call's number from 1: a slow probe, during which a file can be opened that the
+    /// snapshot already missed.
+    pub fn after_open_files(&self, change: impl Fn(&FakeProbe, usize) + Send + Sync + 'static) {
+        *self
+            .after_open_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
+    }
+
     /// Every Trash move fails with `NoTrash`, as with no Trash on the volume (SAFE-12).
     pub fn trash_unavailable(self) -> Self {
         Self {
@@ -673,8 +687,16 @@ impl Probe for FakeProbe {
     }
 
     fn open_files(&self) -> Seen<OpenFiles> {
-        self.open_file_calls.fetch_add(1, Ordering::Relaxed);
-        self.open().clone()
+        let call = self.open_file_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        let snapshot = self.open().clone();
+        if let Some(change) = &*self
+            .after_open_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            change(self, call);
+        }
+        snapshot
     }
 
     fn list(&self, dir: &AbsPath, out: &mut Vec<DirEntry>) -> Seen<FileId> {

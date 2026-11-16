@@ -3,7 +3,9 @@ use super::Guard;
 use super::open::OpenIndex;
 use super::pass::{Evidence, Pass};
 use super::survey::{self, Manifest};
-use super::verdict::{ContentsReason, IdentityReason, KeptReason, ShapeReason, Verdict};
+use super::verdict::{
+    ContentsReason, IdentityReason, KeptReason, LiveReason, ShapeReason, Verdict,
+};
 use crate::candidate::{Candidate, Sink};
 use crate::identity::{NodeKind, PathIdentity};
 use crate::path::AbsPath;
@@ -21,8 +23,10 @@ use std::time::Duration;
 /// start while the sink runs, and a cache delete takes seconds. A lease adds at most its length
 /// to that window. Evidence is taken at the sink, never during discovery. Each snapshot's age
 /// starts from the monotonic time read before it was asked for and is checked at every
-/// recheck, so a long sink call makes the next candidate take fresh evidence (SAFE-10). File
-/// identity, spelling and every policy layer are never shared.
+/// recheck, so a long sink call makes the next candidate take fresh evidence (SAFE-10). It is
+/// checked again right before each approval, against [`Lease::bound`], so a slow probe cannot
+/// approve on its own stale answer. File identity, spelling and every policy layer are never
+/// shared.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Lease(Duration);
 
@@ -34,6 +38,16 @@ impl Lease {
 
     pub const fn window(self) -> Duration {
         self.0
+    }
+
+    /// The oldest live evidence an approval may rest on: the lease, or for a lease of zero the
+    /// batch's. Evidence a check takes itself is as old as its probes are slow.
+    pub const fn bound(self) -> Duration {
+        if self.0.is_zero() {
+            Self::BATCH.0
+        } else {
+            self.0
+        }
     }
 }
 
@@ -238,9 +252,12 @@ impl Recheck<'_> {
     /// with discovery's, before the live probes and after them (SAFE-03, SAFE-10, SAFE-11).
     /// Then judges everything a folder candidate holds (SAFE-27, SAFE-38). When the live
     /// evidence is older than the lease once the survey ends, it is taken again and the
-    /// candidate and the owners its contents named are judged against it, so no approval rests
-    /// on evidence older than one lease, the survey's own time included. Never refreshes the
-    /// identity to approve a replacement.
+    /// candidate and the owners its contents named are judged against it. Right before the
+    /// approval, evidence as old as [`Lease::bound`] is taken once more, a leaf's included,
+    /// since a slow probe ages what it returns; if the new evidence is that old too, the
+    /// candidate is kept (`LiveReason::SlowProbe`). So no approval rests on evidence older than
+    /// the bound, the survey's and the probes' own time included. Never refreshes the identity
+    /// to approve a replacement.
     #[expect(
         clippy::result_large_err,
         reason = "both sides carry the candidate; boxing adds an allocation per candidate"
@@ -306,26 +323,40 @@ impl Recheck<'_> {
         };
         self.keep(started, &seeded, held);
         let (manifest, kind, scopes) = surveyed?;
-        // Evidence this check took itself is as new as the check, and a leaf has no survey
-        // that could age it. Anything else is held to the lease at the end of the survey.
+        // Shared evidence and a survey age the evidence past the lease; a fresh leaf's ages
+        // only by its own probes, which the bound below catches.
         let survey_ran = kind == NodeKind::Dir;
-        let window = self.lease.window();
-        if (survey_ran || taken < started) && self.clock.elapsed().saturating_sub(taken) >= window {
-            self.refresh(candidate, &scopes)?;
+        let mut taken = taken;
+        if (survey_ran || taken < started) && self.age(taken) >= self.lease.window() {
+            taken = self.refresh(candidate, &scopes)?;
+        }
+        let bound = self.lease.bound();
+        if self.age(taken) >= bound {
+            taken = self.refresh(candidate, &scopes)?;
+            let age = self.age(taken);
+            if age >= bound {
+                let slow = LiveReason::SlowProbe { age, lease: bound };
+                return Err(Rejection::Kept(KeptReason::Live(slow)));
+            }
         }
         Ok(manifest)
+    }
+
+    /// How long ago, by the monotonic clock, evidence taken at `taken` was asked for.
+    fn age(&self, taken: Duration) -> Duration {
+        self.clock.elapsed().saturating_sub(taken)
     }
 
     /// Takes the process table and the snapshot of open files again and judges the candidate
     /// against them: its owners, its scope's owner, and every file open at or below it. A
     /// candidate above a cache scope (a whole container) holds folders another owner names,
     /// so each scope owner the survey asked about is asked again too. The new evidence is the
-    /// batch's from here on.
+    /// batch's from here on. Returns when it was asked for.
     fn refresh(
         &mut self,
         candidate: &Candidate,
         scopes: &[(Owner, AbsPath)],
-    ) -> Result<(), Rejection> {
+    ) -> Result<Duration, Rejection> {
         if self.cancelled() {
             return Err(Rejection::Cancelled);
         }
@@ -338,7 +369,7 @@ impl Recheck<'_> {
             (Verdict::Eligible, Some(now)) if now != candidate.identity() => Err(Rejection::Kept(
                 KeptReason::Identity(IdentityReason::ReplacedDuringCheck),
             )),
-            (Verdict::Eligible, Some(_)) => Ok(()),
+            (Verdict::Eligible, Some(_)) => Ok(started),
         };
         if checked.is_ok()
             && let Some((at, reason)) = scopes

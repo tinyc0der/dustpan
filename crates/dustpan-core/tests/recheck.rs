@@ -560,3 +560,85 @@ fn an_app_that_starts_during_the_survey_keeps_the_container_whose_caches_it_owns
         refused.rejection
     );
 }
+
+/// A slow open-files probe: `slow` says which calls after the arming take 1.2 s, and the first
+/// slow call also lets process 5 open `open` before it returns.
+fn slow_probe(
+    fs: &FakeProbe,
+    clock: Arc<FixedClock>,
+    open: Option<String>,
+    slow: impl Fn(usize) -> bool + Send + Sync + 'static,
+) {
+    let base = fs.open_file_calls();
+    let open = std::sync::Mutex::new(open);
+    fs.after_open_files(move |fs, call| {
+        if slow(call - base) {
+            if let Some(path) = open.lock().unwrap().take() {
+                fs.open_now(5, &path);
+            }
+            clock.advance(Duration::from_millis(1200));
+        }
+    });
+}
+
+#[test]
+fn a_leaf_on_evidence_a_slow_probe_aged_is_judged_again_and_kept() {
+    let leaf = format!("{APP}/leaf.bin");
+    let fs = fixture().file(&leaf);
+    let opened = leaf.clone();
+    let refused = approve_during(&fs, &leaf, Lease::BATCH, move |fs, clock| {
+        slow_probe(fs, clock, Some(opened), |call| call == 1);
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&refused.rejection, Rejection::Kept(KeptReason::Live(LiveReason::InUse { pid, file }))
+            if pid.0 == 5 && *file == p(&leaf)),
+        "{:?}",
+        refused.rejection
+    );
+}
+
+#[test]
+fn evidence_still_older_than_the_lease_after_a_second_take_keeps_the_candidate() {
+    let leaf = format!("{APP}/leaf.bin");
+    let fs = fixture().file(&leaf);
+    let refused = approve_during(&fs, &leaf, Lease::BATCH, |fs, clock| {
+        slow_probe(fs, clock, None, |_| true);
+    })
+    .unwrap_err();
+    assert!(
+        matches!(
+            &refused.rejection,
+            Rejection::Kept(KeptReason::Live(LiveReason::SlowProbe { .. }))
+        ),
+        "{:?}",
+        refused.rejection
+    );
+    assert_eq!(
+        KeptReason::Live(LiveReason::SlowProbe {
+            age: Duration::from_millis(1200),
+            lease: Lease::BATCH.bound(),
+        })
+        .code(),
+        "slow-probe"
+    );
+}
+
+#[test]
+fn a_slow_probe_in_the_refresh_after_a_survey_is_taken_again() {
+    let held = format!("{CACHE}/one");
+    let fs = fixture().file(&held);
+    let opened = held.clone();
+    let refused = approve_during(&fs, CACHE, Lease::BATCH, move |fs, clock| {
+        let survey = Arc::clone(&clock);
+        fs.after_listing(CACHE, move |_| survey.advance(Duration::from_millis(1500)));
+        slow_probe(fs, clock, Some(opened), |call| call == 2);
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&refused.rejection, Rejection::Kept(KeptReason::Live(LiveReason::InUse { pid, file }))
+            if pid.0 == 5 && *file == p(&held)),
+        "{:?}",
+        refused.rejection
+    );
+}

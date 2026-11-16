@@ -1,7 +1,7 @@
 //! The files every process holds open, read from the links in `/proc/<pid>/fd`, and the paths
 //! Unix sockets are bound to, read from `/proc/net/unix`.
-use crate::probe::{bound_socket, unseen};
-use dustpan_core::probe::{OpenFile, OpenFiles, Pid, Seen, Unlisted};
+use crate::probe::{MAX_DESCRIPTORS, bound_socket, unseen};
+use dustpan_core::probe::{OpenFile, OpenFiles, Pid, Seen, Unlisted, Unseen};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::ReadDir;
@@ -28,8 +28,9 @@ enum Listed {
 /// off inspection of itself, as `ssh-agent` does, whoever it runs as. `/proc/<pid>` itself
 /// always belongs to the user the process runs as, so it cannot tell the two apart.
 ///
-/// A process that is starting a new program is shown to root alone for a moment. A refusal
-/// from a folder this user owns is therefore asked again, a millisecond apart.
+/// A process is shown to root alone for a moment after it changes user or while it exits, and
+/// on recent kernels while it starts a new program. A refusal from a folder this user owns is
+/// therefore asked again, a millisecond apart.
 fn list(process: &Path, me: libc::uid_t) -> Listed {
     let fd = process.join("fd");
     for _ in 0..4 {
@@ -48,6 +49,10 @@ fn list(process: &Path, me: libc::uid_t) -> Listed {
 }
 
 pub(crate) fn open_files() -> Seen<OpenFiles> {
+    snapshot(MAX_DESCRIPTORS)
+}
+
+fn snapshot(most: usize) -> Seen<OpenFiles> {
     let entries = match std::fs::read_dir("/proc") {
         Ok(entries) => entries,
         Err(e) => return unseen(&e),
@@ -60,12 +65,12 @@ pub(crate) fn open_files() -> Seen<OpenFiles> {
     let me = unsafe { libc::geteuid() };
     let this = std::process::id();
     let mut open = OpenFiles::default();
+    let mut seen = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
             continue;
         };
-        // This process is left out: see `OpenFiles`.
         if pid == this {
             continue;
         }
@@ -81,6 +86,10 @@ pub(crate) fn open_files() -> Seen<OpenFiles> {
             }
         };
         for fd in fds.flatten() {
+            seen += 1;
+            if seen > most {
+                return Seen::Unknown(Unseen::TimedOut);
+            }
             let Ok(target) = std::fs::read_link(fd.path()) else {
                 continue;
             };
@@ -133,6 +142,12 @@ fn bound_sockets(table: &[u8]) -> HashMap<u64, PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_snapshot_past_its_descriptor_limit_is_unknown() {
+        assert_eq!(snapshot(0), Seen::Unknown(Unseen::TimedOut));
+        assert!(matches!(snapshot(MAX_DESCRIPTORS), Seen::Found(_)));
+    }
 
     #[test]
     fn only_a_socket_bound_to_an_absolute_path_is_listed() {

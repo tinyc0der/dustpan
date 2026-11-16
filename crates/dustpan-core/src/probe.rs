@@ -32,8 +32,8 @@ pub trait Probe: Sync {
     /// ([`Owner::state_in`]), so the rule that says who owns a cache is tested without processes.
     fn processes(&self) -> Seen<ProcessTable>;
 
-    /// One snapshot of the files every process holds open. Who keeps a path is decided in core
-    /// (`guard::Pass`), which indexes the snapshot once and asks it about every path.
+    /// One snapshot of the files every other process holds open. Who keeps a path is decided
+    /// in core (`guard::Pass`).
     fn open_files(&self) -> Seen<OpenFiles>;
 }
 
@@ -140,7 +140,8 @@ pub struct OpenFile {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Unlisted {
     pub pid: Pid,
-    /// It runs as the user dustpan runs as. Another user's process is set aside, as an
+    /// Whether this run should have seen its files: the run is root, or the process runs as
+    /// this user and does not refuse inspection. Any other process is set aside, as an
     /// unidentified one is ([`App::Unknown`]): if it were not, a run that is not root could
     /// call no path free.
     pub mine: bool,

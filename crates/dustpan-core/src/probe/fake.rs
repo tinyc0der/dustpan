@@ -1,7 +1,7 @@
-//! An in-memory file system, process table and set of open files for core tests. Compiled only for core's own unit
-//! tests and with the `testkit` feature, which no shipped crate enables; a source test fails if
-//! `FakeProbe` or `testkit` appears under `crates/dustpan/src` or `crates/dustpan-sys/src`
-//! (SAFE-17).
+//! An in-memory file system, process table and set of open files for core tests. Compiled only for
+//! core's own unit tests and with the `testkit` feature, which no shipped crate enables; a source
+//! test fails if `FakeProbe` or `testkit` appears under `crates/dustpan/src` or
+//! `crates/dustpan-sys/src` (SAFE-17).
 use super::{App, OpenFile, OpenFiles, Pid, Probe, Proc, ProcessTable, Seen, Unlisted, Unseen};
 use crate::identity::{FileId, Node, NodeKind};
 use crate::path::AbsPath;
@@ -255,7 +255,6 @@ impl FakeProbe {
         self
     }
 
-    /// Process `pid` holds `path` open.
     pub fn open_by(self, pid: u32, path: &str) -> Self {
         self.open_now(pid, path);
         self
@@ -271,7 +270,6 @@ impl FakeProbe {
         }
     }
 
-    /// Every process closes every file.
     pub fn close_all(&self) {
         if let Seen::Found(open) = &mut *self.open() {
             open.files.clear();

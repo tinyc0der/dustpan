@@ -61,8 +61,16 @@ impl Probe for LiveProbe {
     }
 }
 
-/// The physical path of the address a Unix socket is bound to. The kernel keeps the address as
-/// the process spelled it, and `$TMPDIR/x.sock` is below the link `/var` on macOS. `None` for a
+/// The most descriptors one snapshot of open files looks at: about 0.4 s of kernel calls on the
+/// bench host, at 1.6 µs each. No kernel limit holds the total down, because `dup` and `fork`
+/// add descriptors that share one open file. Past it the snapshot answers "timed out", which
+/// keeps every path no rule protects.
+#[cfg(unix)]
+pub(crate) const MAX_DESCRIPTORS: usize = 1 << 18;
+
+/// The address a Unix socket is bound to, with its folder resolved to a physical path. The
+/// kernel keeps the address as the process spelled it, and `$TMPDIR/x.sock` is below the link
+/// `/var` on macOS. A folder that does not resolve leaves the address as spelled. `None` for a
 /// relative address: only the folder the process worked in at the time could resolve it.
 #[cfg(unix)]
 pub(crate) fn bound_socket(address: PathBuf) -> Option<PathBuf> {

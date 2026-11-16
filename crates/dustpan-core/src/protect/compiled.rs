@@ -493,7 +493,8 @@ impl Policy {
         self.fold_case && !path.bytes().is_ascii()
     }
 
-    /// Whether names compare without ASCII case, as on APFS and NTFS.
+    /// Whether names compare without ASCII case. [`Policy::may_be_alias`] covers the folds
+    /// outside ASCII.
     pub(crate) fn folds_case(&self) -> bool {
         self.fold_case
     }

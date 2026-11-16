@@ -236,7 +236,8 @@ impl<'a> Pass<'a> {
             return (Verdict::Kept(KeptReason::Critical(hit)), identity);
         }
 
-        // Live state runs before the protection rows and under every carve-out (SAFE-06).
+        // The other live checks run before the protection rows and under every carve-out
+        // (SAFE-06).
         let live = self.policy.live(path, &mut self.scratch);
         let mut refusal = live.powerlog.then_some(LiveReason::LiveDatabase);
         if refusal.is_none() {
@@ -274,9 +275,9 @@ impl<'a> Pass<'a> {
                 return (Verdict::Kept(KeptReason::Protected(hit)), identity);
             }
         }
-        // Open files are asked about last, for a path every rule above lets go. The answer can
-        // only keep the path, so no allowlist skips it (SAFE-06), and a protected path keeps
-        // the reason that still holds after the app quits.
+        // Open files are asked about last. Every path that would be eligible reaches this
+        // line, so no allowlist skips it (SAFE-06). A path kept above takes no snapshot and
+        // keeps the reason that still holds after the app quits.
         match self.open_refusal(path, parent, &live) {
             Some(reason) => (Verdict::Kept(KeptReason::Live(reason)), identity),
             None => (Verdict::Eligible, identity),
@@ -432,7 +433,7 @@ impl<'a> Pass<'a> {
 
     /// The direct sign that a path is live: a process holds it open, or a file anywhere below
     /// it, or a member of its SQLite family (SAFE-09). A folder named for a vendor or a daemon
-    /// has no owner a name leads to, and this still keeps it. One snapshot serves the pass.
+    /// has no owner a name leads to, and this still keeps it.
     ///
     /// `parent` is the frame of the folder that holds `path`. A folder with nothing open in it
     /// answers for every path in it, and for a SQLite family, whose members share the folder.

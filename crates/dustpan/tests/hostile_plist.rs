@@ -34,8 +34,8 @@ fn explain_names_the_process_beside(lay: fn(&Path)) {
     );
 }
 
-/// Every folder above the process is named like a bundle and holds a well-formed megabyte
-/// that names no id. Reading each one took 6 seconds per process before the reads were capped.
+/// The process runs below more than a hundred folders named like bundles, each with a
+/// well-formed megabyte that names no id.
 #[test]
 fn a_deep_tree_of_large_info_plists_does_not_slow_explain() {
     let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);

@@ -980,7 +980,7 @@ fn a_folder_with_nothing_open_answers_for_its_files_and_a_held_folder_does_not()
         .file(&format!("{caches}/Busy/sub/d"))
         .open_by(3, &format!("{caches}/Busy/b.db-wal"))
         .open_by(4, &format!("{caches}/Busy/sub/c"));
-    // One pass, in the order a scan walks.
+    // The last row goes back into the held folder after a quiet one.
     assert_outcomes(
         &fs,
         &[

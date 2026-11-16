@@ -76,8 +76,8 @@ impl OpenIndex {
         if let Some(file) = self.at(path, scratch) {
             return Some(file);
         }
-        // `/c/app-wal` sorts between `/c/app` and `/c/app/x`, so the folder's contents start
-        // at the first path that is not below `/c/app/`.
+        // `/c/app-wal` sorts between `/c/app` and `/c/app/x`, so the search for the folder's
+        // contents starts at `/c/app/`, not at `/c/app`.
         if scratch.last() != Some(&SEP) {
             scratch.push(SEP);
         }

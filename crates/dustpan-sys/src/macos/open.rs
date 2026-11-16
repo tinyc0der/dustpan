@@ -1,11 +1,10 @@
 //! The files every process holds open, read from the kernel through libproc: `proc_listallpids`,
 //! `proc_pidinfo(PROC_PIDLISTFDS)` and `proc_pidfdinfo`. No subprocess runs and no file is read.
 //!
-//! The cost is one call per process and one per open file, folder or socket. The kernel caps
-//! open descriptors at `kern.maxfiles` for the whole system, so that cap bounds one snapshot.
-//! `docs/perf.md` has the measured cost.
+//! The cost is one call per process and one per open file, folder or socket, up to
+//! `MAX_DESCRIPTORS`. `docs/perf.md` has the measured cost.
 use super::process::{self, Short};
-use crate::probe::bound_socket;
+use crate::probe::{MAX_DESCRIPTORS, bound_socket};
 use dustpan_core::probe::{OpenFile, OpenFiles, Pid, Seen, Unlisted, Unseen};
 use std::ffi::OsString;
 use std::io;
@@ -42,6 +41,10 @@ enum Listed {
 }
 
 pub(crate) fn open_files() -> Seen<OpenFiles> {
+    snapshot(MAX_DESCRIPTORS)
+}
+
+fn snapshot(most: usize) -> Seen<OpenFiles> {
     let Some(pids) = process::pids() else {
         return Seen::Unknown(Unseen::Failed);
     };
@@ -51,8 +54,9 @@ pub(crate) fn open_files() -> Seen<OpenFiles> {
     let mut open = OpenFiles::default();
     let mut fds = Vec::new();
     let mut info = [0u8; VNODE_INFO];
+    let mut seen = 0;
     for pid in pids {
-        // Pid 0 is the kernel. This process is left out: see `OpenFiles`.
+        // Pid 0 is the kernel.
         let Some(id) = u32::try_from(pid).ok().filter(|&id| id != 0 && id != this) else {
             continue;
         };
@@ -69,6 +73,10 @@ pub(crate) fn open_files() -> Seen<OpenFiles> {
                 open.unlisted.push(Unlisted { pid: Pid(id), mine });
                 continue;
             }
+        }
+        seen += fds.len();
+        if seen > most {
+            return Seen::Unknown(Unseen::TimedOut);
         }
         for fd in &fds {
             let path = match fd.proc_fdtype as libc::c_int {
@@ -130,7 +138,6 @@ fn ask(pid: libc::pid_t, fd: i32, flavor: libc::c_int, answer: &mut [u8]) -> boo
     got == size
 }
 
-/// The bytes before the first NUL, as a path. `None` for an empty one.
 fn path(bytes: &[u8]) -> Option<PathBuf> {
     let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     (len > 0).then(|| PathBuf::from(OsString::from_vec(bytes[..len].to_vec())))
@@ -138,8 +145,9 @@ fn path(bytes: &[u8]) -> Option<PathBuf> {
 
 /// The path of the file or folder behind one descriptor. `None` when it has none to give:
 /// the descriptor closed since the listing, the file was unlinked, or the kernel refuses
-/// (`EPERM`). It refuses for a file in a data vault, which this process cannot open or remove
-/// either. On the bench host that is 59 of 5,493 descriptors, all of eight Apple daemons.
+/// (`EPERM`). The refusal is a security policy's (`mac_vnode_check_fsgetpath`). On the bench
+/// host it met 59 of 5,493 descriptors, all of eight Apple daemons, and those of `routined`
+/// that could be traced sit in a data vault, which this process cannot open or remove either.
 fn vnode_path(pid: libc::pid_t, fd: i32, info: &mut [u8; VNODE_INFO]) -> Option<PathBuf> {
     ask(pid, fd, PROC_PIDFDVNODEPATHINFO, info).then_some(())?;
     path(&info[VNODE_PATH..])
@@ -156,4 +164,15 @@ fn socket_path(pid: libc::pid_t, fd: i32, info: &mut [u8; VNODE_INFO]) -> Option
         return None;
     }
     bound_socket(path(&info[BOUND_PATH])?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_snapshot_past_its_descriptor_limit_is_unknown() {
+        assert_eq!(snapshot(0), Seen::Unknown(Unseen::TimedOut));
+        assert!(matches!(snapshot(MAX_DESCRIPTORS), Seen::Found(_)));
+    }
 }

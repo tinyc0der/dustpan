@@ -16,8 +16,7 @@ type Hidden = (libc::pid_t, Option<i32>);
 /// The bundle id is what ties a process to its cache folder: the path of
 /// `/Applications/Ghostty.app/Contents/MacOS/ghostty` does not spell `com.mitchellh.ghostty`.
 /// The entitlements are what tie it to a group container, which several apps share.
-/// Arguments need `KERN_PROCARGS2`, which answers for the caller's own processes alone; M3 adds
-/// them.
+/// Arguments need `KERN_PROCARGS2`, which answers for the caller's own processes alone.
 pub(crate) fn table() -> Seen<ProcessTable> {
     match snapshot() {
         Some((procs, hidden)) => Seen::Found(ProcessTable {
@@ -28,7 +27,6 @@ pub(crate) fn table() -> Seen<ProcessTable> {
     }
 }
 
-/// Every pid the kernel lists. `None` when it gives no list.
 pub(super) fn pids() -> Option<Vec<libc::pid_t>> {
     // SAFETY: a null buffer of size 0 asks only for the number of processes.
     let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };

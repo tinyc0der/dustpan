@@ -4,9 +4,11 @@
 # macOS only, and it reads the live machine: the result depends on what runs right now.
 # Lists every `~/Library/Caches/<name>` and `~/Library/Group Containers/<name>/Library/Caches`
 # folder in which a process of this user holds a file open, as `lsof` sees it, and asks
-# `dustpan explain` about each. Exits 1 when any of them reads `Eligible`.
+# `dustpan explain` about each. Exits 1 when any of them reads `Eligible`, when no folder is
+# held, and when the binary does not run.
 set -u
 bin=${1:-target/release/dustpan}
+"$bin" --version > /dev/null || exit 1
 out=${2:-$(mktemp -d)}
 mkdir -p "$out"
 

@@ -8,6 +8,7 @@
 use super::live::{LiveChecks, LiveRules};
 use super::names::{BundleMatch, Comp, Glob, NamePatterns, fold};
 use super::table::{Anchor, Effect, Row, Scope, Table};
+use super::whitelisted::Whitelisted;
 use crate::guard::{GuardInputs, Hit, How, Kind, PolicyError};
 use crate::identity::FileId;
 use crate::path::AbsPath;
@@ -45,6 +46,7 @@ pub(crate) struct Policy {
     id_rows: Vec<IdRow>,
     data_volume: Option<DataVolume>,
     live: LiveRules,
+    pub(crate) whitelist: Whitelisted,
 }
 
 struct IdRow {
@@ -234,6 +236,7 @@ impl Policy {
             id_rows: Vec::new(),
             data_volume: None,
             live: LiveRules::compile(table, inputs)?,
+            whitelist: Whitelisted::empty(table.fold_case),
         };
         let is_home = |row: &&Row| matches!(row.at, Anchor::Home(_));
         let rooted = table.critical.iter().filter(|r| !is_home(r));
@@ -278,6 +281,12 @@ impl Policy {
             }
         }
         policy.data_volume = Self::verified_firmlinks(table, probe)?;
+        policy.whitelist = Whitelisted::compile(
+            &inputs.whitelist,
+            table.fold_case,
+            |path| policy.canonical(path).into_owned(),
+            probe,
+        )?;
         Ok(policy)
     }
 
@@ -837,6 +846,7 @@ mod tests {
     use crate::guard::{Guard, KeptReason, Verdict};
     use crate::paths::Os;
     use crate::probe::fake::FakeProbe;
+    use crate::whitelist::Whitelist;
 
     static STATE: Table = Table {
         critical: &[row(Abs("/"), Exact, Refuse(Kind::SystemFolder))],
@@ -865,10 +875,12 @@ mod tests {
 
     fn judge(fs: &FakeProbe, path: &str) -> Verdict {
         let env = |_: &str| None;
+        let home = AbsPath::parse("/home/a".as_ref()).unwrap();
         let inputs = GuardInputs {
             os: Os::current(),
-            home: AbsPath::parse("/home/a".as_ref()).unwrap(),
+            home: home.clone(),
             env: &env,
+            whitelist: Whitelist::defaults(Os::current(), &home),
         };
         let guard = Guard::from_policy(Policy::from_table(&STATE, &inputs, fs).unwrap());
         let path = AbsPath::parse(path.as_ref()).unwrap();

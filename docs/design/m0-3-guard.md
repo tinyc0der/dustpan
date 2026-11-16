@@ -113,7 +113,7 @@ Core's integration tests and bench can also dev-depend on `dustpan-sys`. They li
 2. **Judge.** `Pass::judge(path, seen, owners)` runs four layers in order, and the first refusal decides.
    - Layer 1, shape. The path is mapped to its firmlink spelling. The pass reuses frames for ancestors it already holds and `lstat`s only new ones. Any linked ancestor refuses (`LinkedAncestor`), and so does an unreadable one (`Unreadable`). A leaf whose volume differs from its parent's is a mount point (`MountPoint`, SAFE-38). A leaf link has its target resolved and judged by a nested pass, and that target can refuse but never grant (`LinkToProtected`, SAFE-05).
    - Layer 2, critical. The deepest matching anchor wins, carve-out rows join as allow rows, and refuse beats allow at equal depth. Identity rows only refuse. They compare the leaf with Exact and Subtree anchors, the parent with Children anchors, and every ancestor with Subtree anchors (already folded into its frame).
-   - Layer 3, live. PowerLog `Current*` stores and EDR caches refuse by name. Owners come from the rule plus the bundle id of a user-cache scope, and are matched against the pass's single process table. These run even under carve-outs (SAFE-06). Since fix round 3 the layer also asks who holds the path, anything below it or a member of its SQLite family open, from one snapshot per pass, and it asks that last, after layer 4.
+   - Layer 3, live. PowerLog `Current*` stores and EDR caches refuse by name. Owners come from the rule plus the bundle id of a user-cache scope, and are matched against the pass's single process table. These run even under carve-outs (SAFE-06). Since fix round 3 the layer also asks who holds the path, anything below it or a member of its SQLite family open, from one snapshot per pass, and it asks that last, after layers 4 and 5.
    - Layer 4, protection. The same trie contest over the protection rows and bundle-id globs. An anchor marked `RefuseWithAncestors` refuses every ancestor while it exists, one `lstat` each (SAFE-27).
    - The identity returned is the parent frame's `FileId` and the leaf's.
 3. **Recheck.** `Guard::recheck(candidate, &probe)` starts a fresh pass, judges the path with the rule's owners and a fresh `lstat` of the leaf, and compares parent and target identity with discovery's. It returns `Approved`, `Refused { Kept(reason) }` or `Refused { Gone }`. It never refreshes the identity to approve a replacement. Its body is real code, not pseudocode.
@@ -496,3 +496,84 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 ## Next implementation step
 
 M0-4 adds the whitelist as layer 5: a required `whitelist` field on `GuardInputs`, a `KeptReason::Whitelisted` variant whose `source()` names the file, and `source` filled in `explain --json`.
+
+## M0-4 whitelist
+
+Layer 5 keeps a path the user whitelisted, everything inside it, and every folder above it. M0-5's sinks trust it, so a whitelisted path that reads `Eligible` is a path they would delete. This section records how the layer reads the file, which spellings of an entry it keeps, and how it compares names.
+
+### Reading the file
+
+`dustpan_sys::read_config` judges the file the way Mole's `mole_whitelist_file_state` does (`lib/core/base.sh:418`). It walks the path from the top with `lstat` and follows each link.
+
+- The file is missing only when a component does not exist. Then the default entries apply.
+- A link whose target does not exist, a folder on the path that is not a folder, or a file that is not a regular file stops the run. The message names the component. A broken link never authorizes the defaults.
+- The read opens with `O_NONBLOCK`, so a FIFO swapped in after the walk cannot block the run. `fstat` must report a regular file.
+- At most 1 MiB is read. A hand-kept list of 10,000 entries uses under half of that. A link to `/dev/zero` or a log that keeps growing stops at the cap.
+
+A config path the guard cannot take, such as an `XDG_CONFIG_HOME` with `..`, stops the run with the path and the cause. Whitelist lines with `..` stop the load too, as Mole refuses them.
+
+### Parsing an entry
+
+A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load. On Windows, `~/D:\work` would name another drive, so it stops the load too.
+
+Mole matches an entry with `[[ $path == $pattern ]]`, and its commands export `LC_ALL=C` (`bin/clean.sh:15`). Its `?` and `[...]` therefore take one byte, and its classes hold ASCII only. A name of a dustpan entry matches when any of these holds:
+
+1. Its bytes match the pattern under those C-locale rules, as Mole's would. `caf??` keeps an NFC `café`, whose `é` is two bytes.
+2. Its fold key equals the entry's text folded, as Mole's quoted comparison does. An entry for a folder named `[2020] Album` keeps that folder.
+3. Its fold key matches the pattern with `?` and `[...]` taking one character and the combining marks after it. `caf?` keeps `café` in either normalization form, and `Stra?e` keeps `STRAßE`.
+
+The first is Mole's meaning. The other two only add names. In every form, `*` is any run inside one name: Mole's `*` also crosses `/`, and an earlier decision row keeps it inside one name. Sets take ranges, `!` or `^` negation, the POSIX classes, and `[=e=]` or `[.e.]` for one character, as the C locale reads them. `\` takes the next byte as written. A `[` with no closing `]` is a plain character, as in a shell.
+
+An unknown class, a range that runs backwards, and `[=ab=]` or `[.ab.]` stop the load and name the line. The C locale has no element of more than one character, so dustpan cannot say what Mole would match.
+
+### Every spelling of an entry
+
+`Guard::new` resolves each entry once through the probe, the way layer 4 binds its anchors.
+
+1. The leading names that hold no wildcard are walked from the root with `lstat`. A link is followed with `probe::physical`, the last name included. Everything inside a link to a folder lies in that folder, so the entry keeps the target too.
+2. The walk stops at the first name that does not exist. The physical path found so far is spelled as stored (`Probe::spelling`). The probe resolves aliases folding cannot meet, such as Windows 8.3 short names, so a spelling it cannot give stops the guard build like an unreadable folder.
+3. The entry goes into the trie twice, under the data-volume firmlink mapping (`Policy::canonical`). One copy is as written. The other is the found path, with the rest of the entry appended as written. The found names come from disk, so they go in as plain names even when they hold `*` or `[`.
+
+Both copies carry the same entry index, so a hit names the entry as the user wrote it. Every folder above either copy is kept as `contains-whitelisted`. This covers `/tmp/x` judged as `/private/tmp/x`, Fedora Atomic's `/home` link to `/var/home`, and an entry spelled `/System/Volumes/Data/...`.
+
+An `lstat` that cannot answer (`EACCES`, `EIO`) stops the guard build with `PolicyError::AnchorUnreadable` naming the entry, as a protected anchor does. Keeping only the written spelling would protect less than the user wrote if the unreadable name were a link.
+
+Layer 5 binds no file identity. A Linux bind mount of a whitelisted folder at another path is not kept by this layer. Layer 1 refuses every path below a linked ancestor, so a scanner never judges a spelling through a link.
+
+### Comparing names
+
+On a volume that folds case (the macOS and Windows tables), both an entry's names and a judged path's names are compared under one key:
+
+1. Decompose to NFD.
+2. Map each character to its uppercase and then to that letter's lowercase, only where each mapping gives one character.
+3. Compose to NFC.
+
+All-ASCII names take an ASCII-lowercase fast path, which gives the same key.
+
+The key has to meet every name the volume treats as the same. Matching more can only keep more.
+
+- APFS ignores both normalization form and case. NFD before the case map and NFC after it put canonically equivalent names on one key, as Unicode's canonical caseless match does.
+- NTFS folds case through its upcase table, one character for one, and keeps normalization forms apart. The key folds the same case pairs. It also joins normalization forms, which only keeps more.
+- The upper-then-lower map joins pairs that lowercase alone misses, such as final sigma and `σ`.
+- One-for-one maps keep `?` counting `ß` as one character, so `Stra?e` still matches `Straße`. Full case folding would turn `ß` into `ss`, and `?` would then match less.
+- NFC rather than NFD keeps `é` one character for `?` and `[...]`. Both also take any combining marks that follow the character they match.
+
+The resolution through `Probe::spelling` already meets any spelling the volume itself accepts for an existing name. The fold matters for names after a wildcard and for names that do not exist yet.
+
+In the key form, a set compares both cases of the folded character, because the folded name no longer says which case Mole would have seen. A negated set therefore also matches a letter it names in another case: `com.[!z]oo.bar` keeps `com.zoo.bar` on macOS. That keeps more than Mole, never less.
+
+On Linux the key is the name's bytes. ext4 compares bytes, so an NFC entry does not keep an NFD folder there, and the two are different files.
+
+`unicode-normalization` supplies the NFD and NFC tables. It is the one dependency of `dustpan-core`, and it does no I/O.
+
+### Cost
+
+A `Pass` keeps one trie position per ancestor frame, as before. Resolution costs one `lstat` per distinct folder named by the entries' literal heads, plus one stored-spelling question per distinct deepest folder, all at `Guard::new`. `explain` with the bench's 500-line whitelist measured 10.6 ms at this head and 7.5 ms at 13d50e0, as means of 100 alternated runs each. `docs/perf.md` records the scan bench.
+
+### Changes a restack of M0-3 meets
+
+- `Policy::from_table` builds the whitelist after `verified_firmlinks`, because resolution needs `canonical`. The struct starts with `Whitelisted::empty`.
+- `Whitelisted::compile` takes the probe and `canonical` and returns `Result<_, PolicyError>`. `Guard::new` can now fail with `AnchorUnreadable` for a whitelist entry.
+- `whitelist::LoadError::BadEntry` carries `EntryError` (`Shape`, `Glob` or `OutsideHome`) in place of `ShapeError`.
+- `protect/names.rs`, `guard/pass.rs` and `guard/verdict.rs` are unchanged by the fix round.
+- The restack onto M0-3's fix round 3 runs layer 5 after layer 4 and before layer 3's open-file question. A whitelisted path keeps the whitelist reason, which still holds after the app quits, and takes no snapshot of open files.

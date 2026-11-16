@@ -3,6 +3,7 @@
 //! oplog (M0-5) writes the same code.
 use crate::path::{AbsPath, ShapeError};
 use crate::probe::{Owner, Pid, Unseen};
+use crate::whitelist::{Origin, Pattern};
 use std::fmt;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -12,7 +13,6 @@ pub enum Verdict {
 }
 
 /// The guard layers, in the order they decide. `code` is the stable `--json` spelling.
-/// `Whitelist` is reserved for M0-4, so the `layer` vocabulary scripts see is fixed from M0-3.
 /// `Identity` decides last and only in `Guard::recheck`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layer {
@@ -25,13 +25,13 @@ pub enum Layer {
 }
 
 /// Why a path is kept. The outer variant is the layer, so a reason cannot name the wrong layer.
-/// M0-4 adds `Whitelisted(WhitelistHit)`, whose `source` names the whitelist file.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum KeptReason {
     Shape(ShapeReason),
     Critical(Hit),
     Live(LiveReason),
     Protected(Hit),
+    Whitelisted(WhitelistHit),
     Identity(IdentityReason),
 }
 
@@ -66,6 +66,37 @@ pub enum ShapeReason {
     /// The path is the root of another volume than its parent's: a mount point (SAFE-38).
     /// Decided from the two `FileId`s the pass already holds; no extra syscall.
     MountPoint,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WhitelistHit {
+    pub origin: Origin,
+    pub file: Option<AbsPath>,
+    pub entry: Pattern,
+    pub reach: Reach,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reach {
+    /// The path is what the entry names, or inside it.
+    Within,
+    /// The path is a folder above what the entry names (SAFE-11).
+    Above,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Source<'a> {
+    BuiltIn,
+    File(&'a AbsPath),
+}
+
+impl fmt::Display for Source<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BuiltIn => f.write_str("default"),
+            Self::File(file) => file.fmt(f),
+        }
+    }
 }
 
 /// Refusals only `Guard::recheck` produces (SAFE-10). Discovery's identity is never refreshed.
@@ -167,6 +198,7 @@ impl KeptReason {
             Self::Critical(_) => Layer::Critical,
             Self::Live(_) => Layer::Live,
             Self::Protected(_) => Layer::Protection,
+            Self::Whitelisted(_) => Layer::Whitelist,
             Self::Identity(_) => Layer::Identity,
         }
     }
@@ -191,6 +223,10 @@ impl KeptReason {
                 How::Contains { .. } => "contains-protected",
                 _ => hit.kind.code(),
             },
+            Self::Whitelisted(hit) => match hit.reach {
+                Reach::Within => "whitelisted",
+                Reach::Above => "contains-whitelisted",
+            },
             Self::Live(live) => match live {
                 LiveReason::OwnerRunning { .. } => "owner-running",
                 LiveReason::OwnerUnknown { .. } => "owner-unknown",
@@ -204,10 +240,13 @@ impl KeptReason {
         }
     }
 
-    /// The file that holds the rule behind this refusal, when a user file does. Every layer up
-    /// to M0-3 is built in, so this is `None`; M0-4's whitelist layer names its file here.
-    pub fn source(&self) -> Option<&AbsPath> {
+    /// Where the rule behind this refusal is written. Only a user's whitelist entry names a file.
+    pub fn source(&self) -> Option<Source<'_>> {
         match self {
+            Self::Whitelisted(hit) => Some(match &hit.file {
+                Some(file) => Source::File(file),
+                None => Source::BuiltIn,
+            }),
             Self::Shape(_)
             | Self::Critical(_)
             | Self::Live(_)
@@ -283,6 +322,7 @@ impl fmt::Display for KeptReason {
                     How::Contains { inner } => write!(f, " (contains {inner})"),
                 }
             }
+            Self::Whitelisted(hit) => hit.fmt(f),
             Self::Shape(ShapeReason::Malformed(e)) => e.fmt(f),
             Self::Shape(ShapeReason::LinkedAncestor { link }) => {
                 write!(f, "symlinked ancestor {link}")
@@ -356,6 +396,31 @@ impl fmt::Display for KeptReason {
             Self::Identity(IdentityReason::ReplacedDuringCheck) => {
                 f.write_str("replaced during the final check; scan again")
             }
+        }
+    }
+}
+
+impl fmt::Display for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Path(path) => path.fmt(f),
+            Self::FinderMetadata => f.write_str("FINDER_METADATA"),
+        }
+    }
+}
+
+impl fmt::Display for WhitelistHit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.origin, &self.file) {
+            (Origin::Default, _) => f.write_str("protected by default whitelist")?,
+            (Origin::Safety, _) => f.write_str("protected by built-in safety list")?,
+            (Origin::User, Some(file)) => write!(f, "protected by your whitelist {file}")?,
+            (Origin::User, None) => f.write_str("protected by your whitelist")?,
+        }
+        match (self.reach, self.origin) {
+            (Reach::Above, _) => write!(f, " (contains {})", self.entry),
+            (Reach::Within, Origin::User) => write!(f, " (entry {})", self.entry),
+            (Reach::Within, _) => Ok(()),
         }
     }
 }

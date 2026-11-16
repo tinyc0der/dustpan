@@ -9,6 +9,7 @@ use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::{Probe, Seen};
+use dustpan_core::whitelist::Whitelist;
 use dustpan_sys::LiveProbe;
 use std::os::unix::fs::MetadataExt as _;
 use std::sync::Arc;
@@ -44,6 +45,7 @@ impl Home {
             os: Os::MacOs,
             home: p(&self.root),
             env: &env,
+            whitelist: Whitelist::defaults(Os::MacOs, &p(&self.root)),
         };
         Guard::new(inputs, probe).unwrap()
     }

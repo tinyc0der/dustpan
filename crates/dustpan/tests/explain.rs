@@ -30,6 +30,8 @@ fn explain(home: &Path) -> Command {
     let mut cmd = cargo_bin_cmd!("dustpan");
     cmd.env("HOME", home)
         .env("USERPROFILE", home)
+        .env("APPDATA", home.join("AppData"))
+        .env_remove("XDG_CONFIG_HOME")
         .current_dir(home)
         .arg("explain");
     cmd
@@ -241,4 +243,206 @@ fn an_unset_home_stops_the_command() {
         .code(1)
         .stdout("")
         .stderr(predicate::str::contains("home folder is not set"));
+}
+
+#[cfg(unix)]
+fn write_whitelist(home: &Path, body: &str) -> std::path::PathBuf {
+    let dir = home.join(".config").join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("whitelist");
+    std::fs::write(&file, body).unwrap();
+    file
+}
+
+#[cfg(unix)]
+#[test]
+fn a_default_whitelist_entry_keeps_a_gradle_cache() {
+    let home = fixture_home();
+    let out = stdout(explain(home.path()).arg("~/.gradle/caches/x"));
+    assert_eq!(
+        out,
+        format!(
+            "{}  Kept · protected by default whitelist\n",
+            shown(home.path(), "/.gradle/caches/x")
+        )
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_user_entry_keeps_its_children_and_the_output_names_the_file() {
+    let home = fixture_home();
+    let file = write_whitelist(home.path(), "~/Projects/keep\r\n");
+    let out = stdout(explain(home.path()).args(["~/Projects/keep/a", "~/Projects/webapp"]));
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines[0].contains("Kept · protected by your whitelist"),
+        "{out}"
+    );
+    assert!(lines[0].contains(file.to_str().unwrap()), "{out}");
+    assert!(lines[1].ends_with("Eligible"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn json_names_the_whitelist_file_or_default_as_the_source() {
+    let home = fixture_home();
+    let file = write_whitelist(home.path(), "~/Projects/keep\n");
+    let text = stdout(explain(home.path()).args([
+        "--json",
+        "~/Projects/keep/a",
+        "~/Library/Caches/kitty",
+    ]));
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let items = value["items"].as_array().unwrap();
+    assert_eq!(items[0]["layer"], "whitelist");
+    assert_eq!(items[0]["reason"], "whitelisted");
+    assert_eq!(items[0]["source"], file.to_str().unwrap());
+    assert_eq!(items[1]["layer"], "whitelist");
+    assert_eq!(items[1]["source"], "default");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_whitelist_stops_the_command_and_names_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = fixture_home();
+    let file = write_whitelist(home.path(), "~/Projects/keep\n");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    explain(home.path())
+        .arg("~/Projects/keep/a")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::contains("cannot read the whitelist"))
+        .stderr(predicate::str::contains(file.to_str().unwrap()));
+}
+
+#[cfg(unix)]
+#[test]
+fn xdg_config_home_names_the_folder_the_whitelist_is_read_from() {
+    let home = fixture_home();
+    let xdg = fresh_dir();
+    let dir = xdg.path().join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("whitelist"), "~/Projects/keep\n").unwrap();
+    let out = stdout(
+        explain(home.path())
+            .env("XDG_CONFIG_HOME", xdg.path())
+            .arg("~/Projects/keep/a"),
+    );
+    assert!(
+        out.contains(dir.join("whitelist").to_str().unwrap()),
+        "{out}"
+    );
+}
+
+#[cfg(unix)]
+const BLOCKED_READ_FAILS_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
+
+#[cfg(unix)]
+fn stops_on_the_whitelist(home: &Path, cause: &str) {
+    explain(home)
+        .timeout(BLOCKED_READ_FAILS_AFTER)
+        .arg("~/Projects/keep/a")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::contains("cannot read the whitelist"))
+        .stderr(predicate::str::contains(cause));
+}
+
+#[cfg(unix)]
+fn config_dir(home: &Path) -> std::path::PathBuf {
+    let dir = home.join(".config").join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_that_links_to_a_missing_file_stops_the_command() {
+    let home = fixture_home();
+    let link = config_dir(home.path()).join("whitelist");
+    std::os::unix::fs::symlink(home.path().join("gone").join("whitelist"), &link).unwrap();
+    stops_on_the_whitelist(home.path(), "does not exist");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_config_folder_that_links_to_an_unmounted_volume_stops_the_command() {
+    let home = fixture_home();
+    let config = home.path().join(".config");
+    std::os::unix::fs::symlink("/Volumes/dustpan-test-no-such-volume/config", &config).unwrap();
+    stops_on_the_whitelist(home.path(), config.to_str().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_that_is_a_fifo_stops_the_command() {
+    let home = fixture_home();
+    let fifo = config_dir(home.path()).join("whitelist");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    stops_on_the_whitelist(home.path(), "not a regular file");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_that_links_to_a_device_stops_the_command() {
+    let home = fixture_home();
+    let link = config_dir(home.path()).join("whitelist");
+    std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+    stops_on_the_whitelist(home.path(), "not a regular file");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_whitelist_larger_than_a_hand_kept_list_stops_the_command() {
+    let home = fixture_home();
+    let body = "# padding line for the size cap test\n".repeat(64 * 1024);
+    write_whitelist(home.path(), &body);
+    stops_on_the_whitelist(home.path(), "larger than");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_xdg_config_home_that_holds_dot_dot_is_named_as_the_cause() {
+    let home = fixture_home();
+    let xdg = fresh_dir();
+    let spelled = xdg.path().join("..").join(xdg.path().file_name().unwrap());
+    explain(home.path())
+        .env("XDG_CONFIG_HOME", &spelled)
+        .arg("~/Projects/keep/a")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(spelled.to_str().unwrap()))
+        .stderr(predicate::str::contains("`..`"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_entry_written_through_a_symlinked_folder_keeps_the_folder_behind_it() {
+    let home = fixture_home();
+    std::fs::create_dir_all(home.path().join("data/keep/x")).unwrap();
+    std::os::unix::fs::symlink(home.path().join("data"), home.path().join("alias")).unwrap();
+    let entry = home.path().join("alias/keep");
+    write_whitelist(home.path(), &format!("{}\n", entry.to_str().unwrap()));
+    let out = stdout(explain(home.path()).args(["~/data/keep/x", "~/data"]));
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].contains("protected by your whitelist"), "{out}");
+    assert!(lines[1].contains("protected by your whitelist"), "{out}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn an_entry_keeps_a_folder_stored_in_the_other_normalization_form() {
+    let home = fixture_home();
+    std::fs::create_dir_all(home.path().join("Docs/Cafe\u{301}/sub")).unwrap();
+    write_whitelist(home.path(), "~/Docs/Caf\u{e9}\n");
+    let out = stdout(explain(home.path()).arg("~/Docs/Cafe\u{301}/sub"));
+    assert!(out.contains("protected by your whitelist"), "{out}");
 }

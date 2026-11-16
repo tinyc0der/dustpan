@@ -2,23 +2,26 @@
 //!
 //! - [`Pass`] judges paths during discovery and for `explain`, and shares ancestor work between
 //!   paths that share ancestors.
-//! - [`Guard::recheck`] judges one candidate again at the sink with a fresh pass, compares its
-//!   identity before and after the live probes, and is the only code that builds an [`Approved`].
+//! - [`Guard::recheck`] opens a [`Recheck`] for one batch at the sink. It judges each candidate
+//!   again with a fresh pass, compares its identity before and after the live probes, surveys
+//!   everything a folder candidate holds, and is the only code that builds an [`Approved`].
 //!
 //! Layers: 1 shape (spelling, aliases, linked ancestors, leaf links, mount points), 2 critical
 //! roots, 3 live state, 4 protection policy, 5 whitelist. The first layer that refuses
 //! decides, and its reason is data ([`KeptReason`]), never a string a caller parses. Identity
-//! refusals come only from `recheck`.
+//! and contents refusals come only from `recheck`.
 mod approved;
 mod open;
 mod pass;
+mod survey;
 mod verdict;
 
-pub use approved::{Approved, Refused, Rejection};
+pub use approved::{Approved, Lease, Recheck, Refused, Rejection};
 pub use pass::{Judgment, Pass};
+pub(crate) use survey::{MAX_DEPTH, Manifest};
 pub use verdict::{
-    Hit, How, IdentityReason, KeptReason, Kind, Layer, LiveReason, Reach, ShapeReason, Source,
-    Verdict, WhitelistHit,
+    Bound, ContentsReason, Hit, How, IdentityReason, KeptReason, Kind, Layer, LiveReason, Reach,
+    ShapeReason, Source, Verdict, WhitelistHit,
 };
 
 use crate::path::AbsPath;
@@ -31,11 +34,28 @@ use std::fmt;
 /// Everything a guard is built from. No `Default`: each field is a decision the caller makes.
 pub struct GuardInputs<'a> {
     pub os: Os,
-    /// The invoking user's home folder, physically resolved. Anchors every `~` row.
-    pub home: AbsPath,
+    pub homes: Homes,
     /// Expands `%SystemRoot%`-style anchors. Env rows only add refusals.
     pub env: Env<'a>,
     pub whitelist: Whitelist,
+}
+
+/// The folders every `~` row and `~` whitelist entry anchor at, each physically resolved: the
+/// `HOME` (`USERPROFILE`) folder, and the account's home from the user database when that is
+/// another folder. `HOME` alone would let the environment steer protection away from the real
+/// home (I-64). Never empty, so no home row can be left unanchored.
+#[derive(Clone, Debug)]
+pub struct Homes(Vec<AbsPath>);
+
+impl Homes {
+    pub fn new(home: AbsPath, account: Option<AbsPath>) -> Self {
+        let account = account.filter(|account| *account != home);
+        Self(std::iter::once(home).chain(account).collect())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &AbsPath> {
+        self.0.iter()
+    }
 }
 
 /// A compiled policy for one OS and one user. Immutable and `Sync`: worker threads share one.

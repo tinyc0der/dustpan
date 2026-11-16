@@ -142,6 +142,17 @@ pub(crate) struct Step {
     protection: Position,
     /// Identity rows that refuse this directory's direct children.
     child_rows: Vec<u32>,
+    bundles: Bundles,
+}
+
+/// Whether the bundle-id name patterns take part in the contest. A bundle id names an app's own
+/// folder. Inside a candidate the guard approved, a folder named for an app is part of the
+/// candidate, so the survey of a candidate's contents passes `Ignored`. Every row anchored on a
+/// path still applies there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Bundles {
+    Named,
+    Ignored,
 }
 
 #[derive(Default)]
@@ -244,10 +255,12 @@ impl Policy {
             policy.add_row(Which::Critical, row, inputs)?;
         }
         // `HOME=/` or `HOME=/Users` would anchor every `~` row on a system tree.
-        if let Some(kind) = policy.critical_by_spelling(&inputs.home)
-            && kind != Kind::HomeRoot
-        {
-            return Err(PolicyError::HomeIsCritical(inputs.home.clone()));
+        for home in inputs.homes.iter() {
+            if let Some(kind) = policy.critical_by_spelling(home)
+                && kind != Kind::HomeRoot
+            {
+                return Err(PolicyError::HomeIsCritical(home.clone()));
+            }
         }
         for row in table.critical.iter().filter(is_home) {
             policy.add_row(Which::Critical, row, inputs)?;
@@ -304,24 +317,28 @@ impl Policy {
             .collect()
     }
 
-    /// The path a row is anchored at. `None` for a floating row, and for an env row whose
-    /// variable is unset or not an absolute path.
-    fn anchor(row: &Row, inputs: &GuardInputs<'_>) -> Result<Option<AbsPath>, PolicyError> {
+    /// The paths a row is anchored at: one per home for a `~` row, none for a floating row or
+    /// for an env row whose variable is unset or not an absolute path.
+    fn anchors(row: &Row, inputs: &GuardInputs<'_>) -> Result<Vec<AbsPath>, PolicyError> {
         match row.at {
             Anchor::Abs(text) => AbsPath::parse(text.as_ref())
-                .map(Some)
+                .map(|path| vec![path])
                 .map_err(|_| PolicyError::BadAnchor(text)),
-            Anchor::Home(rel) => {
-                let mut path = inputs.home.as_path().to_path_buf();
-                path.extend(rel.split(['/', '\\']).filter(|part| !part.is_empty()));
-                AbsPath::parse(path.as_os_str())
-                    .map(Some)
-                    .map_err(|_| PolicyError::BadAnchor(rel))
-            }
+            Anchor::Home(rel) => inputs
+                .homes
+                .iter()
+                .map(|home| {
+                    let mut path = home.as_path().to_path_buf();
+                    path.extend(rel.split(['/', '\\']).filter(|part| !part.is_empty()));
+                    AbsPath::parse(path.as_os_str()).map_err(|_| PolicyError::BadAnchor(rel))
+                })
+                .collect(),
             Anchor::Env(var, suffix) => Ok((inputs.env)(var)
                 .filter(|value| !value.is_empty())
-                .and_then(|value| AbsPath::parse(format!("{value}{suffix}").as_ref()).ok())),
-            Anchor::Segments(_) => Ok(None),
+                .and_then(|value| AbsPath::parse(format!("{value}{suffix}").as_ref()).ok())
+                .into_iter()
+                .collect()),
+            Anchor::Segments(_) => Ok(Vec::new()),
         }
     }
 
@@ -331,18 +348,28 @@ impl Policy {
         row: &Row,
         inputs: &GuardInputs<'_>,
     ) -> Result<(), PolicyError> {
-        let anchor = Self::anchor(row, inputs)?;
-        let (start, comps) = match (&anchor, row.at) {
-            (Some(anchor), _) => (ORIGIN, self.comps(anchor)),
-            (None, Anchor::Segments(segments)) => (
-                FLOATING,
-                segments
-                    .iter()
-                    .map(|s| Comp::new(s.as_bytes(), self.fold_case))
-                    .collect(),
-            ),
-            (None, _) => return Ok(()),
-        };
+        if let Anchor::Segments(segments) = row.at {
+            let comps = segments
+                .iter()
+                .map(|s| Comp::new(s.as_bytes(), self.fold_case))
+                .collect();
+            return self.insert_row(which, row, FLOATING, comps, None);
+        }
+        for anchor in Self::anchors(row, inputs)? {
+            let comps = self.comps(&anchor);
+            self.insert_row(which, row, ORIGIN, comps, Some(anchor))?;
+        }
+        Ok(())
+    }
+
+    fn insert_row(
+        &mut self,
+        which: Which,
+        row: &Row,
+        start: u32,
+        comps: Vec<Comp>,
+        anchor: Option<AbsPath>,
+    ) -> Result<(), PolicyError> {
         let (outcome, guards_ancestors) = match row.effect {
             Effect::Refuse(kind) => (Outcome::Refuse(kind), None),
             Effect::RefuseWithAncestors(kind) => (Outcome::Refuse(kind), Some(kind)),
@@ -382,35 +409,38 @@ impl Policy {
         let (Effect::Refuse(kind) | Effect::RefuseWithAncestors(kind)) = row.effect else {
             return Ok(());
         };
-        let Some(anchor) = Self::anchor(row, inputs)?.filter(|a| !has_glob(a)) else {
-            return Ok(());
-        };
-        // The folders above the anchor are resolved, the anchor itself is not. An anchor that is a
-        // link (`C:\Documents and Settings` to `C:\Users`, `/etc` to `/private/etc`) binds the
-        // link, so its row never spreads to the folder behind it. That folder has its own rows.
-        let node = match (anchor.parent(), anchor.name()) {
-            (Some(parent), Some(name)) => match probe::physical(probe, &parent) {
-                Seen::Found(real) => probe.node(&AbsPath::trusted(real.as_path().join(name))),
-                Seen::Missing => Seen::Missing,
-                Seen::Unknown(why) => Seen::Unknown(why),
-            },
-            _ => probe.node(&anchor),
-        };
-        match node {
-            Seen::Found(node) => {
-                self.id_rows.push(IdRow {
-                    which,
-                    scope: row.scope,
-                    kind,
-                    anchor,
-                });
-                let index = (self.id_rows.len() - 1) as u32;
-                self.identity.entry(node.id).or_default().push(index);
-                Ok(())
+        for anchor in Self::anchors(row, inputs)? {
+            if has_glob(&anchor) {
+                continue;
             }
-            Seen::Missing => Ok(()),
-            Seen::Unknown(why) => Err(PolicyError::AnchorUnreadable { anchor, why }),
+            // The folders above the anchor are resolved, the anchor itself is not. An anchor that
+            // is a link (`C:\Documents and Settings` to `C:\Users`, `/etc` to `/private/etc`)
+            // binds the link, so its row never spreads to the folder behind it. That folder has
+            // its own rows.
+            let node = match (anchor.parent(), anchor.name()) {
+                (Some(parent), Some(name)) => match probe::physical(probe, &parent) {
+                    Seen::Found(real) => probe.node(&AbsPath::trusted(real.as_path().join(name))),
+                    Seen::Missing => Seen::Missing,
+                    Seen::Unknown(why) => Seen::Unknown(why),
+                },
+                _ => probe.node(&anchor),
+            };
+            match node {
+                Seen::Found(node) => {
+                    self.id_rows.push(IdRow {
+                        which,
+                        scope: row.scope,
+                        kind,
+                        anchor,
+                    });
+                    let index = (self.id_rows.len() - 1) as u32;
+                    self.identity.entry(node.id).or_default().push(index);
+                }
+                Seen::Missing => {}
+                Seen::Unknown(why) => return Err(PolicyError::AnchorUnreadable { anchor, why }),
+            }
         }
+        Ok(())
     }
 
     fn verified_firmlinks(
@@ -448,13 +478,13 @@ impl Policy {
         let names: Vec<&OsStr> = path.names().collect();
         let ruling = match names.split_last() {
             Some((leaf, dirs)) if path.as_path().parent().is_some() => {
-                let mut step = self.origin(None);
+                let mut step = self.origin(None, Bundles::Named);
                 for name in dirs {
                     step = self.step(&step, name, None, &mut scratch);
                 }
                 self.rule(path, &step, leaf, None, &mut scratch)
             }
-            _ => self.rule_root(path, None, &mut scratch),
+            _ => self.rule_root(path, None, Bundles::Named, &mut scratch),
         };
         ruling.critical.map(|hit| hit.kind)
     }
@@ -527,7 +557,8 @@ impl Policy {
     }
 
     /// The step above every path. On Unix it is `/` itself, and `id` is the root's identity.
-    fn origin(&self, id: Option<FileId>) -> Step {
+    /// Every step below it keeps its `bundles`.
+    fn origin(&self, id: Option<FileId>, bundles: Bundles) -> Step {
         let position = |which| {
             let mut inherit = None;
             for &(scope, outcome) in &self.trie(which).nodes[ORIGIN as usize].rules {
@@ -551,6 +582,7 @@ impl Policy {
             critical: position(Which::Critical),
             protection: position(Which::Protection),
             child_rows: self.child_rows(id),
+            bundles,
         }
     }
 
@@ -559,11 +591,12 @@ impl Policy {
         &self,
         root: &AbsPath,
         id: Option<FileId>,
+        bundles: Bundles,
         scratch: &mut Vec<u8>,
     ) -> Step {
         match root.names().next() {
-            None => self.origin(id),
-            Some(drive) => self.step(&self.origin(None), drive, id, scratch),
+            None => self.origin(id, bundles),
+            Some(drive) => self.step(&self.origin(None, bundles), drive, id, scratch),
         }
     }
 
@@ -602,6 +635,7 @@ impl Policy {
             critical,
             protection,
             child_rows: self.child_rows(id),
+            bundles: parent.bundles,
         }
     }
 
@@ -704,7 +738,7 @@ impl Policy {
                 enter(&mut at, name(kind, Via::Keyword));
                 enter(&mut inherit, name(kind, Via::Keyword));
             }
-            if !bundles_off(position.inherit) {
+            if parent.bundles == Bundles::Named && !bundles_off(position.inherit) {
                 let won = name(Kind::ProtectedBundle, Via::Bundle);
                 match self.names.bundle(folded) {
                     BundleMatch::No => {}
@@ -745,7 +779,10 @@ impl Policy {
             Some(&mut inside),
         );
         let depth = parent.depth + 1;
-        if !bundles_off(parent.protection.inherit) && self.names.whole_path(path.bytes()) {
+        if parent.bundles == Bundles::Named
+            && !bundles_off(parent.protection.inherit)
+            && self.names.whole_path(path.bytes())
+        {
             let won = Won {
                 depth,
                 rank: RANK_NAME,
@@ -766,10 +803,11 @@ impl Policy {
         &'p self,
         root: &AbsPath,
         id: Option<FileId>,
+        bundles: Bundles,
         scratch: &mut Vec<u8>,
     ) -> Ruling<'p> {
         match root.names().next() {
-            Some(drive) => self.rule(root, &self.origin(None), drive, id, scratch),
+            Some(drive) => self.rule(root, &self.origin(None, bundles), drive, id, scratch),
             None => Ruling {
                 critical: self
                     .at_origin(Which::Critical, id)
@@ -843,7 +881,7 @@ mod tests {
     use super::super::table::Scope::{Below, Exact, Subtree};
     use super::super::table::{Live, Names, row};
     use super::*;
-    use crate::guard::{Guard, KeptReason, Verdict};
+    use crate::guard::{Guard, Homes, KeptReason, Verdict};
     use crate::paths::Os;
     use crate::probe::fake::FakeProbe;
     use crate::whitelist::Whitelist;
@@ -878,9 +916,9 @@ mod tests {
         let home = AbsPath::parse("/home/a".as_ref()).unwrap();
         let inputs = GuardInputs {
             os: Os::current(),
-            home: home.clone(),
+            homes: Homes::new(home.clone(), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::current(), &home),
+            whitelist: Whitelist::defaults(Os::current(), &Homes::new(home.clone(), None)),
         };
         let guard = Guard::from_policy(Policy::from_table(&STATE, &inputs, fs).unwrap());
         let path = AbsPath::parse(path.as_ref()).unwrap();

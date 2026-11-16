@@ -52,6 +52,10 @@ fn a_process_keeps_the_folder_it_holds_a_file_open_in() {
     std::fs::write(&db, "x").unwrap();
     std::fs::write(&wal, "x").unwrap();
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the holder is this test binary, run again as a helper"
+    )]
     let mut holder = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "helper_holds_a_file_when_asked", "--nocapture"])
         .env(HOLD, &db)
@@ -122,6 +126,10 @@ fn sign(exe: &Path, identifier: &str, app_groups: &[&str]) {
 "#
     );
     std::fs::write(&entitlements, text).unwrap();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "codesign signs the fixture app with its entitlements"
+    )]
     let signed = Command::new("codesign")
         .args(["--force", "--sign", "-", "--identifier", identifier])
         .arg("--entitlements")

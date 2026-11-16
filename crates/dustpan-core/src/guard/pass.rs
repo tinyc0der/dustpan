@@ -5,7 +5,8 @@ use crate::candidate::{Candidate, Rule};
 use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
 use crate::probe::{self, Owner, OwnerState, Probe, ProcessTable, Seen};
-use crate::protect::{LiveChecks, Policy, Position, ScopeOwner, Step};
+use crate::protect::{Bundles, LiveChecks, Policy, Position, ScopeOwner, Step};
+use crate::sink::Cancel;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -19,7 +20,9 @@ use std::sync::Arc;
 /// snapshot of open files, each on first need.
 ///
 /// Everything a pass knows was observed after it started, and it is dropped before the sink:
-/// `Guard::recheck` builds its own pass, so no discovery answer can approve a deletion.
+/// `Guard::recheck` builds its own pass, so no discovery answer can approve a deletion. The one
+/// thing a recheck pass may start with is its batch's live evidence (`Evidence`), younger than
+/// the batch's `Lease`.
 pub struct Pass<'a> {
     policy: &'a Policy,
     probe: &'a dyn Probe,
@@ -30,17 +33,30 @@ pub struct Pass<'a> {
     follows_leaf_link: bool,
     /// False while the stored spelling of a path is judged, which has no other spelling.
     checks_spelling: bool,
+    bundles: Bundles,
+    /// Once set, the pass takes no more live evidence (SAFE-20).
+    stop: Option<&'a Cancel>,
 }
 
 /// What a pass has observed of the running system. Each part is taken once, on first need. The
 /// pass that judges a link's target borrows it, so one pass costs one snapshot of each kind.
 #[derive(Default)]
 struct Live {
-    processes: Option<Seen<ProcessTable>>,
+    processes: Option<Arc<Seen<ProcessTable>>>,
     /// Owner states from the one process table, by bundle id and by app group.
     bundles: HashMap<Box<str>, OwnerState>,
     app_groups: HashMap<Box<str>, OwnerState>,
-    open: Option<OpenIndex>,
+    open: Option<Arc<OpenIndex>>,
+    /// Each scope owner the pass asked about, with the first path that asked.
+    asked: Vec<(Owner, AbsPath)>,
+}
+
+/// The live snapshots one `Recheck` batch shares between its passes: the process table and the
+/// index of open files. Never shared with discovery, and never a path observation.
+#[derive(Clone, Default)]
+pub(super) struct Evidence {
+    pub(super) processes: Option<Arc<Seen<ProcessTable>>>,
+    pub(super) open: Option<Arc<OpenIndex>>,
 }
 
 /// What the pass learned about one ancestor directory.
@@ -107,6 +123,75 @@ impl<'a> Pass<'a> {
             scratch: Vec::new(),
             follows_leaf_link: true,
             checks_spelling: true,
+            bundles: Bundles::Named,
+            stop: None,
+        }
+    }
+
+    /// Takes no process table or snapshot of open files once `cancel` is set. What it would
+    /// have taken reads as unknown, which keeps the path; `Recheck` reports the signal and
+    /// shares none of it.
+    pub(super) fn stop_on(self, cancel: Option<&'a Cancel>) -> Self {
+        Self {
+            stop: cancel,
+            ..self
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.stop.is_some_and(Cancel::is_set)
+    }
+
+    /// A pass for `Recheck`: it reads the batch's live evidence instead of taking its own where
+    /// the batch has some.
+    pub(super) fn with_evidence(
+        policy: &'a Policy,
+        probe: &'a dyn Probe,
+        evidence: Evidence,
+    ) -> Self {
+        let mut pass = Self::new(policy, probe);
+        pass.live.processes = evidence.processes;
+        pass.live.open = evidence.open;
+        pass
+    }
+
+    /// The pass that surveys a candidate's contents for `Recheck`. A link inside is removed as a
+    /// link, so it is never followed. A folder inside named for an app is part of the candidate,
+    /// so the bundle-id names are left out (`Bundles::Ignored`).
+    pub(super) fn contents(policy: &'a Policy, probe: &'a dyn Probe, evidence: Evidence) -> Self {
+        let mut pass = Self::with_evidence(policy, probe, evidence);
+        pass.follows_leaf_link = false;
+        pass.bundles = Bundles::Ignored;
+        pass
+    }
+
+    /// Each scope owner this pass asked about, with the first path that asked. `Recheck` asks
+    /// them again on fresh evidence after a survey.
+    pub(super) fn scopes_asked(&self) -> &[(Owner, AbsPath)] {
+        &self.live.asked
+    }
+
+    /// Whether `owner` keeps a path, by this pass's process table.
+    pub(super) fn owner_refusal(&mut self, owner: &Owner) -> Option<LiveReason> {
+        refusal_for(owner, owner.state_in(self.processes()))
+    }
+
+    /// The live evidence this pass holds now, seeded or taken, for `Recheck` to share.
+    pub(super) fn evidence(&self) -> Evidence {
+        Evidence {
+            processes: self.live.processes.clone(),
+            open: self.live.open.clone(),
+        }
+    }
+
+    /// Judges an entry the survey listed inside a candidate, with the `Node` the listing
+    /// reported. Every layer applies, with no rule owners: the candidate's owners were judged on
+    /// the candidate itself, and a cache scope inside it brings its own (SAFE-06). The pass is
+    /// `Pass::contents`, so bundle-id names do not apply.
+    pub(super) fn descendant(&mut self, path: &AbsPath, seen: Node) -> Option<KeptReason> {
+        match self.judge(path, Some(seen), &[]).0 {
+            Verdict::Kept(reason) => Some(reason),
+            Verdict::Eligible => None,
         }
     }
 
@@ -231,7 +316,7 @@ impl<'a> Pass<'a> {
             (Some(at), Some(name)) => {
                 policy.rule(path, &self.frames[at].step, name, id, &mut self.scratch)
             }
-            _ => policy.rule_root(path, id, &mut self.scratch),
+            _ => policy.rule_root(path, id, self.bundles, &mut self.scratch),
         };
         if let Some(hit) = ruling.critical {
             return (Verdict::Kept(KeptReason::Critical(hit)), identity);
@@ -243,15 +328,15 @@ impl<'a> Pass<'a> {
         let mut refusal = live.powerlog.then_some(LiveReason::LiveDatabase);
         if refusal.is_none() {
             refusal = owners.iter().find_map(|owner| match owner {
-                Owner::BundleId(id) => self.scope_refusal(ScopeOwner::Bundle(id)),
-                Owner::AppGroup(folder) => self.scope_refusal(ScopeOwner::AppGroup(folder)),
+                Owner::BundleId(id) => self.scope_refusal(ScopeOwner::Bundle(id), path),
+                Owner::AppGroup(folder) => self.scope_refusal(ScopeOwner::AppGroup(folder), path),
                 Owner::Process(_) => refusal_for(owner, owner.state_in(self.processes())),
             });
         }
         if refusal.is_none()
             && let Some(owner) = live.scope_owner
         {
-            refusal = self.scope_refusal(owner);
+            refusal = self.scope_refusal(owner, path);
         }
         if refusal.is_none() && live.edr {
             refusal = Some(LiveReason::EndpointSecurity);
@@ -298,7 +383,7 @@ impl<'a> Pass<'a> {
     fn judge_link_target(&mut self, link: &AbsPath) -> Option<ShapeReason> {
         match probe::physical(self.probe, link) {
             Seen::Found(target) => {
-                let mut pass = Pass::new(self.policy, self.probe);
+                let mut pass = Pass::new(self.policy, self.probe).stop_on(self.stop);
                 pass.follows_leaf_link = false;
                 pass.live = std::mem::take(&mut self.live);
                 let verdict = pass.judge(&target, None, &[]).0;
@@ -353,7 +438,7 @@ impl<'a> Pass<'a> {
     /// Whether the app with this bundle id, or an app of this group, keeps the path. Asked
     /// once per name in a pass: every path in one cache folder shares the answer, and the
     /// table behind it does not change.
-    fn scope_refusal(&mut self, scope: ScopeOwner<'_>) -> Option<LiveReason> {
+    fn scope_refusal(&mut self, scope: ScopeOwner<'_>, path: &AbsPath) -> Option<LiveReason> {
         let (name, states) = match scope {
             ScopeOwner::Bundle(id) => (id, &self.live.bundles),
             ScopeOwner::AppGroup(folder) => (folder, &self.live.app_groups),
@@ -367,6 +452,7 @@ impl<'a> Pass<'a> {
             ScopeOwner::AppGroup(folder) => Owner::AppGroup(folder.into()),
         };
         let state = known.unwrap_or_else(|| {
+            self.live.asked.push((owner.clone(), path.clone()));
             let state = owner.state_in(self.processes());
             let states = match scope {
                 ScopeOwner::Bundle(_) => &mut self.live.bundles,
@@ -424,7 +510,9 @@ impl<'a> Pass<'a> {
             (Some(parent), Some(name)) => {
                 self.policy.step(&parent.step, name, id, &mut self.scratch)
             }
-            _ => self.policy.root_step(&path, id, &mut self.scratch),
+            _ => self
+                .policy
+                .root_step(&path, id, self.bundles, &mut self.scratch),
         };
         let listing = &self.policy.whitelist;
         let listed = match (parent, path.name()) {
@@ -440,10 +528,18 @@ impl<'a> Pass<'a> {
         });
     }
 
-    /// One process table per pass, taken the first time an owner needs it.
+    /// One process table per pass, taken the first time an owner needs it, unless the pass was
+    /// seeded with its batch's evidence.
     fn processes(&mut self) -> &Seen<ProcessTable> {
         let probe = self.probe;
-        self.live.processes.get_or_insert_with(|| probe.processes())
+        let stopped = self.stopped();
+        self.live.processes.get_or_insert_with(|| {
+            Arc::new(if stopped {
+                Seen::Unknown(probe::Unseen::Failed)
+            } else {
+                probe.processes()
+            })
+        })
     }
 
     /// The direct sign that a path is live: a process holds it open, or a file anywhere below
@@ -460,10 +556,15 @@ impl<'a> Pass<'a> {
         live: &LiveChecks<'_>,
     ) -> Option<LiveReason> {
         let (probe, fold_case) = (self.probe, self.policy.folds_case());
-        let open = &*self
-            .live
-            .open
-            .get_or_insert_with(|| OpenIndex::new(probe.open_files(), fold_case));
+        let stopped = self.stopped();
+        let open = &**self.live.open.get_or_insert_with(|| {
+            let files = if stopped {
+                Seen::Unknown(probe::Unseen::Failed)
+            } else {
+                probe.open_files()
+            };
+            Arc::new(OpenIndex::new(files, fold_case))
+        });
         let scratch = &mut self.scratch;
         let quiet = parent.is_some_and(|at| {
             let folder = &mut self.frames[at];

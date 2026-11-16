@@ -49,6 +49,10 @@ impl Held {
         let physical = dir.path().canonicalize().unwrap();
         std::fs::write(physical.join("held.bin"), "x").unwrap();
         std::fs::create_dir(physical.join("held.d")).unwrap();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the holder is this test binary, run again as a helper"
+        )]
         let mut holder = Command::new(std::env::current_exe().unwrap());
         holder
             .args([

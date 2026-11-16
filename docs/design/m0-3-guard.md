@@ -488,7 +488,7 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 - Should `explain --json` follow PLAN's envelope (`schema_version`, `command`, `items[]`), with lane 8 reading `.items[0]`? Or should it print one bare object, as lane 8's wording suggests?
 - Is the scan-shaped number the right gate for the 200,000 per second budget? The `explain`-shaped number depends on the machine's vnode cache and swung tenfold between runs here.
 - `recheck` takes one process table per candidate that asks about an owner. Since fix round 2 a macOS table costs about 35 ms on 793 processes (13 ms after round 1, 3 ms before it), because it reads each running bundle's `Info.plist` and asks the kernel for each process's code signature. That is 35 seconds per thousand owned candidates. M0-5 must choose: one table per recheck batch with the identity check still per candidate, or a table that reads only the bundles the batch's owners could match. A cache across batches would reopen SAFE-10. Since fix round 3 every recheck also takes one snapshot of open files, 11 to 13 ms on the same host and linear in open descriptors, and the same choice applies to it.
-- The `HOME` variable alone decides which home's rows apply. `HOME=<fixture>` makes the real home's `Documents` eligible. Should home rows anchor at both `$HOME` and the account's home from the user database? Recorded as a hardening follow-up from the adversarial review.
+- Resolved by issue #5: every `~` row, every `~` whitelist entry, and the live layer's home-relative scopes anchor at both `HOME` and the account's home from the user database (`GuardInputs::homes`), so `HOME=<fixture>` no longer makes the real home's `Documents` eligible. Either home being a critical root stops the build with `HomeIsCritical`.
 - Should the binary resolve `HOME` physically before building the guard? On a host where `/home` is a symlink (Fedora Silverblue), every literal home path is otherwise refused as below a linked ancestor.
 - The Linux table is inference, since the inventory did not read Mole's Linux lists. Who confirms it before M9?
 - Bind mounts on Linux share `st_dev`, so `MountPoint` misses them. Does M0-5's sink need a mount-table check as well?
@@ -514,13 +514,15 @@ A config path the guard cannot take, such as an `XDG_CONFIG_HOME` with `..`, sto
 
 ### Parsing an entry
 
-A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load. On Windows, `~/D:\work` would name another drive, so it stops the load too.
+A line loses the ASCII whitespace at either end, as Mole's `[:space:]` trims it under `LC_ALL=C`. A space outside ASCII, such as U+2002, stays part of the name, so an entry for a folder whose name ends in one still keeps that folder.
+
+A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. Such an entry expands once at each home in `Homes`, so `HOME` pointed elsewhere still keeps the account's copy. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load. On Windows, `~/D:\work` would name another drive, so it stops the load too.
 
 Mole matches an entry with `[[ $path == $pattern ]]`, and its commands export `LC_ALL=C` (`bin/clean.sh:15`). Its `?` and `[...]` therefore take one byte, and its classes hold ASCII only. A name of a dustpan entry matches when any of these holds:
 
 1. Its bytes match the pattern under those C-locale rules, as Mole's would. `caf??` keeps an NFC `café`, whose `é` is two bytes.
 2. Its fold key equals the entry's text folded, as Mole's quoted comparison does. An entry for a folder named `[2020] Album` keeps that folder.
-3. Its fold key matches the pattern with `?` and `[...]` taking one character and the combining marks after it. `caf?` keeps `café` in either normalization form, and `Stra?e` keeps `STRAßE`.
+3. Its fold key matches the pattern with `?` and `[...]` taking one character and the combining marks after it. `caf?` keeps `café` in either normalization form, and `Stra?e` keeps `STRAßE`. A mark the entry spells right after a wildcard is left for the pattern to match. When the entry spells a character outside ASCII right after a wildcard, the key's NFD is matched too, because NFC can compose that mark into the character the wildcard takes. `caf?` followed by U+0301 keeps an NFC `café`.
 
 The first is Mole's meaning. The other two only add names. In every form, `*` is any run inside one name: Mole's `*` also crosses `/`, and an earlier decision row keeps it inside one name. Sets take ranges, `!` or `^` negation, the POSIX classes, and `[=e=]` or `[.e.]` for one character, as the C locale reads them. `\` takes the next byte as written. A `[` with no closing `]` is a plain character, as in a shell.
 
@@ -556,7 +558,7 @@ The key has to meet every name the volume treats as the same. Matching more can 
 - NTFS folds case through its upcase table, one character for one, and keeps normalization forms apart. The key folds the same case pairs. It also joins normalization forms, which only keeps more.
 - The upper-then-lower map joins pairs that lowercase alone misses, such as final sigma and `σ`.
 - One-for-one maps keep `?` counting `ß` as one character, so `Stra?e` still matches `Straße`. Full case folding would turn `ß` into `ss`, and `?` would then match less.
-- NFC rather than NFD keeps `é` one character for `?` and `[...]`. Both also take any combining marks that follow the character they match.
+- NFC rather than NFD keeps `é` one character for `?` and `[...]`. Both also take any combining marks that follow the character they match, unless the entry spells a mark next.
 
 The resolution through `Probe::spelling` already meets any spelling the volume itself accepts for an existing name. The fold matters for names after a wildcard and for names that do not exist yet.
 

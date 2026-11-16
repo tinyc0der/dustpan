@@ -2,7 +2,7 @@
 //! Paths are host syntax, so these cases run on the Windows CI runners only.
 #![cfg(windows)]
 
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, PolicyError, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, PolicyError, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
@@ -44,9 +44,9 @@ fn guard(fs: &FakeProbe, env: &dyn Fn(&str) -> Option<String>) -> Guard {
     Guard::new(
         GuardInputs {
             os: Os::Windows,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env,
-            whitelist: Whitelist::defaults(Os::Windows, &p(HOME)),
+            whitelist: Whitelist::defaults(Os::Windows, &Homes::new(p(HOME), None)),
         },
         fs,
     )
@@ -194,9 +194,9 @@ fn a_profile_that_is_a_system_tree_means_no_guard() {
         let built = Guard::new(
             GuardInputs {
                 os: Os::Windows,
-                home: p(home),
+                homes: Homes::new(p(home), None),
                 env: &env,
-                whitelist: Whitelist::defaults(Os::Windows, &p(home)),
+                whitelist: Whitelist::defaults(Os::Windows, &Homes::new(p(home), None)),
             },
             &windows(),
         );
@@ -225,7 +225,7 @@ fn docker_state_keeps_the_folders_that_hold_it() {
 fn load(body: &str) -> Result<Whitelist, dustpan_core::whitelist::LoadError> {
     dustpan_core::whitelist::load(
         Os::Windows,
-        &p(HOME),
+        &Homes::new(p(HOME), None),
         &p(r"C:\Users\alice\AppData\Roaming\dustpan\whitelist"),
         dustpan_core::config::Read::Text(body.into()),
     )

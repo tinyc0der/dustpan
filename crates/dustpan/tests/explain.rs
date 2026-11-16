@@ -13,6 +13,10 @@ fn fixture_home() -> tempfile::TempDir {
     let home = fresh_dir();
     if cfg!(unix) {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/mkhome.sh");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the shared fixture script builds the home"
+        )]
         let built = std::process::Command::new("bash")
             .arg(script)
             .arg(home.path())
@@ -208,6 +212,42 @@ fn json_keeps_a_hostile_name_inside_its_string() {
     );
 }
 
+/// The account's home as the user database records it. The shell's `~name` reads the database
+/// itself, so this shares no code with dustpan's lookup.
+#[cfg(unix)]
+fn account_home() -> std::path::PathBuf {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the shell reads the user database, so the check shares no code with dustpan"
+    )]
+    let out = std::process::Command::new("sh")
+        .args(["-c", r#"eval "printf %s ~$(id -un)""#])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap().into()
+}
+
+/// I-64: an environment variable must not steer the guard away from the real home.
+#[cfg(unix)]
+#[test]
+fn a_home_variable_pointed_elsewhere_still_keeps_the_accounts_home_folders() {
+    let home = fixture_home();
+    let account = account_home().join("Documents");
+    let text = stdout(
+        explain(home.path())
+            .args(["--json", "~/Documents"])
+            .arg(&account),
+    );
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let items = value["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert_eq!(item["layer"], "critical", "{item}");
+        assert_eq!(item["reason"], "home-folder", "{item}");
+    }
+}
+
 #[test]
 fn no_path_is_a_usage_error() {
     let home = fresh_dir();
@@ -382,6 +422,7 @@ fn a_config_folder_that_links_to_an_unmounted_volume_stops_the_command() {
 fn a_whitelist_that_is_a_fifo_stops_the_command() {
     let home = fixture_home();
     let fifo = config_dir(home.path()).join("whitelist");
+    #[expect(clippy::disallowed_methods, reason = "mkfifo makes the FIFO fixture")]
     let made = std::process::Command::new("mkfifo")
         .arg(&fifo)
         .status()

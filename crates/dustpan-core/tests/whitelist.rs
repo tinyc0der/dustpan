@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use dustpan_core::config::Read;
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Layer, Source, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Layer, Source, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
@@ -15,7 +15,7 @@ fn p(s: &str) -> AbsPath {
 }
 
 fn load(read: Read) -> Result<Whitelist, LoadError> {
-    whitelist::load(Os::MacOs, &p(HOME), &p(FILE), read)
+    whitelist::load(Os::MacOs, &Homes::new(p(HOME), None), &p(FILE), read)
 }
 
 fn text(body: &str) -> Whitelist {
@@ -124,7 +124,7 @@ fn judge(fs: &FakeProbe, wl: Whitelist, path: &str) -> Verdict {
     let guard = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: wl,
         },
@@ -264,7 +264,7 @@ fn one_pass_judges_paths_that_share_ancestors_like_separate_passes() {
     let guard = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: text("~/Projects/keep/deep/*\n"),
         },
@@ -334,7 +334,7 @@ fn judge_on(os: Os, home: &str, fs: &FakeProbe, wl: Whitelist, path: &str) -> Ve
     let guard = Guard::new(
         GuardInputs {
             os,
-            home: p(home),
+            homes: Homes::new(p(home), None),
             env: &env,
             whitelist: wl,
         },
@@ -506,6 +506,66 @@ fn an_entry_keeps_a_folder_stored_in_the_other_normalization_form() {
     );
 }
 
+/// Names APFS and NTFS treat as one: the stored character, and the text it folds to.
+const MULTI_CHARACTER_FOLDS: &[(&str, &str)] = &[
+    ("\u{df}", "ss"),
+    ("\u{1e9e}", "ss"),
+    ("\u{fb00}", "ff"),
+    ("\u{fb01}", "fi"),
+    ("\u{fb02}", "fl"),
+    ("\u{fb03}", "ffi"),
+    ("\u{fb04}", "ffl"),
+    ("\u{fb05}", "st"),
+    ("\u{fb06}", "st"),
+    ("\u{149}", "\u{2bc}n"),
+    ("\u{1e9a}", "a\u{2be}"),
+    ("\u{587}", "\u{565}\u{582}"),
+    ("\u{fb13}", "\u{574}\u{576}"),
+    ("\u{fb14}", "\u{574}\u{565}"),
+    ("\u{fb15}", "\u{574}\u{56b}"),
+    ("\u{fb16}", "\u{57e}\u{576}"),
+    ("\u{fb17}", "\u{574}\u{56d}"),
+];
+
+fn multi_character_fold_cases(entry_for: impl Fn(&str, &str) -> String) {
+    for &(stored, folded) in MULTI_CHARACTER_FOLDS {
+        for (name, spelling) in [
+            (
+                format!("a{stored}z"),
+                format!("A{}Z", folded.to_uppercase()),
+            ),
+            (
+                format!("A{}Z", folded.to_uppercase()),
+                format!("a{stored}z"),
+            ),
+            (format!("a{stored}z"), format!("a{folded}z")),
+        ] {
+            let path = format!("/Users/alice/P/a/{name}");
+            let fs = FakeProbe::new().dir(&path);
+            let entry = entry_for(&spelling, folded);
+            let got = outcome(&judge(&fs, text(&entry), &path));
+            assert_eq!(
+                got, "whitelist/whitelisted",
+                "entry {entry:?}, name {name:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_wildcard_component_keeps_a_name_that_folds_to_several_characters() {
+    multi_character_fold_cases(|spelling, _| format!("~/P/*/{spelling}\n"));
+}
+
+#[test]
+fn a_wildcard_inside_the_name_keeps_a_name_that_folds_to_several_characters() {
+    multi_character_fold_cases(|spelling, _| {
+        let mut chars = spelling.chars();
+        chars.next_back();
+        format!("~/P/a/{}?\n", chars.as_str())
+    });
+}
+
 #[test]
 fn an_entry_keeps_a_folder_whose_name_differs_only_in_non_ascii_case() {
     let fs = FakeProbe::new().dir("/Users/alice/V/\u{e9}t\u{e9}/f");
@@ -584,7 +644,7 @@ fn an_entry_under_a_linked_home_root_keeps_the_physical_home_on_linux() {
     let home = "/var/home/alice";
     let wl = whitelist::load(
         Os::Linux,
-        &p(home),
+        &Homes::new(p(home), None),
         &p("/var/home/alice/.config/dustpan/whitelist"),
         Read::Text("/home/alice/keep\n".into()),
     )
@@ -617,7 +677,7 @@ fn an_entry_whose_folders_cannot_be_inspected_stops_the_guard_build() {
     let built = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: text("~/Locked/keep\n"),
         },
@@ -630,4 +690,148 @@ fn an_entry_whose_folders_cannot_be_inspected_stops_the_guard_build() {
         err.to_string().contains("/Users/alice/Locked/keep"),
         "{err}"
     );
+}
+
+/// I-64: `HOME` pointed at a fixture must not steer any whitelist entry away from the account's
+/// home. The fixture sits inside the account's home, as a test's target folder does.
+#[test]
+fn whitelist_entries_hold_at_the_accounts_home_when_home_points_elsewhere() {
+    const FIXTURE: &str = "/Users/alice/Projects/fixture";
+    let homes = Homes::new(p(FIXTURE), Some(p(HOME)));
+    let names = [
+        "Library/Caches/kitty",
+        "Library/Caches/pnpm/dlx",
+        ".gradle/caches/modules-2",
+        "x",
+        "Documents",
+    ];
+    let fs = [FIXTURE, HOME]
+        .iter()
+        .flat_map(|home| names.map(|name| format!("{home}/{name}/f")))
+        .fold(FakeProbe::new(), |fs, dir| fs.dir(&dir));
+    let file = p(&format!("{FIXTURE}/.config/dustpan/whitelist"));
+    let load = |read| whitelist::load(Os::MacOs, &homes, &file, read).unwrap();
+    let (w, home_folder) = ("whitelist/whitelisted", "critical/home-folder");
+    let lists = [
+        (
+            "defaults",
+            load(Read::Missing),
+            [w, w, w, "eligible", home_folder],
+        ),
+        (
+            "user file ~/x",
+            load(Read::Text("~/x\n".into())),
+            [w, w, "eligible", w, home_folder],
+        ),
+    ];
+    let env = |_: &str| None;
+    let mut wrong = Vec::new();
+    for (list, whitelist, wants) in lists {
+        let guard = Guard::new(
+            GuardInputs {
+                os: Os::MacOs,
+                homes: homes.clone(),
+                env: &env,
+                whitelist,
+            },
+            &fs,
+        )
+        .unwrap();
+        let mut pass = guard.pass(&fs);
+        for home in [FIXTURE, HOME] {
+            for (name, want) in names.iter().zip(wants) {
+                let path = format!("{home}/{name}");
+                let got = outcome(pass.evaluate(p(&path)).verdict());
+                if got != want {
+                    wrong.push(format!("{list}: {path}: got {got}, want {want}"));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Marks a volume that ignores normalization treats as one: each pair is canonically equivalent.
+const EQUIVALENT_MARKS: &[(&str, &str)] = &[
+    ("\u{300}", "\u{340}"),
+    ("\u{301}", "\u{341}"),
+    ("\u{313}", "\u{343}"),
+    ("\u{308}\u{301}", "\u{344}"),
+    ("\u{f71}\u{f72}", "\u{f73}"),
+];
+
+/// A mark an entry spells right after `?`, `[...]` or `*` is the pattern's to match, so the
+/// wildcard must not take it with the character before it, even where NFC composes the two.
+#[test]
+fn a_mark_right_after_a_wildcard_keeps_the_name_in_either_spelling() {
+    let mut cases = Vec::new();
+    for &(one, other) in EQUIVALENT_MARKS {
+        for (stored, written) in [(one, other), (other, one), (one, one)] {
+            cases.extend([
+                (format!("a_{stored}t"), format!("a?{written}t")),
+                (format!("a_{stored}t"), format!("a[_]{written}[t]")),
+                (format!("a_{stored}t"), format!("a?*{written}t")),
+                (
+                    format!("a_{stored}{stored}x{stored}"),
+                    format!("a_{written}{written}?{written}"),
+                ),
+            ]);
+        }
+    }
+    for entry in ["caf?\u{301}", "caf[e]\u{301}", "ca*\u{301}"] {
+        cases.push((NFC.to_lowercase(), entry.to_owned()));
+    }
+    let mut wrong = Vec::new();
+    for (name, entry) in cases {
+        let path = format!("/Users/alice/U/{name}");
+        let fs = FakeProbe::new().dir(&path);
+        let got = outcome(&judge(&fs, text(&format!("~/U/{entry}\n")), &path));
+        if got != "whitelist/whitelisted" {
+            wrong.push(format!("entry {entry:?}, name {name:?}: {got}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Mole trims a line with `[:space:]` under `LC_ALL=C`, which holds ASCII whitespace only. A
+/// name that ends in another space, such as U+2002, keeps it.
+#[test]
+fn a_space_outside_ascii_at_the_end_of_a_line_stays_in_the_entry() {
+    let wl = text("~/a\u{2002}\n \t~/b \t\r\n");
+    assert_eq!(
+        patterns(&wl, Origin::User),
+        ["/Users/alice/a\u{2002}", "/Users/alice/b"]
+    );
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/P/a\u{2000}")
+        .dir("/Users/alice/P/a");
+    let w = "whitelist/whitelisted";
+    kept(
+        &fs,
+        "~/P/a\u{2002}\n",
+        &[
+            ("/Users/alice/P/a\u{2000}", w),
+            ("/Users/alice/P/a", "eligible"),
+        ],
+    );
+    kept(&fs, "~/P/?\u{2002}\n", &[("/Users/alice/P/a\u{2000}", w)]);
+}
+
+/// A precomposed Hangul syllable in a set can stop inside a stored syllable that also has a
+/// final consonant: `[가]ᆨ` spells `각` (U+AC00 then U+11A8 against U+AC01).
+#[test]
+fn a_hangul_syllable_in_a_set_with_its_final_consonant_after_keeps_the_name() {
+    for (name, entry) in [
+        ("cb\u{ac01}t", "cb[\u{ac00}]\u{11a8}t"),
+        ("cb\u{ac01}t", "cb?\u{11a8}t"),
+        ("cc\u{d7a3}", "cc[\u{d788}]\u{11c2}"),
+    ] {
+        let path = format!("/Users/alice/U/{name}");
+        let fs = FakeProbe::new().dir(&path);
+        let got = outcome(&judge(&fs, text(&format!("~/U/{entry}\n")), &path));
+        assert_eq!(
+            got, "whitelist/whitelisted",
+            "entry {entry:?}, name {name:?}"
+        );
+    }
 }

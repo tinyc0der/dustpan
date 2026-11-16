@@ -87,6 +87,22 @@ jobs:
           out=$(HOME="$home" XDG_CONFIG_HOME="$xdg" ./target/release/dustpan explain '~/Projects/keep/a')
           printf '%s\n' "$out"
           [[ "$out" == *"$xdg/dustpan/whitelist"* ]]
+      # M0-5 live lane 10: the Trash sink moves a fixture folder into the freedesktop Trash of
+      # a temporary home, with its .trashinfo.
+      - name: the Trash sink moves a fixture folder to the home's freedesktop Trash
+        if: runner.os == 'Linux'
+        run: |
+          home="$RUNNER_TEMP/m0-5-home"
+          mkdir -p "$home"
+          out=$(env -u XDG_DATA_HOME HOME="$home" DUSTPAN_SINK_FIXTURE_HOME="$RUNNER_TEMP/m0-5-fixture" \
+            cargo test --release -p dustpan-sys --test sink_fixture trash_lane -- --ignored --exact --nocapture 2>&1)
+          printf '%s\n' "$out"
+          name=$(printf '%s\n' "$out" | sed -n 's/^lane item //p')
+          [[ -n "$name" ]]
+          test -d "$home/.local/share/Trash/files/$name"
+          info="$home/.local/share/Trash/info/$name.trashinfo"
+          cat "$info"
+          grep -q "^Path=$RUNNER_TEMP/m0-5-fixture/trash-.*/Library/Caches/$name$" "$info"
       - uses: actions/upload-artifact@v4
         with:
           name: dustpan-${{ matrix.os }}

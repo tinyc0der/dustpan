@@ -4,7 +4,7 @@
 #![cfg(target_os = "macos")]
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Rejection, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Lease, Rejection, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::{OpenFiles, Pid, Probe, Seen};
@@ -83,6 +83,10 @@ struct Holder(Child);
 
 impl Holder {
     fn start(folder: &Path, chain: Option<&Path>) -> Self {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the holder is this test binary, run again as a helper"
+        )]
         let mut holder = Command::new(std::env::current_exe().unwrap());
         holder
             .args(["--exact", HELPER, "--nocapture"])
@@ -133,8 +137,8 @@ impl Home {
         let home = AbsPath::parse(home.as_ref()).unwrap();
         let inputs = GuardInputs {
             os: Os::MacOs,
-            whitelist: Whitelist::defaults(Os::MacOs, &home),
-            home,
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(home.clone(), None)),
+            homes: Homes::new(home, None),
             env: &env,
         };
         Self {
@@ -175,7 +179,9 @@ impl Home {
             matches!(verdict, Verdict::Kept(KeptReason::Live(_))),
             "{folder} while a process holds a file in it: {verdict}"
         );
-        match self.guard.recheck(found_idle, &self.probe) {
+        let clock = dustpan_sys::SystemClock::new();
+        let mut recheck = self.guard.recheck(&self.probe, &clock, Lease::NONE);
+        match recheck.approve(found_idle) {
             Ok(approved) => panic!("{folder} was approved for {:?}", approved.sink()),
             Err(refused) => assert!(
                 matches!(refused.rejection, Rejection::Kept(KeptReason::Live(_))),

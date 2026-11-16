@@ -1,3 +1,4 @@
+use caseless::Caseless as _;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::ffi::OsStr;
@@ -28,9 +29,11 @@ impl fmt::Display for GlobError {
 
 impl std::error::Error for GlobError {}
 
-/// On a volume that folds case, the key is NFC of the NFD form with each character mapped
-/// to the lowercase of its uppercase, only where each map gives one character. Canonically
-/// equivalent names then share a key, final sigma meets `σ`, and `?` still counts `ß` as one.
+/// On a volume that folds case, the key is NFC of the NFD form under full case folding
+/// (`CaseFolding.txt` status C and F), so `ß` and `ﬁ` meet `ss` and `fi`. Each folded character
+/// then goes through the lowercase of its uppercase where each map gives one character, which
+/// joins `ı` with `i` and keeps more than the volume does. Canonically equivalent names share a
+/// key and `é` stays one character.
 pub(crate) fn fold(name: &OsStr, fold_case: bool, out: &mut Vec<u8>) {
     out.clear();
     let bytes = name.as_encoded_bytes();
@@ -47,6 +50,11 @@ pub(crate) fn fold(name: &OsStr, fold_case: bool, out: &mut Vec<u8>) {
 }
 
 fn folded(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.nfd().default_case_fold().nfd().map(fold_char).nfc()
+}
+
+/// The key before full case folding: one character in, one out, so `?` counts `ß` as one.
+fn one_for_one(text: &str) -> impl Iterator<Item = char> + '_ {
     text.nfd().map(fold_char).nfc()
 }
 
@@ -65,6 +73,9 @@ pub(crate) struct Subject<'a> {
     raw: &'a [u8],
     key: &'a [u8],
     chars: OnceCell<Vec<char>>,
+    one_for_one: OnceCell<Vec<char>>,
+    decomposed: OnceCell<Vec<char>>,
+    hangul: OnceCell<Option<Vec<char>>>,
 }
 
 impl<'a> Subject<'a> {
@@ -73,6 +84,9 @@ impl<'a> Subject<'a> {
             raw: raw.as_encoded_bytes(),
             key,
             chars: OnceCell::new(),
+            one_for_one: OnceCell::new(),
+            decomposed: OnceCell::new(),
+            hangul: OnceCell::new(),
         }
     }
 
@@ -84,6 +98,48 @@ impl<'a> Subject<'a> {
         self.chars
             .get_or_init(|| String::from_utf8_lossy(self.key).chars().collect())
     }
+
+    fn one_for_one_chars(&self) -> &[char] {
+        self.one_for_one
+            .get_or_init(|| one_for_one(&String::from_utf8_lossy(self.raw)).collect())
+    }
+
+    fn decomposed_chars(&self) -> &[char] {
+        self.decomposed
+            .get_or_init(|| String::from_utf8_lossy(self.key).nfd().collect())
+    }
+
+    /// The key with each Hangul syllable that ends in a final consonant split into the
+    /// syllable without it and that consonant: U+AC01 `각` becomes U+AC00 `가` and U+11A8 `ᆨ`,
+    /// which is canonically the same. A precomposed syllable in a set can stop there, where NFD
+    /// would take it apart. `None` when the key has no such syllable.
+    fn hangul_split_chars(&self) -> Option<&[char]> {
+        const SYLLABLES: std::ops::RangeInclusive<u32> = 0xAC00..=0xD7A3;
+        const FINALS: u32 = 28;
+        const NO_FINAL: u32 = 0x11A7;
+        self.hangul
+            .get_or_init(|| {
+                let key = self.key_chars();
+                let finals = |c: char| {
+                    let n = u32::from(c);
+                    let t = if SYLLABLES.contains(&n) {
+                        (n - 0xAC00) % FINALS
+                    } else {
+                        0
+                    };
+                    (t != 0).then(|| (char::from_u32(n - t), char::from_u32(NO_FINAL + t)))
+                };
+                key.iter().any(|&c| finals(c).is_some()).then(|| {
+                    key.iter()
+                        .flat_map(|&c| match finals(c) {
+                            Some((Some(lv), Some(t))) => vec![lv, t],
+                            _ => vec![c],
+                        })
+                        .collect()
+                })
+            })
+            .as_deref()
+    }
 }
 
 /// What a pattern reads one at a time: a byte, as Mole's `LC_ALL=C` shell does, or a
@@ -92,7 +148,7 @@ trait Unit: Copy + PartialOrd {
     fn ascii(self) -> Option<u8>;
     fn text(units: &[Self]) -> String;
     fn class(name: &str) -> Option<fn(Self) -> bool>;
-    fn with_marks(rest: &[Self]) -> usize;
+    fn is_mark(self) -> bool;
     fn other_case(self) -> Self;
 }
 
@@ -151,8 +207,8 @@ impl Unit for u8 {
             .map(|&(_, c)| c)
     }
 
-    fn with_marks(_: &[Self]) -> usize {
-        1
+    fn is_mark(self) -> bool {
+        false
     }
 
     fn other_case(self) -> Self {
@@ -176,13 +232,8 @@ impl Unit for char {
             .map(|&(_, c)| c)
     }
 
-    /// `?` and `[...]` take a character with the combining marks after it, so a key that NFC
-    /// could not compose still counts one letter as one.
-    fn with_marks(rest: &[Self]) -> usize {
-        1 + rest[1..]
-            .iter()
-            .take_while(|&&c| canonical_combining_class(c) != 0)
-            .count()
+    fn is_mark(self) -> bool {
+        canonical_combining_class(self) != 0
     }
 
     fn other_case(self) -> Self {
@@ -217,6 +268,12 @@ struct Pattern<U: Unit> {
 pub(crate) struct Glob {
     bytes: Pattern<u8>,
     chars: Pattern<char>,
+    /// The pattern over [`one_for_one`] characters, for a name with a character outside ASCII.
+    one_for_one: Option<Pattern<char>>,
+    /// The pattern over the key's NFD, for a pattern that spells a character outside ASCII
+    /// right after a wildcard. NFC can compose that character into the one the wildcard takes:
+    /// `x` and U+0308 are U+1E8D, so `?\u{308}` would find no mark to match.
+    decomposed: Option<Pattern<char>>,
     /// A folder named `[2020] Album` matches this, as it matches Mole's quoted comparison.
     written: Box<[u8]>,
 }
@@ -247,14 +304,28 @@ impl Glob {
         let Some(mut chars) = Pattern::parse(&units, fold_case)? else {
             return Ok(Name::Plain);
         };
+        let mut one_for_one = None;
+        let mut decomposed = None;
         if fold_case {
-            chars.tokens = fold_runs(chars.tokens);
+            one_for_one = Pattern::parse(&units, true)?.map(|mut p| {
+                p.tokens = fold_runs(p.tokens, one_for_one_run);
+                p
+            });
+            decomposed = Pattern::parse(&units, true)?
+                .map(|mut p| {
+                    p.tokens = fold_runs(p.tokens, decomposed_run);
+                    p
+                })
+                .filter(Pattern::spells_after_a_wildcard);
+            chars.tokens = fold_runs(chars.tokens, folded_run);
         }
         let mut written = Vec::new();
         fold(name, fold_case, &mut written);
         Ok(Name::Glob(Self {
             bytes,
             chars,
+            one_for_one,
+            decomposed,
             written: written.into(),
         }))
     }
@@ -267,23 +338,47 @@ impl Glob {
         *name.key == *self.written
             || self.bytes.matches(name.raw)
             || self.chars.matches(name.key_chars())
+            || (!name.raw.is_ascii()
+                && (self
+                    .one_for_one
+                    .as_ref()
+                    .is_some_and(|p| p.matches(name.one_for_one_chars()))
+                    || self
+                        .decomposed
+                        .as_ref()
+                        .is_some_and(|p| p.matches(name.decomposed_chars()))
+                    || name
+                        .hangul_split_chars()
+                        .is_some_and(|split| self.chars.matches(split))))
     }
 }
 
-fn fold_runs(tokens: Box<[Token<char>]>) -> Box<[Token<char>]> {
+fn folded_run(run: &str) -> Vec<char> {
+    folded(run).collect()
+}
+
+fn decomposed_run(run: &str) -> Vec<char> {
+    folded(run).nfd().collect()
+}
+
+fn one_for_one_run(run: &str) -> Vec<char> {
+    one_for_one(run).collect()
+}
+
+fn fold_runs(tokens: Box<[Token<char>]>, fold: fn(&str) -> Vec<char>) -> Box<[Token<char>]> {
     let mut out = Vec::with_capacity(tokens.len());
     let mut run = String::new();
     for token in tokens {
         match token {
             Token::Unit(c) => run.push(c),
             other => {
-                out.extend(folded(&run).map(Token::Unit));
+                out.extend(fold(&run).into_iter().map(Token::Unit));
                 run.clear();
                 out.push(other);
             }
         }
     }
-    out.extend(folded(&run).map(Token::Unit));
+    out.extend(fold(&run).into_iter().map(Token::Unit));
     out.into()
 }
 
@@ -337,8 +432,8 @@ impl<U: Unit> Pattern<U> {
                     last_star = Some((t, n));
                     continue;
                 }
-                Some(token) => {
-                    if let Some(used) = self.take(token, &name[n..]) {
+                Some(_) => {
+                    if let Some(used) = self.take(t, &name[n..]) {
                         t += 1;
                         n += used;
                         continue;
@@ -358,15 +453,37 @@ impl<U: Unit> Pattern<U> {
         }
     }
 
-    fn take(&self, token: &Token<U>, rest: &[U]) -> Option<usize> {
+    fn spells_after_a_wildcard(&self) -> bool {
+        self.tokens.windows(2).any(|pair| {
+            !matches!(pair[0], Token::Unit(_))
+                && matches!(pair[1], Token::Unit(u) if u.ascii().is_none())
+        })
+    }
+
+    fn take(&self, t: usize, rest: &[U]) -> Option<usize> {
         let &first = rest.first()?;
-        match token {
-            Token::Unit(u) => (first == *u).then_some(1),
-            Token::One => Some(U::with_marks(rest)),
-            Token::Set(set) => set
-                .admits(first, self.either_case)
-                .then(|| U::with_marks(rest)),
-            Token::Star => None,
+        let admitted = match &self.tokens[t] {
+            Token::Unit(u) => return (first == *u).then_some(1),
+            Token::One => true,
+            Token::Set(set) => set.admits(first, self.either_case),
+            Token::Star => return None,
+        };
+        admitted.then(|| self.width(t, rest))
+    }
+
+    /// `?` and `[...]` take a character with the combining marks after it, so a key that NFC
+    /// could not compose still counts one letter as one. When the pattern spells a mark next,
+    /// past any `*`, the wildcard takes the character alone and leaves the marks to the
+    /// pattern: `a?\u{300}t` keeps `a_\u{300}t`.
+    fn width(&self, t: usize, rest: &[U]) -> usize {
+        let spells_a_mark = self.tokens[t + 1..]
+            .iter()
+            .find(|token| !matches!(token, Token::Star))
+            .is_some_and(|token| matches!(token, Token::Unit(u) if u.is_mark()));
+        if spells_a_mark {
+            1
+        } else {
+            1 + rest[1..].iter().take_while(|u| u.is_mark()).count()
         }
     }
 }
@@ -526,7 +643,8 @@ mod tests {
         assert_eq!(key("Caf\u{e9}"), key("Cafe\u{301}"));
         assert_eq!(key("\u{c9}T\u{c9}"), key("\u{e9}t\u{e9}"));
         assert_eq!(key("\u{3a3}"), key("\u{3c2}"));
-        assert_eq!(key("Stra\u{df}e").chars().count(), 6);
+        assert_eq!(key("Stra\u{df}e"), key("STRASSE"));
+        assert_eq!(key("\u{fb03}"), "ffi");
         assert_ne!(key("Caf\u{e9}"), key("Cafe"));
         let mut raw = Vec::new();
         fold(OsStr::new("Caf\u{e9}"), false, &mut raw);

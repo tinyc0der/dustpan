@@ -9,6 +9,21 @@ pub enum Size {
     Unknown,
 }
 
+impl Size {
+    /// The sum of two sizes. Anything short of two known sizes is a partial total: an unknown
+    /// part adds no bytes and marks the total `N+`, never `0` (SAFE-21).
+    pub fn plus(self, other: Size) -> Size {
+        match (self, other) {
+            (Self::Known(a), Self::Known(b)) => Self::Known(a.saturating_add(b)),
+            (Self::Known(a) | Self::Partial(a), Self::Partial(b))
+            | (Self::Partial(a), Self::Known(b)) => Self::Partial(a.saturating_add(b)),
+            (Self::Known(a) | Self::Partial(a), Self::Unknown)
+            | (Self::Unknown, Self::Known(a) | Self::Partial(a)) => Self::Partial(a),
+            (Self::Unknown, Self::Unknown) => Self::Unknown,
+        }
+    }
+}
+
 /// SI units, as Finder and `diskutil` print them: `999 B`, `1.5 MB`.
 fn si(f: &mut fmt::Formatter<'_>, bytes: u64) -> fmt::Result {
     const UNITS: [&str; 6] = ["kB", "MB", "GB", "TB", "PB", "EB"];
@@ -57,5 +72,13 @@ mod tests {
         assert_eq!(Size::Partial(12_300_000_000).to_string(), "12.3 GB+");
         assert_eq!(Size::Unknown.to_string(), "unknown");
         assert_ne!(Size::Unknown, Size::Known(0));
+    }
+
+    #[test]
+    fn a_sum_with_an_unknown_part_is_partial_never_zero() {
+        assert_eq!(Size::Known(1).plus(Size::Known(2)), Size::Known(3));
+        assert_eq!(Size::Known(1).plus(Size::Unknown), Size::Partial(1));
+        assert_eq!(Size::Unknown.plus(Size::Partial(4)), Size::Partial(4));
+        assert_eq!(Size::Unknown.plus(Size::Unknown), Size::Unknown);
     }
 }

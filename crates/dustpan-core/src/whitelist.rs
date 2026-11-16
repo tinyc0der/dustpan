@@ -1,12 +1,14 @@
 pub(crate) mod glob;
 
 use crate::config::Read;
+use crate::guard::Homes;
 use crate::path::{AbsPath, ShapeError, escaped};
 use crate::paths::Os;
 use glob::Glob;
 pub use glob::GlobError;
 use std::ffi::OsStr;
 use std::fmt;
+use std::path::Path;
 
 /// Mole's `FINDER_METADATA` sentinel, as written in a file.
 const FINDER_METADATA: &str = "FINDER_METADATA";
@@ -140,20 +142,28 @@ fn under_home(os: Os, raw: &str) -> Option<&str> {
     (rest.is_empty() || rest.starts_with(separator)).then(|| rest.trim_start_matches(separator))
 }
 
-fn expand(os: Os, home: &AbsPath, raw: &str) -> Result<Pattern, EntryError> {
+/// One pattern per home for an entry under `~`, so `HOME` pointed elsewhere still leaves the
+/// account's home kept (I-64). One pattern for any other entry.
+fn expand(os: Os, homes: &Homes, raw: &str) -> Result<Vec<Pattern>, EntryError> {
     if raw == FINDER_METADATA {
-        return Ok(Pattern::FinderMetadata);
+        return Ok(vec![Pattern::FinderMetadata]);
     }
-    let expanded = match under_home(os, raw) {
-        Some(rest) => {
+    let Some(rest) = under_home(os, raw) else {
+        return Ok(vec![parse(raw.as_ref())?]);
+    };
+    homes
+        .iter()
+        .map(|home| {
             let joined = home.as_path().join(rest);
             if !joined.starts_with(home.as_path()) {
                 return Err(EntryError::OutsideHome);
             }
-            joined
-        }
-        None => raw.into(),
-    };
+            parse(&joined)
+        })
+        .collect()
+}
+
+fn parse(expanded: &Path) -> Result<Pattern, EntryError> {
     let path = AbsPath::parse(expanded.as_os_str()).map_err(EntryError::Shape)?;
     for name in path.names() {
         for fold_case in [false, true] {
@@ -163,19 +173,23 @@ fn expand(os: Os, home: &AbsPath, raw: &str) -> Result<Pattern, EntryError> {
     Ok(Pattern::Path(path))
 }
 
-fn built_in(os: Os, home: &AbsPath, rows: &[&str], origin: Origin, into: &mut Vec<Entry>) {
+fn built_in(os: Os, homes: &Homes, rows: &[&str], origin: Origin, into: &mut Vec<Entry>) {
     for raw in rows {
-        let pattern = expand(os, home, raw).expect("a built-in entry is an absolute path");
-        into.push(Entry { pattern, origin });
+        let patterns = expand(os, homes, raw).expect("a built-in entry is an absolute path");
+        into.extend(
+            patterns
+                .into_iter()
+                .map(|pattern| Entry { pattern, origin }),
+        );
     }
 }
 
 impl Whitelist {
     /// What applies while no user file exists: the defaults and the hard-safety entries.
-    pub fn defaults(os: Os, home: &AbsPath) -> Self {
+    pub fn defaults(os: Os, homes: &Homes) -> Self {
         let mut entries = Vec::new();
-        built_in(os, home, SAFETY, Origin::Safety, &mut entries);
-        built_in(os, home, DEFAULTS, Origin::Default, &mut entries);
+        built_in(os, homes, SAFETY, Origin::Safety, &mut entries);
+        built_in(os, homes, DEFAULTS, Origin::Default, &mut entries);
         Self {
             file: None,
             entries,
@@ -194,13 +208,14 @@ impl Whitelist {
 
 /// Parses the whitelist `file` as the binary read it.
 ///
-/// A line is trimmed (so CRLF endings and trailing spaces do not matter), and blank lines and
-/// lines that start with `#` are skipped. A line that cannot name a place stops the load: a
+/// A line loses the ASCII whitespace at either end, as Mole's `[:space:]` under `LC_ALL=C`
+/// trims it (so CRLF endings and trailing spaces do not matter). A space outside ASCII, such as
+/// U+2002, stays part of the name. Blank lines and lines that start with `#` are skipped. A line that cannot name a place stops the load: a
 /// relative path, one with `..`, an unknown class, a backward range, or a bracket element of
 /// more than one character.
-pub fn load(os: Os, home: &AbsPath, file: &AbsPath, read: Read) -> Result<Whitelist, LoadError> {
+pub fn load(os: Os, homes: &Homes, file: &AbsPath, read: Read) -> Result<Whitelist, LoadError> {
     let text = match read {
-        Read::Missing => return Ok(Whitelist::defaults(os, home)),
+        Read::Missing => return Ok(Whitelist::defaults(os, homes)),
         Read::Unreadable { why } => {
             return Err(LoadError::Unreadable {
                 file: file.clone(),
@@ -211,15 +226,15 @@ pub fn load(os: Os, home: &AbsPath, file: &AbsPath, read: Read) -> Result<Whitel
     };
     let mut entries = Vec::new();
     for (index, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
-        let line = line.trim();
+        let line = line.trim_matches(|c: char| c.is_ascii_whitespace() || c == '\x0b');
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        match expand(os, home, line) {
-            Ok(pattern) => entries.push(Entry {
+        match expand(os, homes, line) {
+            Ok(patterns) => entries.extend(patterns.into_iter().map(|pattern| Entry {
                 pattern,
                 origin: Origin::User,
-            }),
+            })),
             Err(why) => {
                 return Err(LoadError::BadEntry {
                     file: file.clone(),
@@ -230,7 +245,7 @@ pub fn load(os: Os, home: &AbsPath, file: &AbsPath, read: Read) -> Result<Whitel
             }
         }
     }
-    built_in(os, home, SAFETY, Origin::Safety, &mut entries);
+    built_in(os, homes, SAFETY, Origin::Safety, &mut entries);
     Ok(Whitelist {
         file: Some(file.clone()),
         entries,

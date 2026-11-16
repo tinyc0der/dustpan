@@ -138,6 +138,10 @@ pub struct MoleRunner {
 
 /// The home folder the user database names for this user, never `$HOME`.
 pub fn real_home() -> Result<PathBuf> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the shell reads the user database for the real home"
+    )]
     let out = Command::new("/bin/sh")
         .args(["-c", "eval echo \"~$(/usr/bin/id -un)\""])
         .env_clear()
@@ -399,6 +403,10 @@ impl MoleRunner {
             .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the harness runs Mole and dustpan under sandbox-exec"
+        )]
         let mut child = Command::new(SANDBOX_EXEC)
             .arg("-f")
             .arg(&self.profile)
@@ -490,6 +498,10 @@ fn debug_env(args: &[&str]) -> Option<(&'static str, &'static str)> {
 }
 
 fn kill_group(pid: u32) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "kills the process group of a run past its timeout"
+    )]
     let _ = Command::new("/bin/kill")
         .args(["-KILL", "--", &format!("-{pid}")])
         .status();

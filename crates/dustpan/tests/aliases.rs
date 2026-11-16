@@ -4,7 +4,7 @@
 #![cfg(target_os = "macos")]
 
 use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
-use dustpan_core::guard::{Guard, GuardInputs, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, Lease, Verdict};
 use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
@@ -43,9 +43,9 @@ impl Home {
         let env = |_: &str| None;
         let inputs = GuardInputs {
             os: Os::MacOs,
-            home: p(&self.root),
+            homes: Homes::new(p(&self.root), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::MacOs, &p(&self.root)),
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(p(&self.root), None)),
         };
         Guard::new(inputs, probe).unwrap()
     }
@@ -83,7 +83,8 @@ fn assert_kept_everywhere(guard: &Guard, probe: &LiveProbe, path: &str) {
                 matches!(verdict, Verdict::Kept(_)),
                 "candidate {path}: {verdict:?}"
             );
-            let rechecked = guard.recheck(candidate, probe);
+            let clock = dustpan_sys::SystemClock::new();
+            let rechecked = guard.recheck(probe, &clock, Lease::NONE).approve(candidate);
             assert!(rechecked.is_err(), "recheck approved {path}");
         }
         // No candidate exists, so nothing can reach `recheck`.

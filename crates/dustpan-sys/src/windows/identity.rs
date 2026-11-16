@@ -57,8 +57,9 @@ fn open(path: &AbsPath) -> io::Result<Handle> {
 }
 
 /// The volume serial and the 128-bit file id. `MetadataExt::file_index` is unstable on Rust
-/// 1.92 and holds 64 bits, which ReFS outgrows.
-fn file_id(handle: &Handle) -> io::Result<FileId> {
+/// 1.92 and holds 64 bits, which ReFS outgrows. The Delete and Trash sinks read ids here too, so
+/// the ids they compare are the ones the guard recorded.
+pub(crate) fn file_id(handle: HANDLE) -> io::Result<FileId> {
     let mut info = FILE_ID_INFO {
         VolumeSerialNumber: 0,
         FileId: windows_sys::Win32::Storage::FileSystem::FILE_ID_128 {
@@ -68,7 +69,7 @@ fn file_id(handle: &Handle) -> io::Result<FileId> {
     // SAFETY: `info` is writable and its size is passed with it.
     let ok = unsafe {
         GetFileInformationByHandleEx(
-            handle.0,
+            handle,
             FileIdInfo,
             (&raw mut info).cast(),
             size_of::<FILE_ID_INFO>() as u32,
@@ -84,7 +85,7 @@ fn file_id(handle: &Handle) -> io::Result<FileId> {
     // SAFETY: a zeroed `BY_HANDLE_FILE_INFORMATION` is a valid value to overwrite.
     let mut basic: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: `basic` is writable.
-    if unsafe { GetFileInformationByHandle(handle.0, &mut basic) } == 0 {
+    if unsafe { GetFileInformationByHandle(handle, &mut basic) } == 0 {
         return Err(io::Error::last_os_error());
     }
     let index = (u64::from(basic.nFileIndexHigh) << 32) | u64::from(basic.nFileIndexLow);
@@ -94,7 +95,7 @@ fn file_id(handle: &Handle) -> io::Result<FileId> {
     ))
 }
 
-fn kind(handle: &Handle) -> io::Result<NodeKind> {
+pub(crate) fn attribute_tag(handle: HANDLE) -> io::Result<FILE_ATTRIBUTE_TAG_INFO> {
     let mut tag = FILE_ATTRIBUTE_TAG_INFO {
         FileAttributes: 0,
         ReparseTag: 0,
@@ -102,7 +103,7 @@ fn kind(handle: &Handle) -> io::Result<NodeKind> {
     // SAFETY: `tag` is writable and its size is passed with it.
     let ok = unsafe {
         GetFileInformationByHandleEx(
-            handle.0,
+            handle,
             FileAttributeTagInfo,
             (&raw mut tag).cast(),
             size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
@@ -111,23 +112,27 @@ fn kind(handle: &Handle) -> io::Result<NodeKind> {
     if ok == 0 {
         return Err(io::Error::last_os_error());
     }
+    Ok(tag)
+}
+
+pub(crate) fn kind_of(tag: &FILE_ATTRIBUTE_TAG_INFO) -> NodeKind {
     let is_link = tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
         && tag.ReparseTag & NAME_SURROGATE != 0;
-    Ok(if is_link {
+    if is_link {
         NodeKind::Link
     } else if tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
         NodeKind::Dir
     } else {
         NodeKind::File
-    })
+    }
 }
 
 /// The Windows `lstat`: one open, two queries on the handle.
 pub(crate) fn node(path: &AbsPath) -> Seen<Node> {
     let seen = open(path).and_then(|handle| {
         Ok(Node {
-            kind: kind(&handle)?,
-            id: file_id(&handle)?,
+            kind: kind_of(&attribute_tag(handle.0)?),
+            id: file_id(handle.0)?,
         })
     });
     match seen {

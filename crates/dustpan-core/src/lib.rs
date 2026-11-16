@@ -1,18 +1,24 @@
 //! Pure domain logic. Nothing here calls the OS, so every rule is testable with plain values.
 //!
 //! The guard reaches the file system only through [`probe::Probe`], which `dustpan-sys`
-//! implements with syscalls and `probe::fake` implements in memory.
+//! implements with syscalls and `probe::fake` implements in memory. It changes the file system
+//! only through [`disk::Disk`], whose methods only this crate can call, from a
+//! [`guard::Approved`].
 #![forbid(unsafe_code)]
 
 pub mod candidate;
 pub mod config;
+pub mod disk;
 pub mod facts;
 pub mod guard;
+pub mod history;
 pub mod identity;
+pub mod oplog;
 pub mod path;
 pub mod paths;
 pub mod probe;
 mod protect;
+pub mod sink;
 pub mod size;
 pub mod time;
 pub mod whitelist;

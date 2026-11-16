@@ -11,7 +11,8 @@ const COMPANIONS: [&str; 3] = ["-wal", "-shm", "-journal"];
 
 pub(super) struct LiveRules {
     fold_case: bool,
-    home: Vec<u8>,
+    /// Every home folder, folded.
+    homes: Vec<Vec<u8>>,
     scopes: Vec<(Vec<Comp>, ScopeNames)>,
     powerlog: Option<Vec<u8>>,
     edr: Option<(Vec<u8>, Vec<Vec<u8>>)>,
@@ -59,14 +60,19 @@ impl LiveRules {
                 .map(|p| fold(p.bytes(), fold_case))
                 .map_err(|_| PolicyError::BadAnchor(text))
         };
-        let home = &inputs.home;
-        let partial = table.live.partial_downloads.iter().map(|&(rel, suffixes)| {
-            let mut dir = home.as_path().to_path_buf();
-            dir.extend(rel.split('/'));
-            (
-                fold(dir.as_os_str().as_encoded_bytes(), fold_case),
-                suffixes,
-            )
+        let partial = inputs.homes.iter().flat_map(|home| {
+            table
+                .live
+                .partial_downloads
+                .iter()
+                .map(move |&(rel, suffixes)| {
+                    let mut dir = home.as_path().to_path_buf();
+                    dir.extend(rel.split('/'));
+                    (
+                        fold(dir.as_os_str().as_encoded_bytes(), fold_case),
+                        suffixes,
+                    )
+                })
         });
         let scopes = |scopes: &'static [&'static str], names: ScopeNames| {
             scopes.iter().map(move |scope| {
@@ -79,7 +85,11 @@ impl LiveRules {
         let group_scopes = scopes(table.live.group_cache_scopes, ScopeNames::AppGroup);
         Ok(Self {
             fold_case,
-            home: fold(home.bytes(), fold_case),
+            homes: inputs
+                .homes
+                .iter()
+                .map(|home| fold(home.bytes(), fold_case))
+                .collect(),
             scopes: bundle_scopes.chain(group_scopes).collect(),
             powerlog: table.live.powerlog_stores.map(abs).transpose()?,
             edr: match table.live.edr {
@@ -122,10 +132,10 @@ impl LiveRules {
         {
             checks.edr = vendors.iter().any(|v| contains(rest, v));
         }
-        if let Some(rest) = below(folded, &self.home) {
-            let offset = raw.len() - rest.len();
-            checks.scope_owner = self.scope_owner(rest, &raw[offset..]);
-        }
+        checks.scope_owner = self.homes.iter().find_map(|home| {
+            let rest = below(folded, home)?;
+            self.scope_owner(rest, &raw[raw.len() - rest.len()..])
+        });
 
         let name = folded.rsplit(|&b| b == SEP).next().unwrap_or(folded);
         let companion = COMPANIONS.iter().find(|c| name.ends_with(c.as_bytes()));

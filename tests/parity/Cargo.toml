@@ -22,5 +22,10 @@ path = "parse.rs"
 [dependencies]
 filetime = "0.2"
 serde = { version = "1", features = ["derive"] }
+signal-hook = "0.3"
 tempfile = "3"
 toml = "1"
+
+[[test]]
+name = "sandbox"
+path = "sandbox.rs"

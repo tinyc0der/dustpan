@@ -15,13 +15,14 @@ fn main() {
 #[cfg(target_os = "macos")]
 mod cli {
     use dustpan_parity::candidates::{
-        Parsed, SAVED_HOME, parse_clean_list, parse_installer_stdout, parse_purge_stdout,
+        Parsed, SAVED_HOME, parse_clean_list, parse_installer_debug, parse_purge_stdout,
     };
     use dustpan_parity::diff::{KnownDifferences, diff};
     use dustpan_parity::error::{Error, Result, io_err};
-    use dustpan_parity::fixture_home::{Fixture, Manifest, drift, snapshot};
+    use dustpan_parity::fixture_home::{Drift, Fixture, Manifest, drift, snapshot};
+    use dustpan_parity::interrupt;
     use dustpan_parity::mole_runner::{
-        DEFAULT_TIMEOUT, MoleCommand, MoleRun, MoleRunner, locate_mo,
+        DEFAULT_TIMEOUT, MoleCommand, MoleRun, MoleRunner, locate_mo, real_home,
     };
     use std::fs;
     use std::path::Path;
@@ -30,7 +31,7 @@ mod cli {
     const STANDARD_MANIFEST: &str = include_str!("manifests/standard.toml");
     const KNOWN_DIFFERENCES: &str = include_str!("known-differences.toml");
     const DUSTPAN_NOTE: &str = "empty until M3: dustpan has no catalog to list candidates yet";
-    const USAGE: &str = "usage: parity <clean|purge|installer> [--manifest FILE] [--whitelist HOME_RELATIVE_PATH]... [--timeout SECS] [--keep] [--save DIR]";
+    const USAGE: &str = "usage: parity <clean|purge|installer|self-check> [--manifest FILE] [--whitelist HOME_RELATIVE_PATH]... [--timeout SECS] [--keep] [--save DIR]";
 
     struct Args {
         command: MoleCommand,
@@ -74,7 +75,64 @@ mod cli {
         Ok(args)
     }
 
+    fn parse_run(command: MoleCommand, mole: &MoleRun, home: &Path) -> Result<Parsed> {
+        Ok(match command {
+            MoleCommand::Clean => {
+                parse_clean_list(mole.clean_list.as_deref().unwrap_or_default(), home)?
+            }
+            MoleCommand::Purge => parse_purge_stdout(&mole.stdout, home)?,
+            MoleCommand::Installer => parse_installer_debug(&mole.stderr, home)?,
+        })
+    }
+
+    fn check_interrupt() -> Result<()> {
+        if interrupt::requested() {
+            Err(Error::Interrupted)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn print_drift(drift: &Drift) {
+        println!(
+            "fixture untouched: {} ({} modified, {} removed, {} added)",
+            if drift.is_clean() { "yes" } else { "NO" },
+            drift.modified.len(),
+            drift.removed.len(),
+            drift.added.len()
+        );
+        println!(
+            "host tools (brew, npm, python3) created {} files in the fixture home; not counted as drift",
+            drift.host_tool_files
+        );
+        for (label, paths) in [
+            ("modified", &drift.modified),
+            ("removed", &drift.removed),
+            ("added", &drift.added),
+        ] {
+            for p in paths {
+                println!("  {label}: {}", p.display());
+            }
+        }
+    }
+
+    /// Builds a fixture, runs the sandbox self-test, and prints the home Mole
+    /// would see and the real home it must not see. CI checks both lines.
+    fn self_check() -> Result<()> {
+        let mo = locate_mo(std::env::var("PARITY_MO").ok().as_deref())?;
+        let fixture = Fixture::build(&Manifest::default())?;
+        let runner = MoleRunner::new(mo, &fixture, DEFAULT_TIMEOUT)?;
+        println!("home={}", fixture.home().display());
+        println!("real-home={}", real_home()?.display());
+        println!("version={}", runner.version()?);
+        Ok(())
+    }
+
     pub fn run(raw: Vec<String>) -> Result<()> {
+        interrupt::install().map_err(io_err("install signal handlers"))?;
+        if raw.first().map(String::as_str) == Some("self-check") {
+            return self_check();
+        }
         let args = parse_args(raw)?;
         let mo = locate_mo(std::env::var("PARITY_MO").ok().as_deref())?;
         let text = match &args.manifest {
@@ -86,24 +144,33 @@ mod cli {
         manifest.validate()?;
 
         let fixture = Fixture::build(&manifest)?;
+        check_interrupt()?;
         let before = snapshot(fixture.root())?;
         let runner = MoleRunner::new(mo, &fixture, args.timeout)?;
         let version = runner.version()?;
-        let mole = runner.run(args.command)?;
+        let mole = runner.run(args.command);
+        let drift = drift(&before, &snapshot(fixture.root())?);
+        check_interrupt()?;
+        let mole = match mole {
+            Ok(m) => m,
+            Err(e) => {
+                print_drift(&drift);
+                return Err(e);
+            }
+        };
         let home = fixture.home();
         if let Some(dir) = &args.save {
             save_capture(dir, args.command, &mole, &home)?;
         }
 
-        let parsed: Parsed = match args.command {
-            MoleCommand::Clean => {
-                parse_clean_list(mole.clean_list.as_deref().unwrap_or_default(), &home)?
+        let parsed = parse_run(args.command, &mole, &home);
+        let parsed = match parsed {
+            Ok(p) => p,
+            Err(e) => {
+                print_drift(&drift);
+                return Err(e);
             }
-            MoleCommand::Purge => parse_purge_stdout(&mole.stdout, &home)?,
-            MoleCommand::Installer => parse_installer_stdout(&mole.stdout)?,
         };
-        let after = snapshot(fixture.root())?;
-        let drift = drift(&before, &after);
 
         println!("mole: {version} (verified)");
         println!(
@@ -112,10 +179,16 @@ mod cli {
             mole.wall.as_secs_f64()
         );
         println!(
-            "paths are relative to the fixture home; ignored {} host rows outside it and {} rows counted under another row",
-            parsed.outside.len(),
+            "paths are relative to the fixture home; {} rows counted under another row are not candidates",
             parsed.nested.len()
         );
+        println!(
+            "== host rows, outside the fixture and ignored ({}) ==",
+            parsed.outside.len()
+        );
+        for p in &parsed.outside {
+            println!("  {p}");
+        }
         let mole_paths: Vec<&str> = parsed.inside.iter().map(|c| c.path.as_str()).collect();
         let known = KnownDifferences::parse(KNOWN_DIFFERENCES)?;
         let result = diff(mole_paths, std::iter::empty());
@@ -123,35 +196,34 @@ mod cli {
             "{}",
             result.render(DUSTPAN_NOTE, &known, args.command.name())
         );
-        println!(
-            "fixture untouched: {} ({} modified, {} removed, {} added)",
-            if drift.is_clean() { "yes" } else { "NO" },
-            drift.modified.len(),
-            drift.removed.len(),
-            drift.added.len()
-        );
+        print_drift(&drift);
         if args.keep {
             println!("fixture kept at {}", fixture.keep().display());
+        }
+        if !parsed.escaped.is_empty() {
+            return Err(Error::Escaped(parsed.escaped));
         }
         if drift.is_clean() {
             Ok(())
         } else {
-            Err(Error::MoleFailed {
-                what: format!("mo {}", args.command.name()),
-                detail: format!(
-                    "changed the fixture: {:?} {:?}",
-                    drift.modified, drift.removed
-                ),
-            })
+            Err(Error::Drift(format!(
+                "{} modified, {} removed, {} added",
+                drift.modified.len(),
+                drift.removed.len(),
+                drift.added.len()
+            )))
         }
     }
 
     fn save_capture(dir: &str, cmd: MoleCommand, run: &MoleRun, home: &Path) -> Result<()> {
         let redact = |s: &str| s.replace(&*home.to_string_lossy(), SAVED_HOME);
         fs::create_dir_all(dir).map_err(io_err(format!("create {dir}")))?;
-        let (name, body) = match &run.clean_list {
-            Some(list) => (format!("{}.clean-list.txt", cmd.name()), redact(list)),
-            None => (format!("{}.stdout.txt", cmd.name()), redact(&run.stdout)),
+        let (name, body) = match (&run.clean_list, cmd) {
+            (Some(list), _) => (format!("{}.clean-list.txt", cmd.name()), redact(list)),
+            (None, MoleCommand::Installer) => {
+                (format!("{}.stderr.txt", cmd.name()), redact(&run.stderr))
+            }
+            (None, _) => (format!("{}.stdout.txt", cmd.name()), redact(&run.stdout)),
         };
         let path = Path::new(dir).join(name);
         fs::write(&path, body).map_err(io_err(format!("write {}", path.display())))

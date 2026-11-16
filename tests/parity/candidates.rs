@@ -13,6 +13,7 @@ pub struct Candidate {
 pub struct Parsed {
     pub inside: Vec<Candidate>,
     pub outside: Vec<String>,
+    pub escaped: Vec<String>,
     pub nested: Vec<String>,
 }
 
@@ -46,17 +47,58 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 pub fn home_relative(path: &str, home: &Path) -> Option<String> {
-    let home = home.to_string_lossy();
-    let relative = if path == "~" || path.starts_with("~/") {
-        path.to_string()
-    } else {
-        match path.strip_prefix(home.as_ref())? {
-            "" => "~".into(),
-            r if r.starts_with('/') => format!("~{r}"),
-            _ => return None,
-        }
+    match place(path, home) {
+        Placement::Inside(p) => Some(p),
+        Placement::Escape | Placement::Host => None,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Placement {
+    Inside(String),
+    /// Under the fixture root but outside the fixture home: a trap or a redirect.
+    Escape,
+    /// Not under the fixture at all: the host machine's own state.
+    Host,
+}
+
+pub fn place(path: &str, home: &Path) -> Placement {
+    if path == "~" || path.starts_with("~/") {
+        return Placement::Inside(mask_generated_name(path.to_string()));
+    }
+    let under = |base: &Path| {
+        let base = base.to_string_lossy();
+        let base = base.trim_end_matches('/');
+        path.strip_prefix(base)
+            .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+            .map(str::to_string)
     };
-    Some(mask_generated_name(relative))
+    if let Some(rest) = under(home) {
+        let relative = if rest.is_empty() {
+            "~".into()
+        } else {
+            format!("~{rest}")
+        };
+        return Placement::Inside(mask_generated_name(relative));
+    }
+    match home.parent().and_then(under) {
+        Some(_) => Placement::Escape,
+        None => Placement::Host,
+    }
+}
+
+impl Parsed {
+    fn push(&mut self, path: &str, size: &str, nested: bool, home: &Path) {
+        match place(path, home) {
+            Placement::Inside(p) if nested => self.nested.push(p),
+            Placement::Inside(p) => self.inside.push(Candidate {
+                path: p,
+                size: size.into(),
+            }),
+            Placement::Escape => self.escaped.push(path.into()),
+            Placement::Host => self.outside.push(path.into()),
+        }
+    }
 }
 
 fn mask_generated_name(path: String) -> String {
@@ -118,17 +160,12 @@ pub fn parse_clean_list(text: &str, home: &Path) -> Result<Parsed, ParseError> {
         if !is_size(size.trim()) {
             return Err(fail(SRC, i + 1, raw, "a size such as `1.0MB` after `# `"));
         }
-        match (home_relative(path.trim(), home), nested) {
-            (Some(p), Some(_)) => parsed.nested.push(p),
-            (Some(p), None) => parsed.inside.push(Candidate {
-                path: p,
-                size: size.trim().into(),
-            }),
-            (None, _) => parsed.outside.push(path.trim().into()),
-        }
+        parsed.push(path.trim(), size.trim(), nested.is_some(), home);
     }
     Ok(parsed)
 }
+
+const CLOUD_PREFIX: &str = "[cloud] ";
 
 const PURGE_NOISE: &[&str] = &[
     "Purge Project Artifacts",
@@ -171,73 +208,34 @@ pub fn parse_purge_stdout(raw: &str, home: &Path) -> Result<Parsed, ParseError> 
                 "a size such as `2.1MB` after the last comma",
             ));
         }
-        match home_relative(path.trim(), home) {
-            Some(p) => parsed.inside.push(Candidate {
-                path: p,
-                size: size.trim().into(),
-            }),
-            None => parsed.outside.push(path.trim().into()),
-        }
+        let path = path.trim();
+        let path = path.strip_prefix(CLOUD_PREFIX).unwrap_or(path);
+        parsed.push(path, size.trim(), false, home);
     }
     Ok(parsed)
 }
 
-fn installer_source_dir(label: &str) -> Option<&'static str> {
-    Some(match label {
-        "Downloads" => "~/Downloads",
-        "Desktop" => "~/Desktop",
-        "Documents" => "~/Documents",
-        "Public" => "~/Public",
-        "Library" => "~/Library/Downloads",
-        "Homebrew" => "~/Library/Caches/Homebrew",
-        _ => return None,
-    })
-}
+const FOUND_INSTALLER: &str = "[DEBUG] Found installer:";
 
-pub fn parse_installer_stdout(raw: &str) -> Result<Parsed, ParseError> {
-    const SRC: &str = "mo installer stdout";
+/// Mole's `--debug` stderr names every installer it found by full path
+/// (`log.sh` `debug_file_action`). The menu on stdout shows one page of
+/// truncated names with a source label instead, so it is not parsed.
+pub fn parse_installer_debug(stderr: &str, home: &Path) -> Result<Parsed, ParseError> {
+    const SRC: &str = "mo installer stderr";
     let mut parsed = Parsed::default();
-    for (i, l) in strip_ansi(raw).lines().enumerate() {
-        let line = l.trim();
-        if line.is_empty()
-            || is_dry_run_banner(line)
-            || line.starts_with("Select Installers to Remove")
-            || line.starts_with("↑↓")
-            || line == "No installer files to clean"
-        {
+    for (i, l) in strip_ansi(stderr).lines().enumerate() {
+        let Some(rest) = l.trim().strip_prefix(FOUND_INSTALLER) else {
             continue;
-        }
-        let row = line.strip_prefix('➤').unwrap_or(line).trim_start();
-        let Some(row) = row.strip_prefix('○').or_else(|| row.strip_prefix('●')) else {
+        };
+        let Some(path) = rest.trim_start().strip_prefix("* ") else {
             return Err(fail(
                 SRC,
                 i + 1,
                 l,
-                "a menu row `○ <name> <size> | <source>` or a known banner line",
+                "`[DEBUG] Found installer:   * <full path>`",
             ));
         };
-        let Some((left, source)) = row.rsplit_once(" | ") else {
-            return Err(fail(SRC, i + 1, l, "`<name> <size> | <source>`"));
-        };
-        let left = left.trim_end();
-        let Some((name, size)) = left.rsplit_once(' ') else {
-            return Err(fail(SRC, i + 1, l, "`<name> <size>` before the `|`"));
-        };
-        if !is_size(size) {
-            return Err(fail(SRC, i + 1, l, "a size such as `1.0MB` before the `|`"));
-        }
-        let Some(dir) = installer_source_dir(source.trim()) else {
-            return Err(fail(
-                SRC,
-                i + 1,
-                l,
-                "a known source label (Downloads, Desktop, Documents, Public, Library, Homebrew)",
-            ));
-        };
-        parsed.inside.push(Candidate {
-            path: format!("{dir}/{}", name.trim()),
-            size: size.into(),
-        });
+        parsed.push(path, "", false, home);
     }
     Ok(parsed)
 }

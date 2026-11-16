@@ -83,16 +83,56 @@ impl Manifest {
         for p in paths {
             relative(p)?;
         }
+        let placed = self
+            .dir
+            .iter()
+            .map(|d| (&d.path, false))
+            .chain(self.file.iter().map(|f| (&f.path, false)))
+            .chain(self.zip.iter().map(|z| (&z.path, false)))
+            .chain(self.symlink.iter().map(|l| (&l.path, true)));
+        for (p, is_link) in placed {
+            if reserved(p, is_link) {
+                return Err(Error::Manifest(format!(
+                    "path {p:?} is inside {MOLE_CONFIG}, which the harness owns: a manifest must not write Mole's config"
+                )));
+            }
+        }
+        for name in self.zip.iter().flat_map(|z| &z.entries) {
+            if has_control(name) {
+                return Err(Error::Manifest(format!(
+                    "zip entry name {name:?} holds a control character"
+                )));
+            }
+        }
         Ok(())
     }
+}
+
+const MOLE_CONFIG: &str = "home/.config/mole";
+
+fn has_control(s: &str) -> bool {
+    s.chars().any(char::is_control)
+}
+
+/// APFS is case-insensitive by default, so compare folded names. A link at
+/// `home` or `home/.config` would redirect the config folder as well.
+fn reserved(path: &str, is_link: bool) -> bool {
+    let fold = |s: &str| -> Vec<String> {
+        Path::new(s)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .collect()
+    };
+    let (path, config) = (fold(path), fold(MOLE_CONFIG));
+    path.starts_with(&config) || (is_link && config.starts_with(&path))
 }
 
 fn relative(p: &str) -> Result<&Path> {
     let path = Path::new(p);
     let ok = path.components().all(|c| matches!(c, Component::Normal(_)));
-    if p.is_empty() || !ok {
+    if p.is_empty() || !ok || has_control(p) {
         return Err(Error::Manifest(format!(
-            "path {p:?} must be relative to the fixture root with no `..` or absolute parts"
+            "path {p:?} must be relative to the fixture root with no `..`, absolute parts or control characters"
         )));
     }
     Ok(path)
@@ -183,14 +223,19 @@ impl Fixture {
     }
 }
 
+/// Folders a throwaway fixture may live in. `$TMPDIR` is deliberately not
+/// consulted: pointing it at a home folder must not make the home acceptable.
+const TEMP_ROOTS: &[&str] = &["/tmp", "/var/tmp", "/private/tmp", "/private/var/folders"];
+
 pub fn assert_under_temp(path: &Path) -> Result<()> {
-    let temp = std::env::temp_dir()
-        .canonicalize()
-        .map_err(io_err("resolve temp folder"))?;
     let path = path
         .canonicalize()
         .map_err(io_err("resolve fixture path"))?;
-    if path.starts_with(&temp) {
+    let under_temp = TEMP_ROOTS
+        .iter()
+        .filter_map(|r| Path::new(r).canonicalize().ok())
+        .any(|root| path.starts_with(root));
+    if under_temp {
         Ok(())
     } else {
         Err(Error::FixtureOutsideTemp(path.display().to_string()))
@@ -323,13 +368,21 @@ pub struct Drift {
     pub modified: Vec<PathBuf>,
     pub removed: Vec<PathBuf>,
     pub added: Vec<PathBuf>,
+    /// Files that host tools Mole calls (brew, npm, python3) create in the home.
+    pub host_tool_files: usize,
 }
 
 impl Drift {
     pub fn is_clean(&self) -> bool {
-        self.modified.is_empty() && self.removed.is_empty()
+        self.modified.is_empty() && self.removed.is_empty() && self.added.is_empty()
     }
 }
+
+const HOST_TOOL_DIRS: &[&str] = &[
+    "home/.npm",
+    "home/Library/Caches/Homebrew",
+    "home/Library/Caches/com.apple.python",
+];
 
 const IGNORED: &[&str] = &[
     "home/.config/mole",
@@ -358,7 +411,12 @@ pub fn drift(before: &Snapshot, after: &Snapshot) -> Drift {
     for (path, kind) in after {
         let holds_ignored =
             *kind == Kind::Dir && IGNORED.iter().any(|s| Path::new(s).starts_with(path));
-        if !before.contains_key(path) && !is_ignored(path) && !holds_ignored {
+        if before.contains_key(path) || is_ignored(path) || holds_ignored {
+            continue;
+        }
+        if HOST_TOOL_DIRS.iter().any(|s| path.starts_with(s)) {
+            d.host_tool_files += 1;
+        } else {
             d.added.push(path.clone());
         }
     }

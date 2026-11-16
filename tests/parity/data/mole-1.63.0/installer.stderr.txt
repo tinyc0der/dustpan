@@ -1,0 +1,22 @@
+[DEBUG] Debug logging enabled. Session log: /FIXTURE/home/Library/Logs/mole/mole_debug_session.log
+[DEBUG] === Collect Installers ===
+[DEBUG] Scanning for redundant installer files
+[TIMEOUT] Running with 30s timeout: /bin/bash -c 
+            errors_file="$1"
+            shift
+            exec "$@" 2> "$errors_file"
+         bash /private/var/folders/0z/bmq286gx6sn80k37gg5sn0340000gn/T/dustpan-parity.S48Tde/tmp/mole.cDnhYI fd --show-errors --print0 --no-ignore --hidden --type f --max-depth 2 -e dmg -e pkg -e mpkg -e iso -e xip -e zip . /FIXTURE/home/Downloads
+[TIMEOUT] Running with 30s timeout: /bin/bash -c 
+            errors_file="$1"
+            shift
+            exec "$@" 2> "$errors_file"
+         bash /private/var/folders/0z/bmq286gx6sn80k37gg5sn0340000gn/T/dustpan-parity.S48Tde/tmp/mole.I2ju4H fd --show-errors --print0 --no-ignore --hidden --type f --max-depth 2 -e dmg -e pkg -e mpkg -e iso -e xip -e zip . /FIXTURE/home/Documents
+[TIMEOUT] Running with 30s timeout: /bin/bash -c 
+            errors_file="$1"
+            shift
+            exec "$@" 2> "$errors_file"
+         bash /private/var/folders/0z/bmq286gx6sn80k37gg5sn0340000gn/T/dustpan-parity.S48Tde/tmp/mole.A4nZpR fd --show-errors --print0 --no-ignore --hidden --type f --max-depth 2 -e dmg -e pkg -e mpkg -e iso -e xip -e zip . /Users/Shared
+[TIMEOUT] Running with 30s timeout: sort -zu /private/var/folders/0z/bmq286gx6sn80k37gg5sn0340000gn/T/dustpan-parity.S48Tde/tmp/mole.Ruzhqn
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/Example-1.0.dmg
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/ExampleInstaller.zip
+[DEBUG] Found installer:   * /FIXTURE/home/Downloads/Setup.pkg

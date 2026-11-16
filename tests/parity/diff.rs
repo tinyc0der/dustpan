@@ -46,19 +46,20 @@ pub fn diff<'a>(
 impl Diff {
     pub fn render(&self, dustpan_note: &str, known: &KnownDifferences, command: &str) -> String {
         let mut out = String::new();
-        section(&mut out, "only Mole found", &self.only_mole, "");
-        section(
-            &mut out,
-            "only dustpan found",
-            &self.only_dustpan,
-            dustpan_note,
-        );
-        section(&mut out, "both found", &self.both, "");
         let mine: Vec<&KnownDifference> = known
             .known
             .iter()
             .filter(|k| k.command == command)
             .collect();
+        let only_dustpan: Vec<String> = self
+            .only_dustpan
+            .iter()
+            .filter(|p| !mine.iter().any(|k| &k.path == *p))
+            .cloned()
+            .collect();
+        section(&mut out, "only Mole found", &self.only_mole, "");
+        section(&mut out, "only dustpan found", &only_dustpan, dustpan_note);
+        section(&mut out, "both found", &self.both, "");
         out.push_str(&format!(
             "== known differences, Mole omits these on purpose ({}) ==\n",
             mine.len()

@@ -1,10 +1,12 @@
 use crate::error::{Error, Result, SUPPORTED_MOLE, io_err};
 use crate::fixture_home::{Fixture, assert_under_temp};
+use crate::interrupt;
 use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -47,8 +49,9 @@ impl MoleCommand {
 
     fn extra_flags(self) -> &'static [&'static str] {
         match self {
-            MoleCommand::Purge => &["--yes"],
-            MoleCommand::Clean | MoleCommand::Installer => &[],
+            // Installer paths exist only in the `--debug` trace on stderr.
+            MoleCommand::Installer => &["--debug"],
+            MoleCommand::Clean | MoleCommand::Purge => &[],
         }
     }
 }
@@ -118,15 +121,82 @@ pub struct MoleRunner {
     timeout: Duration,
 }
 
+/// The home folder the user database names for this user, never `$HOME`.
+pub fn real_home() -> Result<PathBuf> {
+    let out = Command::new("/bin/sh")
+        .args(["-c", "eval echo \"~$(/usr/bin/id -un)\""])
+        .env_clear()
+        .output()
+        .map_err(io_err("look up the real home"))?;
+    let home = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || !home.starts_with('/') || home.len() < 2 {
+        return Err(Error::Sandbox(format!(
+            "could not read the real home from the user database: {home:?}"
+        )));
+    }
+    Ok(PathBuf::from(home))
+}
+
+/// The write-deny profile plus a read deny on the real home. Tools such as
+/// `simctl` and `node` find the home from the user database and ignore `$HOME`.
+pub fn sandbox_profile(real_home: &Path, mo: &Path) -> Result<String> {
+    let mut roots = vec![real_home.to_path_buf()];
+    if let Ok(canonical) = real_home.canonicalize()
+        && canonical != real_home
+    {
+        roots.push(canonical);
+    }
+    let mut profile = SANDBOX_PROFILE.to_string();
+    for root in &roots {
+        profile.push_str(&format!(
+            "(deny file-read-data (subpath {}))\n",
+            quote(root)?
+        ));
+    }
+    let mo_root = mo.parent().unwrap_or(mo);
+    let mo_root = mo_root.canonicalize().unwrap_or(mo_root.to_path_buf());
+    if roots.iter().any(|r| mo_root.starts_with(r)) {
+        profile.push_str(&format!(
+            "(allow file-read-data (subpath {}))\n",
+            quote(&mo_root)?
+        ));
+    }
+    Ok(profile)
+}
+
+fn quote(p: &Path) -> Result<String> {
+    let text = p.to_string_lossy();
+    if text.contains(['"', '\\']) || text.chars().any(char::is_control) {
+        return Err(Error::Sandbox(format!(
+            "cannot write {text:?} into a sandbox profile"
+        )));
+    }
+    Ok(format!("\"{text}\""))
+}
+
 impl MoleRunner {
     pub fn new(mo: PathBuf, fixture: &Fixture, timeout: Duration) -> Result<MoleRunner> {
+        let real = real_home()?;
+        let profile = sandbox_profile(&real, &mo)?;
+        Self::with_profile(mo, fixture, timeout, &real, &profile)
+    }
+
+    /// Builds a runner around any profile and proves it blocks writes to and
+    /// reads of `real_home`. A profile that allows either is refused.
+    pub fn with_profile(
+        mo: PathBuf,
+        fixture: &Fixture,
+        timeout: Duration,
+        real_home: &Path,
+        profile_text: &str,
+    ) -> Result<MoleRunner> {
         assert_under_temp(fixture.root())?;
         let scratch = tempfile::Builder::new()
             .prefix("dustpan-parity-run.")
             .tempdir()
             .map_err(io_err("create scratch folder"))?;
         let profile = scratch.path().join("deny-writes.sb");
-        fs::write(&profile, SANDBOX_PROFILE).map_err(io_err("write sandbox profile"))?;
+        fs::write(&profile, profile_text).map_err(io_err("write sandbox profile"))?;
         let shim = scratch.path().join("shims");
         fs::create_dir(&shim).map_err(io_err("create shim folder"))?;
         let ps = shim.join("ps");
@@ -140,23 +210,49 @@ impl MoleRunner {
             profile,
             timeout,
         };
-        runner.prove_sandbox()?;
+        runner.prove_sandbox(real_home)?;
         Ok(runner)
     }
 
-    fn prove_sandbox(&self) -> Result<()> {
-        let probe = format!("/Library/.dustpan-parity-probe-{}", std::process::id());
-        let write = self.sandboxed(Path::new("/usr/bin/touch"), &[&probe], "probe-write")?;
-        if write.exit == Some(0) {
+    fn prove_sandbox(&self, real_home: &Path) -> Result<()> {
+        const DENIED: &str = "Operation not permitted";
+        static PROBES: AtomicUsize = AtomicUsize::new(0);
+        let probe = real_home.join(format!(
+            ".dustpan-parity-probe-{}-{}",
+            std::process::id(),
+            PROBES.fetch_add(1, Ordering::Relaxed)
+        ));
+        let probe_text = probe.to_string_lossy().into_owned();
+        // The sandboxed shell removes the probe itself if the write is allowed,
+        // so a broken profile leaves nothing behind in the real home.
+        let write = self.sandboxed(
+            Path::new("/bin/sh"),
+            &[
+                "-c",
+                "/usr/bin/touch -- \"$1\" || exit 5; /bin/rm -f -- \"$1\"; exit 3",
+                "probe",
+                &probe_text,
+            ],
+            "probe-write",
+        )?;
+        if write.exit != Some(5)
+            || !write.stderr.contains(DENIED)
+            || fs::symlink_metadata(&probe).is_ok()
+        {
             return Err(Error::Sandbox(format!(
-                "a write to {probe} succeeded inside the sandbox"
+                "a write to {probe_text} was not denied inside the sandbox (exit {:?}, stderr {:?})",
+                write.exit,
+                write.stderr.trim()
             )));
         }
-        let sudo = self.sandboxed(Path::new("/usr/bin/sudo"), &["-n", "true"], "probe-sudo")?;
-        if sudo.exit == Some(0) {
-            return Err(Error::Sandbox(
-                "/usr/bin/sudo ran inside the sandbox".into(),
-            ));
+        let home_text = real_home.to_string_lossy().into_owned();
+        let read = self.sandboxed(Path::new("/bin/ls"), &[&home_text], "probe-read")?;
+        if read.exit == Some(0) || !read.stderr.contains(DENIED) {
+            return Err(Error::Sandbox(format!(
+                "reading {home_text} was not denied inside the sandbox (exit {:?}, stderr {:?})",
+                read.exit,
+                read.stderr.trim()
+            )));
         }
         let tmp_probe = self.tmp().join(".probe");
         let inside = self.sandboxed(
@@ -167,6 +263,15 @@ impl MoleRunner {
         if inside.exit != Some(0) {
             return Err(Error::Sandbox("a write inside the fixture failed".into()));
         }
+        let seen = self.sandboxed(Path::new("/usr/bin/printenv"), &["HOME"], "probe-home")?;
+        let seen_home = PathBuf::from(seen.stdout.trim());
+        if seen_home != self.home {
+            return Err(Error::Sandbox(format!(
+                "the sandboxed HOME is {} and not the fixture home",
+                seen_home.display()
+            )));
+        }
+        assert_under_temp(&seen_home)?;
         Ok(())
     }
 
@@ -212,7 +317,12 @@ impl MoleRunner {
         if run.exit != Some(0) {
             return Err(Error::MoleFailed {
                 what: format!("mo {}", inv.args().join(" ")),
-                detail: format!("exit {:?}\nstderr: {}", run.exit, tail(&run.output.stderr)),
+                detail: format!(
+                    "exit {:?}\nstdout: {}\nstderr: {}",
+                    run.exit,
+                    tail(&run.output.stdout),
+                    tail(&run.output.stderr)
+                ),
             });
         }
         Ok(run.output)
@@ -243,6 +353,7 @@ impl MoleRunner {
             .env("TMPDIR", self.tmp())
             .env("LANG", "en_US.UTF-8")
             .env("TERM", "dumb")
+            .envs(debug_env(args))
             .current_dir(&self.home)
             .stdin(Stdio::null())
             .stdout(File::create(&stdout_path).map_err(io_err("create stdout capture"))?)
@@ -255,6 +366,11 @@ impl MoleRunner {
             if let Some(status) = child.try_wait().map_err(io_err("wait for child"))? {
                 break Some(status);
             }
+            if interrupt::requested() {
+                kill_group(child.id());
+                let _ = child.wait();
+                return Err(Error::Interrupted);
+            }
             if started.elapsed() > self.timeout {
                 kill_group(child.id());
                 let _ = child.wait();
@@ -263,7 +379,11 @@ impl MoleRunner {
             sleep(Duration::from_millis(25));
         };
         let wall = started.elapsed();
-        let read = |p: &Path| fs::read_to_string(p).unwrap_or_default();
+        let read = |p: &Path| {
+            fs::read(p)
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default()
+        };
         let output = MoleRun {
             stdout: read(&stdout_path),
             stderr: read(&stderr_path),
@@ -297,6 +417,13 @@ impl std::ops::Deref for Sandboxed {
     fn deref(&self) -> &MoleRun {
         &self.output
     }
+}
+
+/// `--debug` makes Mole echo `$USER` under `set -u`, which kills it when the
+/// scrubbed environment has none. A fixed name keeps the run independent of the
+/// real account.
+fn debug_env(args: &[&str]) -> Option<(&'static str, &'static str)> {
+    args.contains(&"--debug").then_some(("USER", "dustpan"))
 }
 
 fn kill_group(pid: u32) {

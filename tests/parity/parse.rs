@@ -1,5 +1,5 @@
 use dustpan_parity::candidates::{
-    Parsed, SAVED_HOME, parse_clean_list, parse_installer_stdout, parse_purge_stdout,
+    Parsed, SAVED_HOME, parse_clean_list, parse_installer_debug, parse_purge_stdout,
 };
 use dustpan_parity::diff::{KnownDifferences, diff};
 use dustpan_parity::error::SUPPORTED_MOLE;
@@ -8,9 +8,11 @@ use std::path::Path;
 const CLEAN_163: &str = include_str!("data/mole-1.63.0/clean.clean-list.txt");
 const CLEAN_167: &str = include_str!("data/mole-1.67.0/clean.clean-list.txt");
 const PURGE_167: &str = include_str!("data/mole-1.67.0/purge.stdout.txt");
-const INSTALLER_167: &str = include_str!("data/mole-1.67.0/installer.stdout.txt");
+const INSTALLER_167: &str = include_str!("data/mole-1.67.0/installer.stderr.txt");
+const MANY_167: &str = include_str!("data/mole-1.67.0/installers-many.stderr.txt");
+const PURGE_CLOUD_167: &str = include_str!("data/mole-1.67.0/purge-cloud.stdout.txt");
 const PURGE_163: &str = include_str!("data/mole-1.63.0/purge.stdout.txt");
-const INSTALLER_163: &str = include_str!("data/mole-1.63.0/installer.stdout.txt");
+const INSTALLER_163: &str = include_str!("data/mole-1.63.0/installer.stderr.txt");
 
 fn home() -> &'static Path {
     Path::new(SAVED_HOME)
@@ -96,7 +98,7 @@ fn purge_lists_the_old_artifacts_only() {
 #[test]
 fn installer_lists_dmg_pkg_and_installer_zip_only() {
     for out in [INSTALLER_163, INSTALLER_167] {
-        let parsed = parse_installer_stdout(out).unwrap();
+        let parsed = parse_installer_debug(out, home()).unwrap();
         assert_eq!(
             paths(&parsed),
             [
@@ -112,7 +114,8 @@ fn installer_lists_dmg_pkg_and_installer_zip_only() {
 fn parsers_fail_loudly_on_an_unknown_line_and_name_the_verified_versions() {
     let clean = parse_clean_list("=== A ===\nnot a row at all\n", home()).unwrap_err();
     let purge = parse_purge_stdout("✓ [DRY RUN] ~/x, 1MB\nSurprise banner\n", home()).unwrap_err();
-    let installer = parse_installer_stdout("Totally new header\n").unwrap_err();
+    let installer =
+        parse_installer_debug("[DEBUG] Found installer: no bullet\n", home()).unwrap_err();
     for (err, line) in [(clean, 2), (purge, 2), (installer, 1)] {
         assert_eq!(err.line_no, line);
         let message = err.to_string();
@@ -128,11 +131,7 @@ fn both_dry_run_banner_icons_are_accepted() {
         let purge = format!(
             "{icon} DRY RUN MODE, No project artifacts will be removed\n\n✓ [DRY RUN] ~/p/node_modules, 1.1MB\n"
         );
-        let installer = format!(
-            "{icon} DRY RUN MODE, No installer files will be removed\n  ○ a.dmg 1.0MB | Downloads\n"
-        );
         assert_eq!(parse_purge_stdout(&purge, home()).unwrap().inside.len(), 1);
-        assert_eq!(parse_installer_stdout(&installer).unwrap().inside.len(), 1);
     }
 }
 
@@ -140,12 +139,6 @@ fn both_dry_run_banner_icons_are_accepted() {
 fn parsers_reject_a_row_with_a_bad_size() {
     assert!(parse_clean_list("/FIXTURE/home/x  # lots\n", home()).is_err());
     assert!(parse_purge_stdout("✓ [DRY RUN] ~/x, lots\n", home()).is_err());
-    assert!(parse_installer_stdout("  ○ a.dmg lots | Downloads\n").is_err());
-}
-
-#[test]
-fn installer_rejects_an_unknown_source_label() {
-    assert!(parse_installer_stdout("  ○ a.dmg 1.0MB | Mystery\n").is_err());
 }
 
 #[test]
@@ -257,6 +250,22 @@ mod fixture {
     }
 
     #[test]
+    fn a_manifest_cannot_write_mole_config_or_smuggle_control_characters() {
+        for text in [
+            "[[file]]\npath = \"home/.config/mole/purge_paths\"\nsize = 1\n",
+            "[[file]]\npath = \"home/.CONFIG/Mole/purge_paths\"\nsize = 1\n",
+            "[[dir]]\npath = \"home/.config/mole\"\n",
+            "[[zip]]\npath = \"home/.config/mole/purge_paths\"\nentries = [\"a\"]\n",
+            "[[symlink]]\npath = \"home/.config\"\ntarget = \"victim\"\n",
+            "[[zip]]\npath = \"home/Downloads/x.zip\"\nentries = [\"a\\nb\"]\n",
+            "[[file]]\npath = \"home/a\\nb\"\nsize = 1\n",
+        ] {
+            assert!(Manifest::parse(text).is_err(), "{text}");
+        }
+        assert!(Manifest::parse("[mole]\nwhitelist = [\"home/Library/Caches/x\"]\n").is_ok());
+    }
+
+    #[test]
     fn same_manifest_gives_the_same_snapshot_shape() {
         let a = snapshot(standard().root()).unwrap();
         let b = snapshot(standard().root()).unwrap();
@@ -351,7 +360,7 @@ mod runner {
         }
         assert_eq!(
             DryRunArgv::new(MoleCommand::Purge).args(),
-            ["purge", "--dry-run", "--yes"]
+            ["purge", "--dry-run"]
         );
     }
 
@@ -416,7 +425,11 @@ mod runner {
             );
             assert_eq!(
                 lines.next().unwrap().trim(),
-                "HOME LANG TERM",
+                if cmd == MoleCommand::Installer {
+                    "HOME LANG TERM USER"
+                } else {
+                    "HOME LANG TERM"
+                },
                 "environment was not scrubbed"
             );
             assert_eq!(lines.next(), None, "stdin was not empty");
@@ -454,4 +467,92 @@ mod runner {
         assert!(err.to_string().contains("timed out"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(10));
     }
+}
+
+fn found(path: &str) -> String {
+    format!("\x1b[0;90m[DEBUG] Found installer:   * {path}\x1b[0m\n")
+}
+
+#[test]
+fn installer_debug_rows_list_every_file_with_its_full_path() {
+    let mut stderr = String::from("[DEBUG] Starting Collect Installers\n");
+    for i in 1..=25 {
+        stderr.push_str(&found(&format!("/FIXTURE/home/Downloads/a{i:02}.dmg")));
+    }
+    stderr.push_str(&found("/FIXTURE/home/Downloads/sub/Nested.dmg"));
+    stderr.push_str(&found(
+        "/FIXTURE/home/Downloads/This-Is-A-Very-Long-Installer-Name-For-Truncation-1.2.3.dmg",
+    ));
+    stderr.push_str(&found(
+        "/FIXTURE/home/Library/Caches/Homebrew/downloads/0123abcd--Firefox.dmg",
+    ));
+    stderr.push_str(&found("/Users/Shared/Host.pkg"));
+    let parsed = parse_installer_debug(&stderr, home()).unwrap();
+    let listed = paths(&parsed);
+    assert_eq!(listed.len(), 28, "{listed:?}");
+    assert!(listed.contains(&"~/Downloads/a25.dmg"));
+    assert!(listed.contains(&"~/Downloads/sub/Nested.dmg"));
+    assert!(
+        listed.contains(&"~/Downloads/This-Is-A-Very-Long-Installer-Name-For-Truncation-1.2.3.dmg")
+    );
+    assert!(listed.contains(&"~/Library/Caches/Homebrew/downloads/0123abcd--Firefox.dmg"));
+    assert_eq!(parsed.outside, vec!["/Users/Shared/Host.pkg".to_string()]);
+    assert!(parsed.escaped.is_empty());
+}
+
+#[test]
+fn purge_cloud_rows_are_fixture_rows() {
+    let out = "✓ [DRY RUN] [cloud] ~/Library/CloudStorage/Dropbox/cloudweb/node_modules, 1.1MB\n";
+    let parsed = parse_purge_stdout(out, home()).unwrap();
+    assert_eq!(
+        paths(&parsed),
+        vec!["~/Library/CloudStorage/Dropbox/cloudweb/node_modules"]
+    );
+    assert!(parsed.outside.is_empty());
+}
+
+#[test]
+fn a_row_under_the_fixture_root_but_outside_home_is_an_escape() {
+    let out = "✓ [DRY RUN] /FIXTURE/victim/node_modules, 4KB\n";
+    let parsed = parse_purge_stdout(out, home()).unwrap();
+    assert_eq!(
+        parsed.escaped,
+        vec!["/FIXTURE/victim/node_modules".to_string()]
+    );
+    assert!(parsed.inside.is_empty() && parsed.outside.is_empty());
+    let clean = parse_clean_list("/FIXTURE/victim/canary.txt  # 4KB\n", home()).unwrap();
+    assert_eq!(clean.escaped.len(), 1);
+    let rooted = parse_clean_list("/FIXTURE/homework/x  # 4KB\n", home()).unwrap();
+    assert_eq!(
+        rooted.escaped.len(),
+        1,
+        "a sibling that shares the name prefix escapes too"
+    );
+}
+
+#[test]
+fn real_mole_installer_trace_lists_all_28_files_at_their_full_paths() {
+    let parsed = parse_installer_debug(MANY_167, home()).unwrap();
+    let listed = paths(&parsed);
+    assert_eq!(listed.len(), 28, "{listed:?}");
+    assert!(listed.contains(&"~/Downloads/a25.dmg"));
+    assert!(listed.contains(&"~/Downloads/sub/Nested.dmg"));
+    assert!(listed.contains(&"~/Library/Caches/Homebrew/downloads/0123abcdef--Firefox-1.0.dmg"));
+    assert!(
+        listed.contains(&"~/Downloads/This-Is-A-Very-Long-Installer-Name-For-Truncation-1.2.3.dmg")
+    );
+    assert!(parsed.outside.is_empty() && parsed.escaped.is_empty());
+}
+
+#[test]
+fn real_mole_purge_lists_cloud_storage_rows_with_the_marker_stripped() {
+    let parsed = parse_purge_stdout(PURGE_CLOUD_167, home()).unwrap();
+    assert_eq!(
+        paths(&parsed),
+        [
+            "~/Library/CloudStorage/Dropbox/cloudweb/node_modules",
+            "~/Projects/oldweb/node_modules"
+        ]
+    );
+    assert!(parsed.outside.is_empty() && parsed.escaped.is_empty());
 }

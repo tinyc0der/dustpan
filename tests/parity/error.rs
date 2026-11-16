@@ -12,6 +12,9 @@ pub enum Error {
     MoleFailed { what: String, detail: String },
     Parse(ParseError),
     Sandbox(String),
+    Escaped(Vec<String>),
+    Drift(String),
+    Interrupted,
     FixtureOutsideTemp(String),
     Usage(String),
 }
@@ -32,6 +35,8 @@ impl Error {
             Error::Parse(_) => 5,
             Error::Sandbox(_) | Error::FixtureOutsideTemp(_) => 6,
             Error::Usage(_) => 2,
+            Error::Escaped(_) => 7,
+            Error::Interrupted => 130,
             _ => 1,
         }
     }
@@ -81,6 +86,16 @@ impl fmt::Display for Error {
                 "refusing to run: fixture {p} is not under the temp folder, and the harness must never touch the real home"
             ),
             Error::Usage(m) => write!(f, "{m}"),
+            Error::Escaped(paths) => write!(
+                f,
+                "Mole listed {} path(s) under the fixture root but outside the fixture home: {}",
+                paths.len(),
+                paths.join(", ")
+            ),
+            Error::Drift(m) => write!(f, "the fixture changed during the run: {m}"),
+            Error::Interrupted => {
+                write!(f, "interrupted; Mole was stopped and the fixture removed")
+            }
         }
     }
 }

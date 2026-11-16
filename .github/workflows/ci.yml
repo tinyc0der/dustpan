@@ -81,27 +81,44 @@ jobs:
     runs-on: macos-latest
     env:
       MOLE_VERSION: "1.67.0"
+      MOLE_SHA256: "f263992189c33e54dba12081e3455b1f25078e4e9806e5d6a1df67f7fa552645"
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - name: Install Mole
-        run: brew install mole
-      - name: Record the Mole version
+      - name: Install Mole from the pinned tag
         run: |
-          mo --version | tee mole-version.txt
-          grep -q "Mole version ${MOLE_VERSION}\$" mole-version.txt || {
-            echo "::error::Homebrew installed a Mole other than the pinned ${MOLE_VERSION}. Check the parsers against it, then update MOLE_VERSION and SUPPORTED_MOLE."
-            exit 1
-          }
+          dir=$(mktemp -d)
+          curl -fsSL -o "$dir/mole.tgz" "https://github.com/tw93/Mole/archive/refs/tags/V${MOLE_VERSION}.tar.gz"
+          echo "${MOLE_SHA256}  $dir/mole.tgz" | shasum -a 256 -c -
+          tar -xzf "$dir/mole.tgz" -C "$dir"
+          echo "PARITY_MO=$dir/Mole-${MOLE_VERSION}/mo" >> "$GITHUB_ENV"
+      - name: Sandbox self-test, Mole version and HOME under the temp folder
+        run: |
+          out=$(scripts/parity.sh self-check)
+          echo "$out"
+          home=$(sed -n 's/^home=//p' <<<"$out")
+          real=$(sed -n 's/^real-home=//p' <<<"$out")
+          [[ "$(sed -n 's/^version=//p' <<<"$out")" == "$MOLE_VERSION" ]] || { echo "::error::Mole is not ${MOLE_VERSION}"; exit 1; }
+          case "$home" in
+            /private/var/folders/*|/private/tmp/*|/tmp/*) ;;
+            *) echo "::error::the fixture HOME $home is not under the temp folder"; exit 1 ;;
+          esac
+          case "$home/" in
+            "$real"/*) echo "::error::the fixture HOME $home is inside the real home $real"; exit 1 ;;
+          esac
       - name: Unit tests
-        run: cargo test --test parity
+        run: cargo test -p dustpan-parity
       - name: Parity on the standard fixture
         run: |
           for c in clean purge installer; do
             echo "### scripts/parity.sh $c" | tee -a "$GITHUB_STEP_SUMMARY"
-            scripts/parity.sh "$c" --save "$RUNNER_TEMP/mole-captures" | tee -a "$GITHUB_STEP_SUMMARY"
+            scripts/parity.sh "$c" --save "$RUNNER_TEMP/mole-captures" | tee "$RUNNER_TEMP/parity-$c.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+            scripts/parity-check.sh "$c" "$RUNNER_TEMP/parity-$c.txt"
           done
       - uses: actions/upload-artifact@v4
         with:

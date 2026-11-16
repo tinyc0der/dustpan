@@ -1,0 +1,13 @@
+○ DRY RUN MODE, No project artifacts will be removed
+
+Purge Project Artifacts
+
+✓ [DRY RUN] [cloud] ~/Library/CloudStorage/Dropbox/cloudweb/node_modules, 1.1MB
+✓ [DRY RUN] ~/Projects/oldweb/node_modules, 1.1MB
+
+
+======================================================================
+Dry run complete - no changes made
+Would free approximately: 2.1MB | Items: 2 | Free: 81.79GB
+======================================================================
+

@@ -4,9 +4,10 @@ mod cli;
 mod debug;
 mod exit;
 
+use dustpan::tui;
 use exit::Exit;
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -54,6 +55,21 @@ fn main() -> ExitCode {
             "dustpan {}\n{facts}",
             env!("CARGO_PKG_VERSION")
         );
+    } else if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        let options = tui::Options {
+            ascii: cli.ascii,
+            no_color: cli::wants_no_color(&args, std::env::var_os("NO_COLOR")),
+            interrupted_exit: Exit::Interrupted as i32,
+        };
+        return match tui::run(options) {
+            Ok(tui::Finish::Quit) => Exit::Done,
+            Ok(tui::Finish::Interrupted) => Exit::Interrupted,
+            Err(err) => {
+                _ = writeln!(std::io::stderr(), "dustpan: the terminal failed: {err}");
+                Exit::Failed
+            }
+        }
+        .into();
     } else {
         let _ = cmd.print_help();
     }

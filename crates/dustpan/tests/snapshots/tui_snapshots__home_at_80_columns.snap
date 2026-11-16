@@ -1,0 +1,28 @@
+---
+source: crates/dustpan/tests/tui_snapshots.rs
+expression: "screen(&state(unicode(), 80, 24))"
+---
+ dustpan › Home                                        Macintosh HD  88 GB free
+────────────────────────────────────────────────────────────────────────────────
+
+ ➤ 1  Clean       Coming in M3
+   2  Uninstall   Coming in M5
+   3  Analyze     Coming in M1
+   4  Optimize    Coming in M4
+   5  Status      Coming in M2
+  ────────────────────────────────────────────────────────────────────────────
+   6  Purge       Coming in M6
+   7  Installers  Coming in M6
+   8  Slim        Coming in M7
+   9  History     Coming in M3
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+ ↑↓ Move  Enter Open  1-9 Jump  Tab Detail  , Settings  ? Help  q Quit

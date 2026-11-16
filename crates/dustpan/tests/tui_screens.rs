@@ -62,7 +62,11 @@ fn env_for(home: &std::path::Path) -> Environment {
 
 fn canonical_home() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = if cfg!(windows) {
+        dir.path().to_path_buf()
+    } else {
+        dir.path().canonicalize().unwrap()
+    };
     (dir, root)
 }
 
@@ -163,6 +167,7 @@ fn about_pages_at_the_smallest_size_and_wide() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn check_starts_with_a_placeholder_and_a_promise_to_only_read() {
     let (_home, env) = home_with_log(None);

@@ -1,18 +1,20 @@
-//! `Guard::recheck` is the only way to an `Approved` (SAFE-10).
+//! `Recheck::approve` is the only way to an `Approved` (SAFE-10).
 #![cfg(unix)]
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
 use dustpan_core::guard::{
-    Guard, GuardInputs, Homes, IdentityReason, KeptReason, Layer, LiveReason, Rejection,
-    ShapeReason, Verdict,
+    Approved, Bound, ContentsReason, Guard, GuardInputs, Homes, IdentityReason, KeptReason, Layer,
+    Lease, LiveReason, Refused, Rejection, ShapeReason, Verdict,
 };
 use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
 use dustpan_core::probe::{Owner, Probe, Seen, Unseen};
+use dustpan_core::time::{FixedClock, WallTime};
 use dustpan_core::whitelist::Whitelist;
 use std::sync::Arc;
+use std::time::Duration;
 
 const APP: &str = "/Users/alice/Library/Caches/com.example.app";
 const CACHE: &str = "/Users/alice/Library/Caches/com.example.app/blob";
@@ -66,8 +68,24 @@ fn discover(guard: &Guard, fs: &FakeProbe) -> Candidate {
     candidate
 }
 
+fn clock() -> FixedClock {
+    FixedClock::new(WallTime {
+        unix_secs: 1_763_280_000,
+        utc_offset_secs: 0,
+    })
+}
+
+/// One recheck with its own evidence, as the privileged helper runs it.
+#[expect(
+    clippy::result_large_err,
+    reason = "mirrors Recheck::approve, which hands the candidate back"
+)]
+fn approve(guard: &Guard, fs: &FakeProbe, candidate: Candidate) -> Result<Approved, Refused> {
+    guard.recheck(fs, &clock(), Lease::NONE).approve(candidate)
+}
+
 fn refusal(guard: &Guard, fs: &FakeProbe, candidate: Candidate) -> Rejection {
-    guard.recheck(candidate, fs).unwrap_err().rejection
+    approve(guard, fs, candidate).unwrap_err().rejection
 }
 
 #[test]
@@ -76,7 +94,7 @@ fn an_untouched_candidate_is_approved_with_discovery_identity() {
     let guard = guard(&fs);
     let candidate = discover(&guard, &fs);
     let expected = candidate.identity();
-    let approved = guard.recheck(candidate, &fs).unwrap();
+    let approved = approve(&guard, &fs, candidate).unwrap();
     assert_eq!(approved.identity(), expected);
     assert_eq!(approved.path(), &p(CACHE));
     assert!(matches!(approved.sink(), Sink::Delete));
@@ -99,7 +117,7 @@ fn a_file_opened_after_discovery_is_refused_at_the_sink() {
     fs.close_all();
     let candidate = discover(&guard, &fs);
     let snapshots = fs.open_file_calls();
-    guard.recheck(candidate, &fs).unwrap();
+    approve(&guard, &fs, candidate).unwrap();
     assert_eq!(fs.open_file_calls(), snapshots + 1);
 }
 
@@ -123,7 +141,7 @@ fn a_process_whose_open_files_cannot_be_listed_at_the_sink_is_a_refusal() {
     let fs = fixture();
     let candidate = discover(&guard, &fs);
     fs.unlisted_now(1, false);
-    guard.recheck(candidate, &fs).unwrap();
+    approve(&guard, &fs, candidate).unwrap();
 }
 
 #[test]
@@ -220,7 +238,7 @@ fn an_owner_that_started_after_discovery_is_refused() {
         "/Applications/Example.app/Contents/MacOS/com.example.app",
     );
     // Same tree, so the identities match; only the process table differs.
-    let rejection = guard.recheck(candidate, &now).unwrap_err().rejection;
+    let rejection = approve(&guard, &now, candidate).unwrap_err().rejection;
     assert!(
         matches!(
             rejection,
@@ -236,7 +254,7 @@ fn recheck_takes_its_own_process_table() {
     let guard = guard(&fs);
     let candidate = discover(&guard, &fs);
     let before = fs.process_calls();
-    let _ = guard.recheck(candidate, &fs);
+    let _ = approve(&guard, &fs, candidate);
     assert_eq!(fs.process_calls(), before + 1);
 }
 
@@ -246,7 +264,174 @@ fn the_refused_candidate_comes_back_for_the_outcome_row() {
     let guard = guard(&fs);
     let candidate = discover(&guard, &fs);
     fs.swap(CACHE);
-    let refused = guard.recheck(candidate, &fs).unwrap_err();
+    let refused = approve(&guard, &fs, candidate).unwrap_err();
     assert_eq!(refused.candidate.path(), &p(CACHE));
     assert_eq!(refused.candidate.rule().id, RuleId("test.cache".into()));
+}
+
+fn discover_at(guard: &Guard, fs: &FakeProbe, path: &str) -> Candidate {
+    guard
+        .pass(fs)
+        .candidate(p(path), seen(fs, path), &rule())
+        .unwrap()
+}
+
+#[test]
+fn a_batch_shares_live_evidence_until_it_is_older_than_the_lease() {
+    let (a, b) = (format!("{APP}/a"), format!("{APP}/b"));
+    let fs = fixture().dir(&a).dir(&b);
+    let guard = guard(&fs);
+    let plan = [CACHE, &a, &b].map(|path| discover_at(&guard, &fs, path));
+    let clock = clock();
+    let mut batch = guard.recheck(&fs, &clock, Lease::BATCH);
+    let calls = || (fs.process_calls(), fs.open_file_calls());
+    let [first, second, third] = plan;
+    let before = calls();
+    batch.approve(first).unwrap();
+    assert_eq!(
+        calls(),
+        (before.0 + 1, before.1 + 1),
+        "the first check takes both"
+    );
+    clock.advance(Duration::from_millis(999));
+    batch.approve(second).unwrap();
+    assert_eq!(
+        calls(),
+        (before.0 + 1, before.1 + 1),
+        "inside the lease nothing is taken"
+    );
+    clock.advance(Duration::from_millis(1));
+    batch.approve(third).unwrap();
+    assert_eq!(
+        calls(),
+        (before.0 + 2, before.1 + 2),
+        "at the lease's end both again"
+    );
+}
+
+#[test]
+fn no_lease_takes_fresh_evidence_for_every_candidate() {
+    let a = format!("{APP}/a");
+    let fs = fixture().dir(&a);
+    let guard = guard(&fs);
+    let [first, second] = [CACHE, &a].map(|path| discover_at(&guard, &fs, path));
+    let clock = clock();
+    let mut batch = guard.recheck(&fs, &clock, Lease::NONE);
+    let before = (fs.process_calls(), fs.open_file_calls());
+    batch.approve(first).unwrap();
+    batch.approve(second).unwrap();
+    assert_eq!(
+        (fs.process_calls(), fs.open_file_calls()),
+        (before.0 + 2, before.1 + 2)
+    );
+}
+
+#[test]
+fn a_file_opened_inside_the_lease_is_seen_once_the_lease_ends() {
+    let a = format!("{APP}/a");
+    let fs = fixture().dir(&a);
+    let guard = guard(&fs);
+    let clock = clock();
+    let mut batch = guard.recheck(&fs, &clock, Lease::BATCH);
+    batch.approve(discover_at(&guard, &fs, CACHE)).unwrap();
+    let candidate = discover_at(&guard, &fs, &a);
+    fs.open_now(7, &a);
+    clock.advance(Lease::BATCH.window());
+    let refused = batch.approve(candidate).unwrap_err();
+    assert!(
+        matches!(
+            refused.rejection,
+            Rejection::Kept(KeptReason::Live(LiveReason::InUse { .. }))
+        ),
+        "{:?}",
+        refused.rejection
+    );
+}
+
+fn contents(fs: &FakeProbe) -> ContentsReason {
+    let guard = guard(fs);
+    let candidate = discover(&guard, fs);
+    match refusal(&guard, fs, candidate) {
+        Rejection::Kept(KeptReason::Contents(reason)) => reason,
+        other => panic!("expected a contents refusal, got {other:?}"),
+    }
+}
+
+fn holds(fs: &FakeProbe) -> (AbsPath, KeptReason) {
+    match contents(fs) {
+        ContentsReason::Holds { at, reason } => (at, *reason),
+        other => panic!("expected holds-kept, got {other:?}"),
+    }
+}
+
+fn approves(fs: &FakeProbe) {
+    let guard = guard(fs);
+    let candidate = discover(&guard, fs);
+    if let Err(refused) = approve(&guard, fs, candidate) {
+        panic!("refused: {:?}", refused.rejection);
+    }
+}
+
+#[test]
+fn a_mount_inside_a_folder_keeps_the_folder() {
+    let inner = format!("{CACHE}/x/mnt");
+    let fs = fixture().mount(&inner, 2).file(&format!("{inner}/kept"));
+    assert_eq!(
+        holds(&fs),
+        (p(&inner), KeptReason::Shape(ShapeReason::MountPoint))
+    );
+}
+
+#[test]
+fn a_bind_mount_on_the_same_volume_keeps_the_folder() {
+    let inner = format!("{CACHE}/bound");
+    let fs = fixture().bind_mount(&inner);
+    assert_eq!(
+        holds(&fs),
+        (p(&inner), KeptReason::Shape(ShapeReason::MountPoint))
+    );
+}
+
+#[test]
+fn a_protected_bundle_name_deep_inside_keeps_the_folder() {
+    let inner = format!("{CACHE}/x/com.apple.Safari");
+    let fs = fixture().file(&format!("{inner}/state"));
+    let (at, reason) = holds(&fs);
+    assert_eq!(at, p(&inner));
+    assert_eq!(reason.layer(), Layer::Protection, "{reason:?}");
+}
+
+#[test]
+fn an_unreadable_folder_inside_keeps_the_folder() {
+    let fs = fixture().unreadable(&format!("{CACHE}/locked"));
+    let (_, reason) = holds(&fs);
+    assert_eq!(reason.code(), "unreadable", "{reason:?}");
+}
+
+#[test]
+fn an_online_only_file_inside_keeps_the_folder() {
+    let ghost = format!("{CACHE}/cloud.bin");
+    let fs = fixture().dataless(&ghost);
+    assert_eq!(contents(&fs), ContentsReason::Dataless { at: p(&ghost) });
+}
+
+#[test]
+fn a_tree_deeper_than_the_walk_can_hold_is_refused_up_front() {
+    let nested =
+        |levels: usize| (0..levels).fold(CACHE.to_owned(), |path, i| format!("{path}/{i}"));
+    assert_eq!(
+        contents(&fixture().dir(&nested(65))),
+        ContentsReason::Unbounded(Bound::Depth(64))
+    );
+    approves(&fixture().dir(&nested(64)));
+}
+
+#[test]
+fn a_name_with_a_control_byte_is_judged_not_refused() {
+    approves(&fixture().file_in(CACHE, "bad\nname"));
+}
+
+#[test]
+fn a_link_inside_is_judged_as_a_link_not_by_its_target() {
+    approves(&fixture().symlink(&format!("{CACHE}/docs"), "/Users/alice/Documents"));
 }

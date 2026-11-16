@@ -13,7 +13,7 @@ pub enum Verdict {
 }
 
 /// The guard layers, in the order they decide. `code` is the stable `--json` spelling.
-/// `Identity` decides last and only in `Guard::recheck`.
+/// `Identity` and `Contents` decide only in `Guard::recheck`, in that order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layer {
     Shape,
@@ -22,6 +22,7 @@ pub enum Layer {
     Protection,
     Whitelist,
     Identity,
+    Contents,
 }
 
 /// Why a path is kept. The outer variant is the layer, so a reason cannot name the wrong layer.
@@ -33,6 +34,7 @@ pub enum KeptReason {
     Protected(Hit),
     Whitelisted(WhitelistHit),
     Identity(IdentityReason),
+    Contents(ContentsReason),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -106,6 +108,36 @@ pub enum IdentityReason {
     Changed,
     /// The path or its parent was replaced while the live probes ran.
     ReplacedDuringCheck,
+}
+
+/// Refusals only the survey in `Guard::recheck` produces: a folder candidate holds something
+/// the guard keeps, or more than it can judge, so the whole folder stays (SAFE-27, SAFE-38).
+/// Removing a folder minus a kept child would be incident I-37's parent sweep.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ContentsReason {
+    /// `at`, inside the candidate, is kept for `reason`: a mount point, a file a process holds
+    /// open, a protected or whitelisted name, an unreadable folder.
+    Holds {
+        at: AbsPath,
+        reason: Box<KeptReason>,
+    },
+    /// `at` is an online-only placeholder. Listing it downloads it, and removing it removes the
+    /// cloud copy.
+    Dataless { at: AbsPath },
+    /// The tree changed while the survey listed it: a folder vanished or was replaced.
+    Changing { at: AbsPath },
+    /// The survey stopped at a bound before it judged the whole tree (SAFE-20).
+    Unbounded(Bound),
+}
+
+/// The survey's limits. A tree past one is refused before anything is removed, so the delete
+/// walk never meets one halfway through (SAFE-18).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Bound {
+    Entries(u64),
+    /// Folders nested below the candidate. The delete walk holds one handle per level.
+    Depth(usize),
+    Deadline(std::time::Duration),
 }
 
 /// A policy row matched. `anchor` is the protected path, `how` says how the path relates to it.
@@ -187,6 +219,7 @@ impl Layer {
             Self::Protection => "protection",
             Self::Whitelist => "whitelist",
             Self::Identity => "identity",
+            Self::Contents => "contents",
         }
     }
 }
@@ -200,6 +233,7 @@ impl KeptReason {
             Self::Protected(_) => Layer::Protection,
             Self::Whitelisted(_) => Layer::Whitelist,
             Self::Identity(_) => Layer::Identity,
+            Self::Contents(_) => Layer::Contents,
         }
     }
 
@@ -237,6 +271,21 @@ impl KeptReason {
             },
             Self::Identity(IdentityReason::Changed) => "identity-changed",
             Self::Identity(IdentityReason::ReplacedDuringCheck) => "replaced-during-check",
+            Self::Contents(ContentsReason::Holds { .. }) => "holds-kept",
+            Self::Contents(ContentsReason::Dataless { .. }) => "holds-dataless",
+            Self::Contents(ContentsReason::Changing { .. }) => "changing",
+            Self::Contents(ContentsReason::Unbounded(Bound::Entries(_))) => "too-many-entries",
+            Self::Contents(ContentsReason::Unbounded(Bound::Depth(_))) => "too-deep",
+            Self::Contents(ContentsReason::Unbounded(Bound::Deadline(_))) => "survey-timed-out",
+        }
+    }
+
+    /// For `holds-kept`, why the path inside is kept. The oplog writes its code as `inner=`, so
+    /// a reader sees the cause without a second row.
+    pub fn inner(&self) -> Option<&KeptReason> {
+        match self {
+            Self::Contents(ContentsReason::Holds { reason, .. }) => Some(reason),
+            _ => None,
         }
     }
 
@@ -247,11 +296,13 @@ impl KeptReason {
                 Some(file) => Source::File(file),
                 None => Source::BuiltIn,
             }),
+            Self::Contents(ContentsReason::Holds { reason, .. }) => reason.source(),
             Self::Shape(_)
             | Self::Critical(_)
             | Self::Live(_)
             | Self::Protected(_)
-            | Self::Identity(_) => None,
+            | Self::Identity(_)
+            | Self::Contents(_) => None,
         }
     }
 }
@@ -396,6 +447,30 @@ impl fmt::Display for KeptReason {
             Self::Identity(IdentityReason::ReplacedDuringCheck) => {
                 f.write_str("replaced during the final check; scan again")
             }
+            Self::Contents(ContentsReason::Holds { at, reason }) => {
+                write!(f, "holds {at}, which is kept: {reason}")
+            }
+            Self::Contents(ContentsReason::Dataless { at }) => write!(
+                f,
+                "holds {at}, which is online only; download it or remove it in Finder"
+            ),
+            Self::Contents(ContentsReason::Changing { at }) => {
+                write!(
+                    f,
+                    "{at} changed while it was checked; quit the app using it"
+                )
+            }
+            Self::Contents(ContentsReason::Unbounded(Bound::Entries(n))) => {
+                write!(f, "holds more than {n} entries, more than one check covers")
+            }
+            Self::Contents(ContentsReason::Unbounded(Bound::Depth(n))) => {
+                write!(f, "holds folders nested more than {n} deep")
+            }
+            Self::Contents(ContentsReason::Unbounded(Bound::Deadline(limit))) => write!(
+                f,
+                "checking what it holds took longer than {} s",
+                limit.as_secs()
+            ),
         }
     }
 }

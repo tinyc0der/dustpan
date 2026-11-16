@@ -37,7 +37,7 @@ mod unix {
     use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
     use dustpan_core::config::Read;
     use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Verdict};
-    use dustpan_core::identity::Node;
+    use dustpan_core::identity::{DirEntry, FileId, Node};
     use dustpan_core::path::AbsPath;
     use dustpan_core::paths::Os;
     use dustpan_core::probe::fake::FakeProbe;
@@ -86,6 +86,10 @@ mod unix {
 
         fn open_files(&self) -> Seen<OpenFiles> {
             self.inner.open_files()
+        }
+
+        fn list(&self, dir: &AbsPath, out: &mut Vec<DirEntry>) -> Seen<FileId> {
+            self.inner.list(dir, out)
         }
     }
 

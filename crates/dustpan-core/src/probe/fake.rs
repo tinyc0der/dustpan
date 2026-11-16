@@ -3,10 +3,11 @@
 //! test fails if `FakeProbe` or `testkit` appears under `crates/dustpan/src` or
 //! `crates/dustpan-sys/src` (SAFE-17).
 use super::{App, OpenFile, OpenFiles, Pid, Probe, Proc, ProcessTable, Seen, Unlisted, Unseen};
-use crate::identity::{FileId, Node, NodeKind};
+use crate::disk::{Disk, DiskError, Seal, Trashed, Unlink};
+use crate::identity::{DirEntry, FileId, Node, NodeKind};
 use crate::path::AbsPath;
-use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,21 +18,36 @@ const MAX_LINK_HOPS: usize = 40;
 /// Builder-style fake. Paths are in host syntax. Two spellings that share a `FileId` are
 /// aliases, which is how a test models case-insensitive APFS (`/SYSTEM`) or a firmlink. Like a
 /// kernel, it follows links and aliases in every component but the last.
+///
+/// The same tree serves the guard (`Probe`) and the sinks (`Disk`), so a test that swaps an
+/// inode, replaces a parent with a link or mounts a volume inside a candidate between the
+/// recheck and the sink sees both sides of the race.
 pub struct FakeProbe {
     tree: Mutex<Tree>,
     processes: Seen<ProcessTable>,
     open: Mutex<Seen<OpenFiles>>,
     swap_on_process_probe: Mutex<Option<PathBuf>>,
+    before_sink: Mutex<Option<Change>>,
+    trash_unavailable: bool,
     node_calls: AtomicUsize,
     process_calls: AtomicUsize,
     open_file_calls: AtomicUsize,
 }
+
+type Change = Box<dyn FnOnce(&FakeProbe) + Send>;
+
+/// Each file the fake lists takes one 4 KiB block.
+const BLOCK: u64 = 4096;
 
 #[derive(Default)]
 struct Tree {
     nodes: BTreeMap<PathBuf, Entry>,
     aliases: BTreeMap<PathBuf, PathBuf>,
     next_id: u128,
+    dataless: BTreeSet<PathBuf>,
+    mount_roots: BTreeSet<PathBuf>,
+    removed: Vec<PathBuf>,
+    trashed: Vec<PathBuf>,
 }
 
 enum Entry {
@@ -118,6 +134,101 @@ impl Tree {
         }
         Ok(cur)
     }
+
+    /// What a directory read reports for the entry at `key`. A folder's link count is the
+    /// conventional 2; a file's counts every name that shares its `FileId`.
+    fn dir_entry(&self, key: &Path) -> Result<DirEntry, DiskError> {
+        let node = match self.nodes.get(key) {
+            Some(Entry::Node(node) | Entry::Link(node, _)) => *node,
+            // A folder its owner closed to us: its parent lists it, opening it fails.
+            Some(Entry::Unreadable) => Node {
+                kind: NodeKind::Dir,
+                id: FileId::new(VOLUME, u128::MAX - key.as_os_str().len() as u128),
+            },
+            None => return Err(DiskError::NotFound),
+        };
+        let links = match node.kind {
+            NodeKind::Dir => 2,
+            _ => self
+                .nodes
+                .values()
+                .filter(|e| matches!(e, Entry::Node(n) | Entry::Link(n, _) if n.id == node.id))
+                .count(),
+        };
+        Ok(DirEntry {
+            name: key.file_name().unwrap_or_default().to_os_string(),
+            node,
+            alloc: if node.kind == NodeKind::File {
+                BLOCK
+            } else {
+                0
+            },
+            links: u32::try_from(links).unwrap_or(u32::MAX),
+            mount_root: self.mount_roots.contains(key),
+            dataless: self.dataless.contains(key),
+        })
+    }
+
+    fn children(&self, key: &Path) -> impl Iterator<Item = &PathBuf> {
+        self.nodes
+            .range(key.to_path_buf()..)
+            .map(|(path, _)| path)
+            .take_while(move |path| path.starts_with(key))
+            .filter(move |path| path.parent() == Some(key))
+    }
+
+    /// Every entry of the folder at `key`, as `getdents` plus `fstatat` would report them.
+    fn list(&self, key: &Path, out: &mut Vec<DirEntry>) -> Result<(), DiskError> {
+        for child in self.children(key) {
+            out.push(self.dir_entry(child)?);
+        }
+        Ok(())
+    }
+
+    /// `open(2)` with `O_NOFOLLOW_ANY | O_DIRECTORY`: a link or alias anywhere fails.
+    fn open_nofollow(&self, path: &Path) -> Result<FakeDir, DiskError> {
+        let key = match self.locate(path, false, 0) {
+            Ok(key) => key,
+            Err(Lost::Missing) => return Err(DiskError::NotFound),
+            Err(Lost::Unknown(Unseen::Denied)) => return Err(DiskError::Denied),
+            Err(Lost::Unknown(_)) => return Err(DiskError::NotAFolder),
+        };
+        if key != path {
+            return Err(DiskError::NotAFolder);
+        }
+        self.open_at(key)
+    }
+
+    fn open_at(&self, key: PathBuf) -> Result<FakeDir, DiskError> {
+        match self.nodes.get(&key) {
+            Some(Entry::Node(node)) if node.kind == NodeKind::Dir => {
+                Ok(FakeDir { id: node.id, key })
+            }
+            Some(Entry::Node(_) | Entry::Link(..)) => Err(DiskError::NotAFolder),
+            Some(Entry::Unreadable) => Err(DiskError::Denied),
+            None => Err(DiskError::NotFound),
+        }
+    }
+
+    /// The key a handle names while its folder is still there. A real handle follows its
+    /// folder anywhere; the fake models one whose folder was replaced as detached.
+    fn held<'a>(&self, dir: &'a FakeDir) -> Result<&'a Path, DiskError> {
+        match self.nodes.get(&dir.key) {
+            Some(Entry::Node(node)) if node.id == dir.id => Ok(&dir.key),
+            _ => Err(DiskError::NotFound),
+        }
+    }
+
+    /// Removes `key` and everything below it.
+    fn drop_tree(&mut self, key: &Path) {
+        self.nodes.retain(|path, _| !path.starts_with(key));
+    }
+}
+
+/// An open folder of the fake: the key it was opened at and the object it was then.
+pub struct FakeDir {
+    key: PathBuf,
+    id: FileId,
 }
 
 impl FakeProbe {
@@ -135,6 +246,8 @@ impl FakeProbe {
             }),
             open: Mutex::new(Seen::Found(OpenFiles::default())),
             swap_on_process_probe: Mutex::new(None),
+            before_sink: Mutex::new(None),
+            trash_unavailable: false,
             node_calls: AtomicUsize::new(0),
             process_calls: AtomicUsize::new(0),
             open_file_calls: AtomicUsize::new(0),
@@ -155,6 +268,24 @@ impl FakeProbe {
         self.tree()
             .put(path, |t| Entry::Node(t.fresh(NodeKind::File, VOLUME)));
         self
+    }
+
+    /// A file whose name `AbsPath::parse` would refuse, such as one holding a newline. A
+    /// directory can hold one, so a listing returns it.
+    pub fn file_in(self, dir: &str, name: &str) -> Self {
+        {
+            let mut tree = self.tree();
+            tree.ensure_dirs(&abs(dir));
+            let node = tree.fresh(NodeKind::File, VOLUME);
+            tree.nodes
+                .insert(abs(dir).as_path().join(name), Entry::Node(node));
+        }
+        self
+    }
+
+    /// The path of `name` in `dir` as a directory read would form it, control bytes included.
+    pub fn listed(&self, dir: &str, name: &str) -> AbsPath {
+        AbsPath::trusted(abs(dir).as_path().join(name))
     }
 
     pub fn symlink(self, path: &str, target: &str) -> Self {
@@ -179,6 +310,37 @@ impl FakeProbe {
     pub fn mount(self, path: &str, volume: u64) -> Self {
         self.tree()
             .put(path, |t| Entry::Node(t.fresh(NodeKind::Dir, volume)));
+        self
+    }
+
+    /// A folder on the same volume that is the root of a mount, as a Linux bind mount is.
+    pub fn bind_mount(self, path: &str) -> Self {
+        let dir = self.dir(path);
+        dir.tree()
+            .mount_roots
+            .insert(abs(path).as_path().to_path_buf());
+        dir
+    }
+
+    /// An online-only file: listed with its dataless flag, never read.
+    pub fn dataless(self, path: &str) -> Self {
+        let file = self.file(path);
+        file.tree()
+            .dataless
+            .insert(abs(path).as_path().to_path_buf());
+        file
+    }
+
+    /// `path` is another name for the file at `existing` (same `FileId`).
+    pub fn hard_link(self, path: &str, existing: &str) -> Self {
+        {
+            let mut tree = self.tree();
+            let node = match tree.nodes.get(abs(existing).as_path()) {
+                Some(Entry::Node(node)) if node.kind == NodeKind::File => *node,
+                _ => panic!("fixture {existing} is not a file"),
+            };
+            tree.put(path, |_| Entry::Node(node));
+        }
         self
     }
 
@@ -339,7 +501,36 @@ impl FakeProbe {
     }
 
     pub fn remove(&self, path: &str) {
-        self.tree().nodes.remove(abs(path).as_path());
+        self.tree().drop_tree(abs(path).as_path());
+    }
+
+    /// Runs `change` the first time a sink opens a parent, which is after `recheck` approved:
+    /// an inode swapped, a parent replaced by a link, a mount appearing.
+    pub fn before_sink(&self, change: impl FnOnce(&FakeProbe) + Send + 'static) {
+        *self.before_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(change));
+    }
+
+    /// Every Trash move fails with `NoTrash`, as with no Trash on the volume (SAFE-12).
+    pub fn trash_unavailable(self) -> Self {
+        Self {
+            trash_unavailable: true,
+            ..self
+        }
+    }
+
+    /// Paths a sink unlinked, in order.
+    pub fn removed(&self) -> Vec<PathBuf> {
+        self.tree().removed.clone()
+    }
+
+    /// Paths a sink moved to the Trash, in order.
+    pub fn trashed(&self) -> Vec<PathBuf> {
+        self.tree().trashed.clone()
+    }
+
+    /// Whether anything is at `path`, without counting an `lstat`.
+    pub fn exists(&self, path: &str) -> bool {
+        self.tree().nodes.contains_key(abs(path).as_path())
     }
 
     /// `lstat` calls so far. A test of ancestor sharing asserts on this, not on internals.
@@ -419,5 +610,103 @@ impl Probe for FakeProbe {
     fn open_files(&self) -> Seen<OpenFiles> {
         self.open_file_calls.fetch_add(1, Ordering::Relaxed);
         self.open().clone()
+    }
+
+    fn list(&self, dir: &AbsPath, out: &mut Vec<DirEntry>) -> Seen<FileId> {
+        let tree = self.tree();
+        let opened = tree.open_nofollow(dir.as_path()).and_then(|handle| {
+            tree.list(&handle.key, out)?;
+            Ok(handle.id)
+        });
+        match opened {
+            Ok(id) => Seen::Found(id),
+            Err(DiskError::NotFound) => Seen::Missing,
+            Err(DiskError::Denied) => Seen::Unknown(Unseen::Denied),
+            Err(_) => Seen::Unknown(Unseen::Failed),
+        }
+    }
+}
+
+impl Disk for FakeProbe {
+    type Dir = FakeDir;
+
+    fn open_parent(&self, path: &AbsPath, _: &Seal) -> Result<FakeDir, DiskError> {
+        let change = self
+            .before_sink
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(change) = change {
+            change(self);
+        }
+        let parent = path.parent().ok_or(DiskError::NotAFolder)?;
+        self.tree().open_nofollow(parent.as_path())
+    }
+
+    fn open_dir(&self, at: &FakeDir, name: &OsStr, _: &Seal) -> Result<FakeDir, DiskError> {
+        let tree = self.tree();
+        let key = tree.held(at)?.join(name);
+        tree.open_at(key)
+    }
+
+    fn id(&self, dir: &FakeDir, _: &Seal) -> Result<FileId, DiskError> {
+        Ok(dir.id)
+    }
+
+    fn stat(&self, at: &FakeDir, name: &OsStr, _: &Seal) -> Result<DirEntry, DiskError> {
+        let tree = self.tree();
+        tree.dir_entry(&tree.held(at)?.join(name))
+    }
+
+    fn list(&self, dir: &FakeDir, out: &mut Vec<DirEntry>, _: &Seal) -> Result<(), DiskError> {
+        let tree = self.tree();
+        tree.list(tree.held(dir)?, out)
+    }
+
+    fn unlink(&self, at: &FakeDir, name: &OsStr, what: Unlink, _: &Seal) -> Result<(), DiskError> {
+        let mut tree = self.tree();
+        let key = tree.held(at)?.join(name);
+        let entry = tree.dir_entry(&key)?;
+        match (entry.node.kind, what) {
+            (NodeKind::Dir, Unlink::NotDir) => return Err(DiskError::Denied),
+            (NodeKind::Dir, Unlink::Dir) => {
+                if entry.mount_root || entry.node.id.volume() != at.id.volume() {
+                    return Err(DiskError::Busy);
+                }
+                if tree.children(&key).next().is_some() {
+                    return Err(DiskError::NotEmpty);
+                }
+            }
+            (_, Unlink::Dir) => return Err(DiskError::NotAFolder),
+            (_, Unlink::NotDir) => {}
+        }
+        tree.nodes.remove(&key);
+        tree.removed.push(key);
+        Ok(())
+    }
+
+    fn trash(
+        &self,
+        at: &FakeDir,
+        path: &AbsPath,
+        expect: FileId,
+        _: &Seal,
+    ) -> Result<Trashed, DiskError> {
+        if self.trash_unavailable {
+            return Err(DiskError::NoTrash);
+        }
+        let mut tree = self.tree();
+        let name = path.name().ok_or(DiskError::NotAFolder)?;
+        let key = tree.held(at)?.join(name);
+        let arrived = tree.dir_entry(&key)?.node.id;
+        if arrived != expect {
+            return Err(DiskError::NotAFolder);
+        }
+        tree.drop_tree(&key);
+        tree.trashed.push(key);
+        Ok(Trashed {
+            at: Path::new("/.Trash").join(name),
+            arrived,
+        })
     }
 }

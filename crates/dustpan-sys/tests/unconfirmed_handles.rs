@@ -4,7 +4,7 @@
 #![cfg(target_os = "macos")]
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
-use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Rejection, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Lease, Rejection, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::{OpenFiles, Pid, Probe, Seen};
@@ -175,7 +175,9 @@ impl Home {
             matches!(verdict, Verdict::Kept(KeptReason::Live(_))),
             "{folder} while a process holds a file in it: {verdict}"
         );
-        match self.guard.recheck(found_idle, &self.probe) {
+        let clock = dustpan_sys::SystemClock::new();
+        let mut recheck = self.guard.recheck(&self.probe, &clock, Lease::NONE);
+        match recheck.approve(found_idle) {
             Ok(approved) => panic!("{folder} was approved for {:?}", approved.sink()),
             Err(refused) => assert!(
                 matches!(refused.rejection, Rejection::Kept(KeptReason::Live(_))),

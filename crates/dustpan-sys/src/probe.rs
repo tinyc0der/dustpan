@@ -1,4 +1,4 @@
-use dustpan_core::identity::Node;
+use dustpan_core::identity::{DirEntry, FileId, Node};
 use dustpan_core::path::AbsPath;
 use dustpan_core::probe::{OpenFiles, Probe, ProcessTable, Seen, Unseen};
 use std::io::{self, ErrorKind};
@@ -60,6 +60,10 @@ impl Probe for LiveProbe {
 
     fn open_files(&self) -> Seen<OpenFiles> {
         open::open_files()
+    }
+
+    fn list(&self, dir: &AbsPath, out: &mut Vec<DirEntry>) -> Seen<FileId> {
+        crate::disk::list_path(dir, out)
     }
 }
 

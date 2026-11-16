@@ -1,17 +1,48 @@
 //! The one gate between a plan and a sink.
 use super::Guard;
+use super::open::OpenIndex;
+use super::pass::{Evidence, Pass};
+use super::survey::{self, Manifest};
 use super::verdict::{IdentityReason, KeptReason, ShapeReason, Verdict};
 use crate::candidate::{Candidate, Sink};
-use crate::identity::PathIdentity;
+use crate::identity::{NodeKind, PathIdentity};
 use crate::path::AbsPath;
-use crate::probe::{Probe, Seen};
+use crate::probe::{Probe, ProcessTable, Seen};
+use crate::time::Clock;
+use std::sync::Arc;
+use std::time::Duration;
 
-/// A candidate the guard rechecked a moment ago. The only input a sink accepts.
+/// How long one batch's live evidence (the process table and the snapshot of open files) may
+/// answer for the candidates rechecked after it was taken.
 ///
-/// The fields are private to this module and `Guard::recheck` is the only code here that builds
-/// one, so no other module in any crate can make an `Approved`. It is not `Clone`, `Default` or
+/// One snapshot of each costs about 50 ms on the bench host, so taking them per candidate costs
+/// 50 s per thousand. A per-candidate snapshot does not close the race either: an owner can
+/// start while the sink runs, and a cache delete takes seconds. A lease adds at most its length
+/// to that window. Evidence is taken at the sink, never during discovery. Each snapshot's age
+/// starts from the monotonic time read before it was asked for and is checked at every
+/// recheck, so a long sink call makes the next candidate take fresh evidence (SAFE-10). File
+/// identity, spelling and every policy layer are never shared.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Lease(Duration);
+
+impl Lease {
+    /// Every recheck takes its own evidence. For the privileged helper (M4) and for tests.
+    pub const NONE: Self = Self(Duration::ZERO);
+    /// What a run of a reviewed plan uses.
+    pub const BATCH: Self = Self(Duration::from_secs(1));
+
+    pub const fn window(self) -> Duration {
+        self.0
+    }
+}
+
+/// A candidate the guard rechecked a moment ago, with everything it holds. The only input a
+/// sink accepts.
+///
+/// The fields are private to this module and `Recheck::approve` is the only code here that
+/// builds one, so no other module in any crate can make an `Approved`. It is not `Clone`, `Default` or
 /// `Deserialize`: an approval cannot be copied, forged or received over a pipe. The privileged
-/// helper (M4) receives candidates and runs `recheck` itself, as root.
+/// helper (M4) receives candidates and runs its own `Recheck`, as root.
 ///
 /// Forging one does not compile (private fields):
 /// ```compile_fail,E0451
@@ -35,6 +66,8 @@ use crate::probe::{Probe, Seen};
 pub struct Approved {
     candidate: Candidate,
     identity: PathIdentity,
+    /// The folders the survey judged. A sink enters no other folder.
+    manifest: Manifest,
 }
 
 /// A candidate `recheck` did not approve, handed back so the executor can log and report it.
@@ -74,62 +107,166 @@ impl Approved {
     pub fn into_candidate(self) -> Candidate {
         self.candidate
     }
+
+    pub(crate) fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
 }
 
-/// One `lstat` each of `path` and its parent, with nothing remembered from before.
-fn bind(path: &AbsPath, probe: &dyn Probe) -> Result<PathIdentity, Rejection> {
+/// One `lstat` each of `path` and its parent, with nothing remembered from before. The leaf's
+/// kind tells the survey whether there is a tree to judge.
+fn bind(path: &AbsPath, probe: &dyn Probe) -> Result<(PathIdentity, NodeKind), Rejection> {
     let unreadable =
         |at: AbsPath, why| Rejection::Kept(KeptReason::Shape(ShapeReason::Unreadable { at, why }));
     let node = |at: AbsPath| match probe.node(&at) {
-        Seen::Found(node) => Ok(node.id),
+        Seen::Found(node) => Ok(node),
         Seen::Missing => Err(Rejection::Gone),
         Seen::Unknown(why) => Err(unreadable(at, why)),
     };
     let target = node(path.clone())?;
     let parent = match path.parent() {
-        Some(parent) => node(parent)?,
-        None => target,
+        Some(parent) => node(parent)?.id,
+        None => target.id,
     };
-    Ok(PathIdentity { parent, target })
+    let identity = PathIdentity {
+        parent,
+        target: target.id,
+    };
+    Ok((identity, target.kind))
+}
+
+/// A snapshot and the monotonic time read before it was asked for.
+struct Aged<T> {
+    taken: Duration,
+    value: Arc<T>,
+}
+
+/// One batch of rechecks at the sink. The executor holds one per run.
+///
+/// Each candidate gets a fresh pass, a fresh `lstat` of itself and its parent before and after
+/// the live probes, and a fresh survey of what it holds. Only the live evidence is shared, and
+/// only for the batch's [`Lease`]. Nothing from discovery is shared: discovery's passes are
+/// gone, and its identity is only ever compared, never refreshed.
+pub struct Recheck<'a> {
+    guard: &'a Guard,
+    probe: &'a dyn Probe,
+    clock: &'a dyn Clock,
+    lease: Lease,
+    processes: Option<Aged<Seen<ProcessTable>>>,
+    open: Option<Aged<OpenIndex>>,
 }
 
 impl Guard {
-    /// Runs every layer again on the candidate's path with a fresh pass, re-probes its owners,
-    /// judges the spelling the file system stores for the path, and compares the live parent and
-    /// target identity with discovery's, both before the live probes and after them (SAFE-03,
-    /// SAFE-10, SAFE-11). Never refreshes the identity to approve a replacement.
-    /// Dry run and real run both call this; only the sink call differs (SAFE-18).
+    /// Opens a batch of rechecks. Dry run and real run both use it; only the sink call differs
+    /// (SAFE-18). The privileged helper (M4) opens its own, as root, from its own `Guard`.
+    pub fn recheck<'a>(
+        &'a self,
+        probe: &'a dyn Probe,
+        clock: &'a dyn Clock,
+        lease: Lease,
+    ) -> Recheck<'a> {
+        Recheck {
+            guard: self,
+            probe,
+            clock,
+            lease,
+            processes: None,
+            open: None,
+        }
+    }
+}
+
+impl Recheck<'_> {
+    /// The batch's evidence still inside the lease when this check starts.
+    fn fresh(&self, now: Duration) -> Evidence {
+        let window = self.lease.window();
+        let young = |taken: Duration| now.saturating_sub(taken) < window;
+        Evidence {
+            processes: self
+                .processes
+                .as_ref()
+                .filter(|aged| young(aged.taken))
+                .map(|aged| Arc::clone(&aged.value)),
+            open: self
+                .open
+                .as_ref()
+                .filter(|aged| young(aged.taken))
+                .map(|aged| Arc::clone(&aged.value)),
+        }
+    }
+
+    /// Keeps what a candidate's passes took for themselves, aged from before the check began.
+    /// Evidence that was seeded keeps its own, older age.
+    fn keep(&mut self, started: Duration, seeded: &Evidence, held: Evidence) {
+        if seeded.processes.is_none()
+            && let Some(value) = held.processes
+        {
+            self.processes = Some(Aged {
+                taken: started,
+                value,
+            });
+        }
+        if seeded.open.is_none()
+            && let Some(value) = held.open
+        {
+            self.open = Some(Aged {
+                taken: started,
+                value,
+            });
+        }
+    }
+
+    /// Runs every layer again on the candidate's path, re-probes its owners, judges the spelling
+    /// the file system stores for the path, and compares the live parent and target identity
+    /// with discovery's, before the live probes and after them (SAFE-03, SAFE-10, SAFE-11).
+    /// Then judges everything a folder candidate holds (SAFE-27, SAFE-38). Never refreshes the
+    /// identity to approve a replacement.
     #[expect(
         clippy::result_large_err,
         reason = "both sides carry the candidate; boxing adds an allocation per candidate"
     )]
-    pub fn recheck(&self, candidate: Candidate, probe: &dyn Probe) -> Result<Approved, Refused> {
+    pub fn approve(&mut self, candidate: Candidate) -> Result<Approved, Refused> {
+        let policy = &self.guard.policy;
+        let probe = self.probe;
+        let started = self.clock.elapsed();
+        let seeded = self.fresh(started);
         let found = candidate.identity();
-        let mut pass = self.pass(probe);
+        let mut pass = Pass::with_evidence(policy, probe, seeded.clone(), true);
         // The pass binds identity in layer 1, before layer 3 asks who has the path open.
         let (verdict, before) = pass.judge(candidate.path(), None, &candidate.rule().owners);
+        let mut held = pass.evidence();
         let changed = |reason| Rejection::Kept(KeptReason::Identity(reason));
-        let rejection = match (verdict, before) {
-            (Verdict::Kept(reason), _) => Rejection::Kept(reason),
-            (Verdict::Eligible, None) => Rejection::Gone,
+        let judged = match (verdict, before) {
+            (Verdict::Kept(reason), _) => Err(Rejection::Kept(reason)),
+            (Verdict::Eligible, None) => Err(Rejection::Gone),
             (Verdict::Eligible, Some(before)) if before != found => {
-                changed(IdentityReason::Changed)
+                Err(changed(IdentityReason::Changed))
             }
             // A swap while the owner probe ran leaves a path layer 1 never saw.
             (Verdict::Eligible, Some(_)) => match bind(candidate.path(), probe) {
-                Ok(after) if after == found => {
-                    return Ok(Approved {
-                        candidate,
-                        identity: found,
-                    });
+                Ok((after, kind)) if after == found => {
+                    let mut inside = Pass::with_evidence(policy, probe, held, false);
+                    let path = candidate.path();
+                    let manifest =
+                        survey::survey(&mut inside, probe, self.clock, path, found.target, kind);
+                    held = inside.evidence();
+                    manifest
                 }
-                Ok(_) => changed(IdentityReason::ReplacedDuringCheck),
-                Err(rejection) => rejection,
+                Ok(_) => Err(changed(IdentityReason::ReplacedDuringCheck)),
+                Err(rejection) => Err(rejection),
             },
         };
-        Err(Refused {
-            candidate,
-            rejection,
-        })
+        self.keep(started, &seeded, held);
+        match judged {
+            Ok(manifest) => Ok(Approved {
+                candidate,
+                identity: found,
+                manifest,
+            }),
+            Err(rejection) => Err(Refused {
+                candidate,
+                rejection,
+            }),
+        }
     }
 }

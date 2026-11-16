@@ -2,23 +2,26 @@
 //!
 //! - [`Pass`] judges paths during discovery and for `explain`, and shares ancestor work between
 //!   paths that share ancestors.
-//! - [`Guard::recheck`] judges one candidate again at the sink with a fresh pass, compares its
-//!   identity before and after the live probes, and is the only code that builds an [`Approved`].
+//! - [`Guard::recheck`] opens a [`Recheck`] for one batch at the sink. It judges each candidate
+//!   again with a fresh pass, compares its identity before and after the live probes, surveys
+//!   everything a folder candidate holds, and is the only code that builds an [`Approved`].
 //!
 //! Layers: 1 shape (spelling, aliases, linked ancestors, leaf links, mount points), 2 critical
 //! roots, 3 live state, 4 protection policy, 5 whitelist. The first layer that refuses
 //! decides, and its reason is data ([`KeptReason`]), never a string a caller parses. Identity
-//! refusals come only from `recheck`.
+//! and contents refusals come only from `recheck`.
 mod approved;
 mod open;
 mod pass;
+mod survey;
 mod verdict;
 
-pub use approved::{Approved, Refused, Rejection};
+pub use approved::{Approved, Lease, Recheck, Refused, Rejection};
 pub use pass::{Judgment, Pass};
+pub(crate) use survey::{MAX_DEPTH, Manifest};
 pub use verdict::{
-    Hit, How, IdentityReason, KeptReason, Kind, Layer, LiveReason, Reach, ShapeReason, Source,
-    Verdict, WhitelistHit,
+    Bound, ContentsReason, Hit, How, IdentityReason, KeptReason, Kind, Layer, LiveReason, Reach,
+    ShapeReason, Source, Verdict, WhitelistHit,
 };
 
 use crate::path::AbsPath;

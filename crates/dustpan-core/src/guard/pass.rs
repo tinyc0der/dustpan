@@ -19,7 +19,9 @@ use std::sync::Arc;
 /// snapshot of open files, each on first need.
 ///
 /// Everything a pass knows was observed after it started, and it is dropped before the sink:
-/// `Guard::recheck` builds its own pass, so no discovery answer can approve a deletion.
+/// `Guard::recheck` builds its own pass, so no discovery answer can approve a deletion. The one
+/// thing a recheck pass may start with is its batch's live evidence (`Evidence`), younger than
+/// the batch's `Lease`.
 pub struct Pass<'a> {
     policy: &'a Policy,
     probe: &'a dyn Probe,
@@ -36,11 +38,19 @@ pub struct Pass<'a> {
 /// pass that judges a link's target borrows it, so one pass costs one snapshot of each kind.
 #[derive(Default)]
 struct Live {
-    processes: Option<Seen<ProcessTable>>,
+    processes: Option<Arc<Seen<ProcessTable>>>,
     /// Owner states from the one process table, by bundle id and by app group.
     bundles: HashMap<Box<str>, OwnerState>,
     app_groups: HashMap<Box<str>, OwnerState>,
-    open: Option<OpenIndex>,
+    open: Option<Arc<OpenIndex>>,
+}
+
+/// The live snapshots one `Recheck` batch shares between its passes: the process table and the
+/// index of open files. Never shared with discovery, and never a path observation.
+#[derive(Clone, Default)]
+pub(super) struct Evidence {
+    pub(super) processes: Option<Arc<Seen<ProcessTable>>>,
+    pub(super) open: Option<Arc<OpenIndex>>,
 }
 
 /// What the pass learned about one ancestor directory.
@@ -107,6 +117,40 @@ impl<'a> Pass<'a> {
             scratch: Vec::new(),
             follows_leaf_link: true,
             checks_spelling: true,
+        }
+    }
+
+    /// A pass for `Recheck`: it reads the batch's live evidence instead of taking its own where
+    /// the batch has some. `follows_leaf_link` is false for the survey of a candidate's
+    /// contents, where a link is removed as a link and never followed.
+    pub(super) fn with_evidence(
+        policy: &'a Policy,
+        probe: &'a dyn Probe,
+        evidence: Evidence,
+        follows_leaf_link: bool,
+    ) -> Self {
+        let mut pass = Self::new(policy, probe);
+        pass.live.processes = evidence.processes;
+        pass.live.open = evidence.open;
+        pass.follows_leaf_link = follows_leaf_link;
+        pass
+    }
+
+    /// The live evidence this pass holds now, seeded or taken, for `Recheck` to share.
+    pub(super) fn evidence(&self) -> Evidence {
+        Evidence {
+            processes: self.live.processes.clone(),
+            open: self.live.open.clone(),
+        }
+    }
+
+    /// Judges an entry the survey listed inside a candidate, with the `Node` the listing
+    /// reported. Every layer applies, with no rule owners: the candidate's owners were judged on
+    /// the candidate itself, and a cache scope inside it brings its own (SAFE-06).
+    pub(super) fn descendant(&mut self, path: &AbsPath, seen: Node) -> Option<KeptReason> {
+        match self.judge(path, Some(seen), &[]).0 {
+            Verdict::Kept(reason) => Some(reason),
+            Verdict::Eligible => None,
         }
     }
 
@@ -440,10 +484,13 @@ impl<'a> Pass<'a> {
         });
     }
 
-    /// One process table per pass, taken the first time an owner needs it.
+    /// One process table per pass, taken the first time an owner needs it, unless the pass was
+    /// seeded with its batch's evidence.
     fn processes(&mut self) -> &Seen<ProcessTable> {
         let probe = self.probe;
-        self.live.processes.get_or_insert_with(|| probe.processes())
+        self.live
+            .processes
+            .get_or_insert_with(|| Arc::new(probe.processes()))
     }
 
     /// The direct sign that a path is live: a process holds it open, or a file anywhere below
@@ -460,10 +507,10 @@ impl<'a> Pass<'a> {
         live: &LiveChecks<'_>,
     ) -> Option<LiveReason> {
         let (probe, fold_case) = (self.probe, self.policy.folds_case());
-        let open = &*self
+        let open = &**self
             .live
             .open
-            .get_or_insert_with(|| OpenIndex::new(probe.open_files(), fold_case));
+            .get_or_insert_with(|| Arc::new(OpenIndex::new(probe.open_files(), fold_case)));
         let scratch = &mut self.scratch;
         let quiet = parent.is_some_and(|at| {
             let folder = &mut self.frames[at];

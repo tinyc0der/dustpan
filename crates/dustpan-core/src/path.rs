@@ -8,8 +8,10 @@ use std::path::{Component, Path, PathBuf, Prefix};
 /// SAFE-03). On Windows it is a drive-letter path. UNC, device and `\\?\` input is refused, and
 /// so is a `name:stream` component; `dustpan-sys` adds the `\\?\` prefix itself at the syscall.
 ///
-/// The only constructors are [`AbsPath::parse`] and [`AbsPath::join`], so an `AbsPath` built
-/// from an empty variable can never collapse to a parent root (SAFE-04).
+/// The only public constructors are [`AbsPath::parse`] and [`AbsPath::join`], so an `AbsPath`
+/// built from an empty variable can never collapse to a parent root (SAFE-04). The one
+/// exception to "no control byte" is a name the guard read from a directory inside a candidate
+/// (`join_listed`), which every printed form escapes.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct AbsPath(PathBuf);
 
@@ -69,6 +71,17 @@ impl AbsPath {
     /// Cannot produce a root or a parent: a [`Name`] is never empty, `.` or `..`.
     pub fn join(&self, name: &Name) -> Self {
         Self(self.0.join(&name.0))
+    }
+
+    /// Joins a name a directory read returned. Unlike [`Name::parse`] it takes a control byte,
+    /// so the guard judges a file named `bad\nname` instead of keeping its whole folder for it.
+    /// `Display` escapes it. `None` for a name no directory holds: empty, `.`, `..`, or one with
+    /// a separator.
+    pub(crate) fn join_listed(&self, raw: &OsStr) -> Option<Self> {
+        let bytes = raw.as_encoded_bytes();
+        let separator = bytes.contains(&b'/') || (cfg!(windows) && bytes.contains(&b'\\'));
+        let ok = !raw.is_empty() && raw != "." && raw != ".." && !separator && !bytes.contains(&0);
+        ok.then(|| Self(self.0.join(raw)))
     }
 
     pub fn parent(&self) -> Option<Self> {

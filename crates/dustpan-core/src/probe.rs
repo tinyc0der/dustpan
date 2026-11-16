@@ -1,11 +1,11 @@
 //! The read-only window core has onto the live system.
 //!
-//! `Probe` has five primitive questions and no policy. Core decides what to ask and what the
+//! `Probe` has six primitive questions and no policy. Core decides what to ask and what the
 //! answers mean, so every rule that depends on them runs against `fake::FakeProbe` in a unit
 //! test. An implementation keeps nothing between calls: each answer is a fresh observation.
 //! Sharing answers is the job of a `guard::Pass`, which is visible, bounded and never reaches
 //! the sink.
-use crate::identity::{Node, NodeKind};
+use crate::identity::{DirEntry, FileId, Node, NodeKind};
 use crate::path::AbsPath;
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -35,6 +35,13 @@ pub trait Probe: Sync {
     /// One snapshot of the files every other process holds open. Who keeps a path is decided
     /// in core (`guard::Pass`).
     fn open_files(&self) -> Seen<OpenFiles>;
+
+    /// Every entry of the folder `dir`, opened with no link in any component, and the `FileId`
+    /// of the folder it opened, so the caller knows it listed the folder it meant (SAFE-10). A
+    /// dataless entry is reported, never materialized (SAFE-38). `Guard::recheck` asks this for
+    /// every folder a candidate holds, so the guard judges the whole tree before an `Approved`
+    /// exists (SAFE-27).
+    fn list(&self, dir: &AbsPath, out: &mut Vec<DirEntry>) -> Seen<FileId>;
 }
 
 /// The tri-state every probe answer takes. `Missing` is a conclusive "does not exist".

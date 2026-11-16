@@ -187,19 +187,21 @@ fn read_history(fixture: &Fixture) -> History {
 }
 
 #[test]
-fn a_run_removes_one_cache_keeps_one_that_holds_protected_state_and_logs_both() {
+fn a_run_removes_one_cache_keeps_one_that_holds_an_unreadable_folder_and_logs_both() {
+    use std::os::unix::fs::PermissionsExt as _;
     let fixture = Fixture::new("removes-and-keeps");
     fixture.tree("Library/Caches/com.example.app", 20, 50);
-    std::fs::create_dir_all(fixture.at("Library/Caches/com.example.other/x/.claude/projects"))
-        .unwrap();
-    std::fs::write(
-        fixture.at("Library/Caches/com.example.other/x/.claude/projects/session.jsonl"),
-        b"kept",
-    )
-    .unwrap();
+    // An unreadable folder keeps its candidate on every OS. Each OS's protection rows are
+    // pinned in core's fake-disk tests; Linux has none that can sit inside a cache.
+    let locked = fixture.at("Library/Caches/com.example.other/x/locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("state"), b"kept").unwrap();
+    let mode = |bits| std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(bits));
+    mode(0o000).unwrap();
     let removed = fixture.at("Library/Caches/com.example.app");
     let kept = fixture.at("Library/Caches/com.example.other");
     let ran = run(&fixture, &[removed.clone(), kept.clone()], || Sink::Delete);
+    mode(0o755).unwrap();
     assert!(
         matches!(ran.outcomes[0], Outcome::Removed(Size::Known(bytes)) if bytes >= 1000 * 4096 / 2),
         "{:?}",
@@ -214,7 +216,7 @@ fn a_run_removes_one_cache_keeps_one_that_holds_protected_state_and_logs_both() 
         "{:?}",
         ran.outcomes[1]
     );
-    assert!(kept.join("x/.claude/projects/session.jsonl").exists());
+    assert!(locked.join("state").exists());
     assert_eq!((ran.tally.removed, ran.tally.kept), (1, 1));
     assert!(ran.warnings.is_empty());
     let history = read_history(&fixture);

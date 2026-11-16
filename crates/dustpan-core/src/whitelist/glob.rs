@@ -288,7 +288,6 @@ fn fold_runs(tokens: Box<[Token<char>]>) -> Box<[Token<char>]> {
 }
 
 impl<U: Unit> Pattern<U> {
-    /// `Ok(None)` when nothing in `units` expands.
     fn parse(units: &[U], either_case: bool) -> Result<Option<Self>, GlobError> {
         let mut tokens = Vec::new();
         let mut expands = false;

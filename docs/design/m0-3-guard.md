@@ -489,7 +489,7 @@ On Linux the key is the name's bytes. ext4 compares bytes, so an NFC entry does 
 
 ### Cost
 
-A `Pass` keeps one trie position per ancestor frame, as before. Resolution costs one `lstat` per distinct folder named by the entries' literal heads, plus one stored-spelling question per distinct deepest folder, all at `Guard::new`. `explain` with the bench's 500-line whitelist measured 11.6 ms at this head and 9.1 ms at 13d50e0, from 100 alternated runs each. `docs/perf.md` records the scan bench.
+A `Pass` keeps one trie position per ancestor frame, as before. Resolution costs one `lstat` per distinct folder named by the entries' literal heads, plus one stored-spelling question per distinct deepest folder, all at `Guard::new`. `explain` with the bench's 500-line whitelist measured 10.6 ms at this head and 7.5 ms at 13d50e0, as means of 100 alternated runs each. `docs/perf.md` records the scan bench.
 
 ### Changes a restack of M0-3 meets
 

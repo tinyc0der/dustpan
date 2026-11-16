@@ -110,19 +110,19 @@ Medians of the three runs: `scan` 822,299 on trunk and 827,668 on head (0.7% fas
 
 ### Fix round 1
 
-The fix round folds non-ASCII names, matches `?` and `[...]`, and resolves every entry through the probe at `Guard::new`. The same bench ran from fresh exports (`side-a` at `a2b9f07`, `side-c` at `5126bf5`) under `/tmp/swarm-m0-4/fix1/bench`, alternated, three runs each, on 2026-11-16.
+The fix round folds non-ASCII names, matches `?` and `[...]` by bytes and by key, and resolves every entry through the probe at `Guard::new`. The same bench ran from fresh exports (`side-a` at `a2b9f07`, `side-c` at `18bffa6`) under `/tmp/swarm-m0-4/fix1/bench`, alternated, three runs each, on 2026-11-16.
 
 | Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
 |---|---|---|---|---|---|
-| 1 | trunk | 7.15 | 806,668 | 200,358 | 1,231,661 |
-| 1 | head | 6.60 | 845,294 | 203,661 | 1,254,655 |
-| 2 | trunk | 6.31 | 842,309 | 215,239 | 1,294,971 |
-| 2 | head | 7.42 | 840,201 | 212,537 | 1,244,352 |
-| 3 | trunk | 6.99 | 899,543 | 204,217 | 1,271,496 |
-| 3 | head | 6.07 | 870,925 | 213,700 | 1,252,601 |
+| 1 | trunk | 1.79 | 911,483 | 221,818 | 1,294,886 |
+| 1 | head | 1.74 | 852,462 | 212,607 | 1,238,278 |
+| 2 | trunk | 2.00 | 851,319 | 209,891 | 1,269,127 |
+| 2 | head | 1.92 | 906,049 | 217,583 | 1,273,155 |
+| 3 | trunk | 1.85 | 917,736 | 219,692 | 1,288,759 |
+| 3 | head | 1.78 | 894,829 | 216,763 | 1,272,893 |
 
-Medians: `scan` 842,309 on trunk and 845,294 on head (0.4% faster, inside the spread), `explain` 204,217 and 212,537, `cpu` 1,271,496 and 1,252,601 (1.5% slower). The rule passes. An earlier round of three runs per side, taken while the fixtures were first built, swung from 433,003 to 802,047 for `scan` on both sides. Its `cpu` medians were 1,239,496 on trunk and 1,227,168 on head.
+Medians: `scan` 911,483 on trunk and 894,829 on head (1.8% slower, inside the spread of 851,319 to 917,736 on both sides), `explain` 219,692 and 216,763, `cpu` 1,288,759 and 1,272,893 (1.2% slower). The rule passes. Two earlier rounds at `5126bf5`, under a load of 4 to 7, gave `scan` medians of 842,309 and 845,294 on the warm round and swung from 433,003 to 802,047 on the round that built the fixtures.
 
-**What limits the number.** The same as above. An all-ASCII name takes the ASCII fold, so the bench's names cost what they did. Resolution runs at `Guard::new`, outside the timed rounds. `explain` as a process, which includes it, took 11.6 ms at this head and 9.1 ms at `13d50e0`, as means of 100 alternated runs with the same 500 lines.
+**What limits the number.** The same as above. An all-ASCII name takes the ASCII fold, so the bench's names cost what they did. Resolution runs at `Guard::new`, outside the timed rounds. `explain` as a process, which includes it, took 10.6 ms at this head and 7.5 ms at `13d50e0`, as means of 100 alternated runs with the same 500 lines.
 
 **The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain`, and the bench still checks that a path the whitelist names is kept.

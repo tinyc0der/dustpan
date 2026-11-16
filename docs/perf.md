@@ -237,6 +237,18 @@ Interrogate round 1 changed the sink's path: the recheck takes live evidence aga
 
 The rule passes in all three. Runs 2 and 3 met a load spike from other work on the machine (load average 31; round 7 of run 2 took 27 s for `rm -rf`), which moved both sides together, so the ratio held. Run 1 is the clean one.
 
+### Fix round 2
+
+Interrogate round 2 added an age check right before each approval, which takes the evidence again only when it is as old as the lease, and a signal check before each live probe. The same bench ran three more times at `b1f9a94`.
+
+| Run | Load (1 min, start to end) | `rm -rf` median | Sink median | Ratio |
+|---|---|---|---|---|
+| 1 | 6.8 to 8.5 | 10.247 s | 6.974 s | 0.68 |
+| 2 | 8.5 to 3.9 | 9.580 s | 7.160 s | 0.75 |
+| 3 | 3.9 to 10.9 | 8.980 s | 6.722 s | 0.75 |
+
+The rule passes in all three, under load from other agents' work on the machine.
+
 ### The evidence lease (SAFE-10)
 
 **Question.** Is a 1 s lease on the process table and the snapshot of open files the right window?
@@ -246,3 +258,5 @@ The rule passes in all three. Runs 2 and 3 met a load spike from other work on t
 **Result.** One process table plus one snapshot of open files costs 90.4 ms (median of 5). Rechecking all 200 candidates took 21,759 ms with `Lease::NONE` (108.79 ms each) and 145 ms with `Lease::BATCH` (0.73 ms each), medians of 5 rounds. Every candidate came out as a would-be removal in both modes. At 90.4 ms per snapshot pair, a 1 s lease spends at most 9% of each second taking evidence; a 250 ms lease would spend 36%. The window stays 1 s.
 
 **Fix round 1.** With the evidence taken again after each folder's survey, `Lease::NONE` now takes two snapshot pairs per folder: 211.73 ms per candidate (42,346 ms for 200), against 0.81 ms with `Lease::BATCH` (163 ms). One pair cost 98.7 ms on a loaded machine (load average 10 to 18), so a 1 s lease spends at most 9.9% of each second on evidence. The window stays 1 s.
+
+**Fix round 2.** The age check before each approval takes nothing more while the probes are fast: 230.44 ms per candidate with `Lease::NONE` (46,087 ms for 200) and 0.86 ms with `Lease::BATCH` (171 ms), with one pair at 106.7 ms (10.7% of a 1 s lease) on a machine loaded by other work.

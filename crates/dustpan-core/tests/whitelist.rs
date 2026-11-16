@@ -401,11 +401,35 @@ fn a_bracket_in_a_real_folder_name_still_keeps_that_folder() {
 
 #[test]
 fn a_bracket_that_cannot_be_matched_as_mole_would_stops_the_load() {
-    for bad in ["~/a/[[:nope:]]", "~/a/[z-a]", "~/a/[[=e=]]"] {
+    for bad in ["~/a/[[:nope:]]", "~/a/[z-a]", "~/a/[[=ab=]]"] {
         let err = load(Read::Text(format!("~/ok\n{bad}\n"))).unwrap_err();
         let said = err.to_string();
         assert!(said.contains("line 2"), "{bad}: {said}");
     }
+}
+
+#[test]
+fn brackets_the_c_locale_reads_load() {
+    let wl = text("~/a/[[=e=]]x\n~/a/[[.e.]]y\n~/a/[[:ascii:]]z\n");
+    assert_eq!(patterns(&wl, Origin::User).len(), 3);
+}
+
+#[test]
+fn wildcards_also_match_the_bytes_mole_matches_under_the_c_locale() {
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/Library/Caches/caf\u{e9}")
+        .dir("/Users/alice/Library/Caches/v\u{e9}");
+    let w = "whitelist/whitelisted";
+    kept(
+        &fs,
+        "~/Library/Caches/caf??\n",
+        &[("/Users/alice/Library/Caches/caf\u{e9}", w)],
+    );
+    kept(
+        &fs,
+        "~/Library/Caches/v[![:alpha:]]*\n",
+        &[("/Users/alice/Library/Caches/v\u{e9}", w)],
+    );
 }
 
 const NFC: &str = "Caf\u{e9}";

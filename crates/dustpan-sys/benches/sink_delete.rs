@@ -7,13 +7,9 @@
 //! The sink's number is the whole item as `clean` pays it: `Recheck::approve` (every guard
 //! layer, identity, one process table and one snapshot of open files, and the survey that lists
 //! and judges all 101,000 entries) plus the delete walk and the log row.
-#![cfg_attr(
-    unix,
-    expect(
-        clippy::disallowed_methods,
-        reason = "the bench builds its own fixture trees; the bans guard shipped code"
-    )
-)]
+#[cfg(unix)]
+#[path = "../examples/support/fixture_dir.rs"]
+mod fixture_dir;
 
 #[cfg(not(unix))]
 fn main() {
@@ -27,6 +23,7 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(unix)]
 mod unix {
+    use crate::fixture_dir::FixtureDir;
     use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
     use dustpan_core::guard::{Guard, GuardInputs, Homes, Lease};
     use dustpan_core::oplog::{Command, OpLog, RunId};
@@ -38,7 +35,7 @@ mod unix {
     use dustpan_core::time::Clock;
     use dustpan_core::whitelist::Whitelist;
     use dustpan_sys::{FileStore, LiveDisk, LiveProbe, SystemClock};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::process::{Command as Process, ExitCode, Stdio};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -140,13 +137,9 @@ mod unix {
     }
 
     pub(super) fn run() -> ExitCode {
-        // Outside the repository, where an editor or terminal watching the project would hold
-        // the fixture's folders open and the guard would rightly keep them. `.noindex` keeps
-        // Spotlight out.
-        let root: PathBuf =
-            std::env::temp_dir().join(format!("dustpan-sink-bench-{}.noindex", std::process::id()));
+        let fixture = FixtureDir::new("dustpan-sink-bench-");
+        let root = fixture.path();
         std::fs::create_dir_all(root.join("Library/Caches")).expect("bench root");
-        let root = root.canonicalize().expect("bench root");
         let (mut rm, mut ours) = (Vec::new(), Vec::new());
         for round in 0..ROUNDS {
             let a = root.join(format!("Library/Caches/rm-{round}"));
@@ -154,9 +147,9 @@ mod unix {
             build(&a);
             build(&b);
             let (took_rm, took_sink) = if round % 2 == 0 {
-                (rm_rf(&a), sink(&root, &b))
+                (rm_rf(&a), sink(root, &b))
             } else {
-                let took_sink = sink(&root, &b);
+                let took_sink = sink(root, &b);
                 (rm_rf(&a), took_sink)
             };
             println!(
@@ -167,7 +160,6 @@ mod unix {
             rm.push(took_rm);
             ours.push(took_sink);
         }
-        let _ = std::fs::remove_dir_all(&root);
         let (rm, ours) = (median(rm), median(ours));
         let ratio = secs(ours) / secs(rm);
         println!(

@@ -6,10 +6,8 @@
 //! executor over all of them with `Lease::NONE` (a process table and a snapshot of open files
 //! per candidate) and with `Lease::BATCH` (one of each per second), interleaved over five rounds.
 //! A preview holds no disk, so nothing is removed. Also times the two snapshots alone.
-#![expect(
-    clippy::disallowed_methods,
-    reason = "the example builds and removes its own fixture folders"
-)]
+#[path = "support/fixture_dir.rs"]
+mod fixture_dir;
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
 use dustpan_core::guard::{Guard, GuardInputs, Homes, Lease};
@@ -21,6 +19,7 @@ use dustpan_core::sink::{Cancel, Executor, Mode, Outcome, Services};
 use dustpan_core::time::Clock;
 use dustpan_core::whitelist::Whitelist;
 use dustpan_sys::{LiveDisk, LiveProbe, SystemClock};
+use fixture_dir::FixtureDir;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -96,9 +95,8 @@ fn ms(d: Duration) -> f64 {
 }
 
 fn main() {
-    // Outside the repository, which an editor may watch and so hold open.
-    let home =
-        std::env::temp_dir().join(format!("dustpan-lease-cost-{}.noindex", std::process::id()));
+    let fixture = FixtureDir::new("dustpan-lease-cost-");
+    let home = fixture.path();
     for i in 0..CANDIDATES {
         let dir = home.join(format!("Library/Caches/c{i:03}"));
         std::fs::create_dir_all(&dir).unwrap();
@@ -106,7 +104,6 @@ fn main() {
             std::fs::write(dir.join(format!("f{f}")), b"x").unwrap();
         }
     }
-    let home = home.canonicalize().unwrap();
     let probe = LiveProbe::new();
     let env = |_: &str| None;
     let abs_home = AbsPath::parse(home.as_os_str()).unwrap();
@@ -125,14 +122,13 @@ fn main() {
         let _ = probe.processes();
         let _ = probe.open_files();
         snapshots.push(start.elapsed());
-        let (t, n) = preview(&guard, &probe, plan(&guard, &probe, &home), Lease::NONE);
+        let (t, n) = preview(&guard, &probe, plan(&guard, &probe, home), Lease::NONE);
         none.push(t);
         eligible.0 = n;
-        let (t, n) = preview(&guard, &probe, plan(&guard, &probe, &home), Lease::BATCH);
+        let (t, n) = preview(&guard, &probe, plan(&guard, &probe, home), Lease::BATCH);
         batch.push(t);
         eligible.1 = n;
     }
-    let _ = std::fs::remove_dir_all(&home);
     let per = |d: Duration| ms(d) / CANDIDATES as f64;
     let (none, batch, snapshot) = (median(none), median(batch), median(snapshots));
     println!(

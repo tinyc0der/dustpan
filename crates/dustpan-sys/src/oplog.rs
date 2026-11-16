@@ -13,9 +13,9 @@
 //! file, so a FIFO at a log name is an error, and the lock is waited for at most
 //! [`LOCK_WAIT`]. `OpLog` turns any error into its one warning and the run goes on.
 use dustpan_core::oplog::LogStore;
-use std::fs::{File, TryLockError};
-use std::io::{self, Write as _};
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{self, Read as _, Write as _};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
@@ -34,8 +34,35 @@ impl FileStore {
     pub const OLD: &str = "operations.log.old";
     pub const LOCK: &str = "operations.log.lock";
 
+    /// The most `history` reads from one log file. Rotation keeps a file near 5 MiB, but it is
+    /// checked only when a session starts, so one long session can pass that by far.
+    pub const READ_CAP: u64 = 64 * 1024 * 1024;
+
     pub fn new(dir: PathBuf) -> Self {
         Self { dir, folder: None }
+    }
+
+    /// One log file for `history`: opened for reading only, without waiting on a FIFO, and
+    /// refused when it is not a regular file or is larger than [`Self::READ_CAP`].
+    pub fn read(path: &Path) -> io::Result<Vec<u8>> {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let mut bytes = Vec::new();
+        regular(options.open(path)?)?
+            .take(Self::READ_CAP + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > Self::READ_CAP {
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                format!("larger than {} MiB", Self::READ_CAP / 1024 / 1024),
+            ));
+        }
+        Ok(bytes)
     }
 
     fn folder(&mut self) -> io::Result<&Folder> {

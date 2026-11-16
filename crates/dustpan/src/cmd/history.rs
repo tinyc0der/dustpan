@@ -1,8 +1,9 @@
 //! `dustpan history [--json] [--limit N]`: past sessions and per-item records from the
 //! operations log. Read-only (SAFE-37): it opens `operations.log.old` and `operations.log` for
 //! reading and nothing else, so running it never creates, rotates or changes a log file. Exit 0,
-//! with an empty history when there is no log yet; 1 when a log exists and cannot be read; 2 for
-//! a usage error (`--limit 0` and `--limit 201` are refused while the arguments are parsed).
+//! with an empty history when there is no log yet; 1 when a log exists and cannot be read, is
+//! not a regular file or is larger than `FileStore::READ_CAP`; 2 for a usage error
+//! (`--limit 0` and `--limit 201` are refused while the arguments are parsed).
 use crate::exit::Exit;
 use dustpan_core::history::{DeletionRecord, History, Limit, SessionSummary};
 use dustpan_core::path::escaped;
@@ -13,10 +14,12 @@ use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::Path;
 
-fn read(dir: &Path, name: &str) -> io::Result<Vec<u8>> {
-    match std::fs::read(dir.join(name)) {
+/// The file's bytes, empty when it does not exist, or the message that names it.
+fn read(dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let path = dir.join(name);
+    match FileStore::read(&path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        other => other,
+        read => read.map_err(|e| format!("cannot read {}: {e}", escaped(path.as_os_str()))),
     }
 }
 
@@ -32,8 +35,8 @@ pub fn run(json: bool, limit: Limit, out: &mut dyn Write) -> Exit {
     let logs = read(&dir, FileStore::OLD).and_then(|old| Ok((old, read(&dir, FileStore::FILE)?)));
     let (old, current) = match logs {
         Ok(logs) => logs,
-        Err(e) => {
-            let _ = writeln!(io::stderr(), "dustpan: cannot read the operations log: {e}");
+        Err(message) => {
+            let _ = writeln!(io::stderr(), "dustpan: {message}");
             return Exit::Failed;
         }
     };

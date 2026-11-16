@@ -3,6 +3,7 @@
 use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn home() -> tempfile::TempDir {
     tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
@@ -170,4 +171,45 @@ fn a_relative_home_is_refused_and_no_log_folder_is_named() {
     let stderr = String::from_utf8_lossy(&out.get_output().stderr);
     assert!(stderr.contains("absolute"), "{stderr}");
     assert!(out.get_output().stdout.is_empty());
+}
+
+/// Fails after `limit` instead of hanging, if the read blocks.
+fn history_within(home: &Path, limit: Duration) -> Command {
+    let mut cmd = history(home);
+    cmd.timeout(limit);
+    cmd
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_at_the_log_exits_1_and_names_the_file() {
+    let home = home();
+    let dir = log_dir(home.path());
+    std::fs::create_dir_all(&dir).unwrap();
+    let fifo = dir.join("operations.log");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let out = history_within(home.path(), Duration::from_secs(10))
+        .assert()
+        .code(1);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains(&*fifo.to_string_lossy()), "{stderr}");
+    assert!(stderr.contains("not a regular file"), "{stderr}");
+}
+
+#[test]
+fn a_log_over_the_read_cap_exits_1_and_names_the_file() {
+    let home = home();
+    let file = write_log(home.path(), LOG);
+    let big = std::fs::OpenOptions::new().write(true).open(&file).unwrap();
+    big.set_len(64 * 1024 * 1024 + 1).unwrap();
+    let out = history_within(home.path(), Duration::from_secs(30))
+        .assert()
+        .code(1);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains(&*file.to_string_lossy()), "{stderr}");
+    assert!(stderr.contains("64 MiB"), "{stderr}");
 }

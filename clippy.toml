@@ -27,4 +27,11 @@ disallowed-methods = [
     { path = "windows_sys::Wdk::Storage::FileSystem::ZwDeleteFile", reason = "SAFE-01: removal goes through dustpan_core::sink", allow-invalid = true },
     { path = "windows_sys::Wdk::Storage::FileSystem::NtSetInformationFile", reason = "SAFE-01: a disposition or rename goes through dustpan_core::sink", allow-invalid = true },
     { path = "windows_sys::Wdk::System::SystemServices::ZwSetInformationFile", reason = "SAFE-01: a disposition or rename goes through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::SHFileOperationW", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::IFileOperation::DeleteItem", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::IFileOperation::DeleteItems", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::IFileOperation::MoveItem", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::IFileOperation::MoveItems", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::IFileOperation::RenameItem", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
+    { path = "windows::Win32::UI::Shell::IFileOperation::RenameItems", reason = "SAFE-01: removal and moves go through dustpan_core::sink", allow-invalid = true },
 ]

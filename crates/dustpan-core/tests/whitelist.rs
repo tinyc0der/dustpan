@@ -792,3 +792,27 @@ fn a_mark_right_after_a_wildcard_keeps_the_name_in_either_spelling() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Mole trims a line with `[:space:]` under `LC_ALL=C`, which holds ASCII whitespace only. A
+/// name that ends in another space, such as U+2002, keeps it.
+#[test]
+fn a_space_outside_ascii_at_the_end_of_a_line_stays_in_the_entry() {
+    let wl = text("~/a\u{2002}\n \t~/b \t\r\n");
+    assert_eq!(
+        patterns(&wl, Origin::User),
+        ["/Users/alice/a\u{2002}", "/Users/alice/b"]
+    );
+    let fs = FakeProbe::new()
+        .dir("/Users/alice/P/a\u{2000}")
+        .dir("/Users/alice/P/a");
+    let w = "whitelist/whitelisted";
+    kept(
+        &fs,
+        "~/P/a\u{2002}\n",
+        &[
+            ("/Users/alice/P/a\u{2000}", w),
+            ("/Users/alice/P/a", "eligible"),
+        ],
+    );
+    kept(&fs, "~/P/?\u{2002}\n", &[("/Users/alice/P/a\u{2000}", w)]);
+}

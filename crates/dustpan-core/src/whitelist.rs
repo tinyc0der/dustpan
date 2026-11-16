@@ -208,8 +208,9 @@ impl Whitelist {
 
 /// Parses the whitelist `file` as the binary read it.
 ///
-/// A line is trimmed (so CRLF endings and trailing spaces do not matter), and blank lines and
-/// lines that start with `#` are skipped. A line that cannot name a place stops the load: a
+/// A line loses the ASCII whitespace at either end, as Mole's `[:space:]` under `LC_ALL=C`
+/// trims it (so CRLF endings and trailing spaces do not matter). A space outside ASCII, such as
+/// U+2002, stays part of the name. Blank lines and lines that start with `#` are skipped. A line that cannot name a place stops the load: a
 /// relative path, one with `..`, an unknown class, a backward range, or a bracket element of
 /// more than one character.
 pub fn load(os: Os, homes: &Homes, file: &AbsPath, read: Read) -> Result<Whitelist, LoadError> {
@@ -225,7 +226,7 @@ pub fn load(os: Os, homes: &Homes, file: &AbsPath, read: Read) -> Result<Whiteli
     };
     let mut entries = Vec::new();
     for (index, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
-        let line = line.trim();
+        let line = line.trim_matches(|c: char| c.is_ascii_whitespace() || c == '\x0b');
         if line.is_empty() || line.starts_with('#') {
             continue;
         }

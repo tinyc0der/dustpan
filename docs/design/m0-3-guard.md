@@ -514,6 +514,8 @@ A config path the guard cannot take, such as an `XDG_CONFIG_HOME` with `..`, sto
 
 ### Parsing an entry
 
+A line loses the ASCII whitespace at either end, as Mole's `[:space:]` trims it under `LC_ALL=C`. A space outside ASCII, such as U+2002, stays part of the name, so an entry for a folder whose name ends in one still keeps that folder.
+
 A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. Such an entry expands once at each home in `Homes`, so `HOME` pointed elsewhere still keeps the account's copy. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load. On Windows, `~/D:\work` would name another drive, so it stops the load too.
 
 Mole matches an entry with `[[ $path == $pattern ]]`, and its commands export `LC_ALL=C` (`bin/clean.sh:15`). Its `?` and `[...]` therefore take one byte, and its classes hold ASCII only. A name of a dustpan entry matches when any of these holds:

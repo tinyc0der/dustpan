@@ -253,6 +253,20 @@ fn the_newest_come_first_and_the_limit_caps_both_lists() {
 }
 
 #[test]
+fn sessions_order_by_their_start_in_utc() {
+    // 09:00 UTC, then 10:00 +0900, which is 01:00 UTC: the first in the file is the newer.
+    let log =
+        b"\n# ========== clean run=utc session started at 2026-11-16 09:00:00 +0000 ==========\n\
+\n# ========== clean run=tokyo session started at 2026-11-16 10:00:00 +0900 ==========\n";
+    let history = History::read(b"", log);
+    let sessions: Vec<_> = history
+        .sessions(Limit::DEFAULT)
+        .map(|s| s.run_id.as_str())
+        .collect();
+    assert_eq!(sessions, ["utc", "tokyo"]);
+}
+
+#[test]
 fn a_limit_outside_one_to_two_hundred_is_refused() {
     assert_eq!(Limit::new(0), None);
     assert_eq!(Limit::new(201), None);

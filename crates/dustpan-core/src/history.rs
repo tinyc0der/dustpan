@@ -10,6 +10,7 @@
 //! item, once, and derives the deletions from the item rows of `operations.log`, so the two
 //! lists cannot disagree.
 use crate::oplog::{self, Parsed};
+use crate::time;
 use std::collections::HashMap;
 
 /// `--limit N`: 1 to 200, default 20 (HIST-03).
@@ -73,6 +74,7 @@ pub struct SessionSummary {
     /// Empty when the session has no end marker: it crashed or is still running.
     pub ended_at: String,
     pub items: u64,
+    /// From the end marker. `0B` until one is read, as Mole reports an unfinished session.
     pub size: String,
     pub operation_count: u64,
     pub failed_tasks: u64,
@@ -96,12 +98,20 @@ pub struct DeletionRecord {
     pub path: String,
 }
 
-/// Everything both log files hold, oldest first.
+impl SessionSummary {
+    /// The start in Unix seconds, read with the start marker's offset, or as UTC without one.
+    /// `None` for a stamp that does not parse, which sorts oldest.
+    fn started(&self) -> Option<i64> {
+        time::unix_secs(&self.started_at, &self.offset)
+    }
+}
+
+/// Everything both log files hold, oldest first: sessions by start time, items in file order.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct History {
     sessions: Vec<SessionSummary>,
     deletions: Vec<DeletionRecord>,
-    /// Sessions with no end marker yet, by command and run id.
+    /// While reading, sessions with no end marker yet, by command and run id.
     open: HashMap<(String, String), usize>,
 }
 
@@ -127,6 +137,10 @@ impl History {
     /// Reads `operations.log.old`, then `operations.log`. Never fails: a line that does not
     /// parse is skipped, a row with no start marker (rotated away, or a torn start) opens its
     /// session, and a session with no end marker is reported not ended.
+    ///
+    /// Sessions are ordered by start time, as Mole orders them, so a clock set back between
+    /// two runs does not list the older run as the newest. Sessions that start in the same
+    /// second keep their file order.
     pub fn read(old: &[u8], current: &[u8]) -> Self {
         let mut history = Self::default();
         let lines = old
@@ -137,6 +151,8 @@ impl History {
                 history.add(parsed);
             }
         }
+        history.open.clear();
+        history.sessions.sort_by_key(SessionSummary::started);
         history
     }
 
@@ -164,7 +180,7 @@ impl History {
             started_at: text(at),
             ended_at: String::new(),
             items: 0,
-            size: String::new(),
+            size: "0B".to_owned(),
             operation_count: 0,
             failed_tasks: 0,
             actions: Actions::default(),
@@ -195,7 +211,9 @@ impl History {
                 if let Some(items) = items {
                     session.items = items;
                 }
-                session.size = text(size);
+                if !size.is_empty() {
+                    session.size = text(size);
+                }
             }
             Parsed::Item {
                 at,

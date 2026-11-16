@@ -136,7 +136,7 @@ fn write_text(history: &History, limit: Limit, log: &str, out: &mut dyn Write) -
         let ended = if s.ended_at.is_empty() {
             "not ended".to_owned()
         } else {
-            e(&s.ended_at)
+            format!("ended {}", e(&s.ended_at))
         };
         writeln!(
             out,
@@ -146,7 +146,7 @@ fn write_text(history: &History, limit: Limit, log: &str, out: &mut dyn Write) -
             s.items,
             e(&s.size)
         )?;
-        writeln!(out, "             {counts}, ended {ended}")?;
+        writeln!(out, "             {counts}, {ended}")?;
     }
     writeln!(out, "\nDeletion audit")?;
     let mut deletions = history.deletions(limit).peekable();

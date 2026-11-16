@@ -173,6 +173,31 @@ fn a_relative_home_is_refused_and_no_log_folder_is_named() {
     assert!(out.get_output().stdout.is_empty());
 }
 
+/// The clock went back a year between two runs, and the second never ended.
+const OUT_OF_ORDER: &[u8] =
+    b"\n# ========== clean run=2026-a session started at 2026-01-01 00:00:00 +0700 ==========\n\
+[2026-01-01 00:00:01] [clean run=2026-a] REMOVED /a/b (sink=delete size=2048)\n\
+# ========== clean run=2026-a session ended at 2026-01-01 00:00:04, 1 items, 2 KB ==========\n\
+\n# ========== clean run=2025-a session started at 2025-01-01 00:00:00 +0700 ==========\n\
+[2025-01-01 00:00:01] [clean run=2025-a] REMOVED /q (sink=delete size=5)\n";
+
+#[test]
+fn sessions_come_newest_first_by_start_time_and_an_unfinished_one_reads_as_mole_does() {
+    let home = home();
+    write_log(home.path(), OUT_OF_ORDER);
+    let newest = json(home.path(), &["--limit", "1"]);
+    assert_eq!(newest["sessions"][0]["run_id"], "2026-a");
+    let v = json(home.path(), &[]);
+    let unfinished = &v["sessions"][1];
+    assert_eq!(unfinished["run_id"], "2025-a");
+    assert_eq!(unfinished["ended_at"], "");
+    assert_eq!(unfinished["size"], "0B");
+    let out = history(home.path()).assert().success();
+    let text = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(text.contains("removed 1, not ended"), "{text}");
+    assert!(!text.contains("ended not ended"), "{text}");
+}
+
 /// Fails after `limit` instead of hanging, if the read blocks.
 fn history_within(home: &Path, limit: Duration) -> Command {
     let mut cmd = history(home);

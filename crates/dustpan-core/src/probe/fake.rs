@@ -279,13 +279,19 @@ impl FakeProbe {
     /// Process `pid` runs and does not let the probe list its open files. `mine` says it runs
     /// as the user dustpan runs as.
     pub fn unlisted(self, pid: u32, mine: bool) -> Self {
+        self.unlisted_now(pid, mine);
+        self
+    }
+
+    /// The probe cannot list the open files of process `pid` from now on, as when the process
+    /// opens a file whose path the probe cannot confirm between discovery and the sink.
+    pub fn unlisted_now(&self, pid: u32, mine: bool) {
         if let Seen::Found(open) = &mut *self.open() {
             open.unlisted.push(Unlisted {
                 pid: Pid(pid),
                 mine,
             });
         }
-        self
     }
 
     /// The snapshot of open files cannot be taken at all.

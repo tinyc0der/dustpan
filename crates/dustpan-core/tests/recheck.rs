@@ -10,7 +10,7 @@ use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
-use dustpan_core::probe::{Owner, Probe, Seen};
+use dustpan_core::probe::{Owner, Probe, Seen, Unseen};
 use std::sync::Arc;
 
 const APP: &str = "/Users/alice/Library/Caches/com.example.app";
@@ -99,6 +99,29 @@ fn a_file_opened_after_discovery_is_refused_at_the_sink() {
     let snapshots = fs.open_file_calls();
     guard.recheck(candidate, &fs).unwrap();
     assert_eq!(fs.open_file_calls(), snapshots + 1);
+}
+
+#[test]
+fn a_process_whose_open_files_cannot_be_listed_at_the_sink_is_a_refusal() {
+    let fs = fixture();
+    let guard = guard(&fs);
+    let candidate = discover(&guard, &fs);
+    fs.unlisted_now(31, true);
+    let rejection = refusal(&guard, &fs, candidate);
+    assert!(
+        matches!(
+            &rejection,
+            Rejection::Kept(KeptReason::Live(LiveReason::InUseUnknown(Unseen::Unlisted(pid))))
+                if pid.0 == 31
+        ),
+        "{rejection:?}"
+    );
+
+    // Another user's process holds nothing in this user's cache.
+    let fs = fixture();
+    let candidate = discover(&guard, &fs);
+    fs.unlisted_now(1, false);
+    guard.recheck(candidate, &fs).unwrap();
 }
 
 #[test]

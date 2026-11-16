@@ -296,11 +296,11 @@ fn a_linked_log_folder_warns_once_logs_nothing_and_the_delete_still_happens() {
 }
 
 fn mkfifo(path: &Path) {
-    let made = std::process::Command::new("mkfifo")
-        .arg(path)
-        .status()
-        .unwrap();
-    assert!(made.success(), "mkfifo {}", path.display());
+    use std::os::unix::ffi::OsStrExt as _;
+    let raw = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `raw` is NUL-terminated and outlives the call.
+    let made = unsafe { libc::mkfifo(raw.as_ptr(), 0o600) } == 0;
+    assert!(made, "mkfifo {}", path.display());
 }
 
 /// Runs two deletes on a thread of their own after `block` has set up the log folder, so a log

@@ -212,6 +212,10 @@ fn a_fifo_at_the_log_exits_1_and_names_the_file() {
     let dir = log_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     let fifo = dir.join("operations.log");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "mkfifo(1) makes the test's own FIFO; this crate has no libc"
+    )]
     let made = std::process::Command::new("mkfifo")
         .arg(&fifo)
         .status()

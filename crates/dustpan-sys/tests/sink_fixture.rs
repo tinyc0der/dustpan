@@ -545,6 +545,62 @@ fn trash_symlink_lane() {
     assert_eq!(reached, 0);
 }
 
+/// SAFE-13: the user's Trash on the item's volume has an ACL entry that lets everyone add and
+/// delete entries, though its mode bits let nobody else write. The move is refused as
+/// `trash-failed` and the item stays. Run it with `DUSTPAN_SINK_FIXTURE_HOME` on a scratch disk
+/// image, whose Trash it changes and then restores.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "gives a volume's Trash an ACL; run by hand with the fixture home on a scratch disk image"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test moves the scratch volume's own Trash aside and back, and sets its ACL"
+)]
+fn trash_acl_lane() {
+    let fixture = Fixture::new(&format!("acl-trash-{:x}", nonce()));
+    let volume = mount_point(&fixture.home);
+    assert_ne!(volume, Path::new("/"), "needs a scratch volume");
+    // SAFETY: getuid takes no arguments and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let trash = volume.join(".Trashes").join(uid.to_string());
+    let aside = volume
+        .join(".Trashes")
+        .join(format!("{uid}.aside-{:x}", nonce()));
+    std::fs::create_dir_all(&trash).unwrap();
+    std::fs::rename(&trash, &aside).unwrap();
+    std::fs::create_dir(&trash).unwrap();
+    let added = std::process::Command::new("/bin/chmod")
+        .args([
+            "+a",
+            "everyone allow add_file,add_subdirectory,delete_child",
+        ])
+        .arg(&trash)
+        .status()
+        .unwrap();
+    let name = "com.example.acl-trash";
+    let item = fixture.at(&format!("Library/Caches/{name}"));
+    fixture.tree(&format!("Library/Caches/{name}"), 1, 2);
+    let ran = added
+        .success()
+        .then(|| run(&fixture, std::slice::from_ref(&item), || Sink::Trash));
+    let reached = std::fs::read_dir(&trash).unwrap().count();
+    std::fs::remove_dir_all(&trash).unwrap();
+    std::fs::rename(&aside, &trash).unwrap();
+    let ran = ran.expect("chmod +a");
+    println!(
+        "{:?}; item in place: {}; entries in that Trash: {reached}",
+        ran.outcomes[0],
+        item.exists()
+    );
+    assert!(
+        matches!(&ran.outcomes[0], Outcome::Failed(f) if f.cause.code() == "trash-failed"),
+        "{:?}",
+        ran.outcomes[0]
+    );
+    assert!(item.join("d0/f0").exists());
+    assert_eq!(reached, 0);
+}
+
 /// Lane 7: a disk image mounted inside a fixture folder keeps the folder, and the files on the
 /// image survive.
 #[cfg(target_os = "macos")]

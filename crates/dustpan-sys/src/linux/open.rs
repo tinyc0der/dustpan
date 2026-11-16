@@ -23,20 +23,22 @@ enum Listed {
 
 /// Opens the descriptor folder of the process at `process`, a folder of `/proc`.
 ///
-/// The kernel shows a process's descriptors to its owner and to root, and `/proc/<pid>` belongs
-/// to the user who may look. That is root for a process that changed user and can no longer be
-/// inspected by the one it runs as, such as `ssh-agent`.
+/// The kernel shows a process's descriptors to the user it runs as and to root, and the
+/// descriptor folder belongs to the user who may look. That is root for a process that turned
+/// off inspection of itself, as `ssh-agent` does, whoever it runs as. `/proc/<pid>` itself
+/// always belongs to the user the process runs as, so it cannot tell the two apart.
 ///
 /// A process that is starting a new program is shown to root alone for a moment. A refusal
-/// from a process this user owns is therefore asked again, a millisecond apart.
+/// from a folder this user owns is therefore asked again, a millisecond apart.
 fn list(process: &Path, me: libc::uid_t) -> Listed {
+    let fd = process.join("fd");
     for _ in 0..4 {
-        match std::fs::read_dir(process.join("fd")) {
+        match std::fs::read_dir(&fd) {
             Ok(fds) => return Listed::Fds(fds),
             Err(e) if exited(&e) => return Listed::Gone,
             Err(_) => {}
         }
-        match std::fs::metadata(process) {
+        match std::fs::symlink_metadata(&fd) {
             Ok(owner) if me != 0 && owner.uid() != me => return Listed::Refused { mine: false },
             Err(e) if exited(&e) => return Listed::Gone,
             Ok(_) | Err(_) => std::thread::sleep(Duration::from_millis(1)),

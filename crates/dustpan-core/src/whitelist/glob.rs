@@ -74,6 +74,7 @@ pub(crate) struct Subject<'a> {
     key: &'a [u8],
     chars: OnceCell<Vec<char>>,
     one_for_one: OnceCell<Vec<char>>,
+    decomposed: OnceCell<Vec<char>>,
 }
 
 impl<'a> Subject<'a> {
@@ -83,6 +84,7 @@ impl<'a> Subject<'a> {
             key,
             chars: OnceCell::new(),
             one_for_one: OnceCell::new(),
+            decomposed: OnceCell::new(),
         }
     }
 
@@ -99,6 +101,11 @@ impl<'a> Subject<'a> {
         self.one_for_one
             .get_or_init(|| one_for_one(&String::from_utf8_lossy(self.raw)).collect())
     }
+
+    fn decomposed_chars(&self) -> &[char] {
+        self.decomposed
+            .get_or_init(|| String::from_utf8_lossy(self.key).nfd().collect())
+    }
 }
 
 /// What a pattern reads one at a time: a byte, as Mole's `LC_ALL=C` shell does, or a
@@ -107,7 +114,7 @@ trait Unit: Copy + PartialOrd {
     fn ascii(self) -> Option<u8>;
     fn text(units: &[Self]) -> String;
     fn class(name: &str) -> Option<fn(Self) -> bool>;
-    fn with_marks(rest: &[Self]) -> usize;
+    fn is_mark(self) -> bool;
     fn other_case(self) -> Self;
 }
 
@@ -166,8 +173,8 @@ impl Unit for u8 {
             .map(|&(_, c)| c)
     }
 
-    fn with_marks(_: &[Self]) -> usize {
-        1
+    fn is_mark(self) -> bool {
+        false
     }
 
     fn other_case(self) -> Self {
@@ -191,13 +198,8 @@ impl Unit for char {
             .map(|&(_, c)| c)
     }
 
-    /// `?` and `[...]` take a character with the combining marks after it, so a key that NFC
-    /// could not compose still counts one letter as one.
-    fn with_marks(rest: &[Self]) -> usize {
-        1 + rest[1..]
-            .iter()
-            .take_while(|&&c| canonical_combining_class(c) != 0)
-            .count()
+    fn is_mark(self) -> bool {
+        canonical_combining_class(self) != 0
     }
 
     fn other_case(self) -> Self {
@@ -234,6 +236,10 @@ pub(crate) struct Glob {
     chars: Pattern<char>,
     /// The pattern over [`one_for_one`] characters, for a name with a character outside ASCII.
     one_for_one: Option<Pattern<char>>,
+    /// The pattern over the key's NFD, for a pattern that spells a character outside ASCII
+    /// right after a wildcard. NFC can compose that character into the one the wildcard takes:
+    /// `x` and U+0308 are U+1E8D, so `?\u{308}` would find no mark to match.
+    decomposed: Option<Pattern<char>>,
     /// A folder named `[2020] Album` matches this, as it matches Mole's quoted comparison.
     written: Box<[u8]>,
 }
@@ -265,11 +271,18 @@ impl Glob {
             return Ok(Name::Plain);
         };
         let mut one_for_one = None;
+        let mut decomposed = None;
         if fold_case {
             one_for_one = Pattern::parse(&units, true)?.map(|mut p| {
                 p.tokens = fold_runs(p.tokens, one_for_one_run);
                 p
             });
+            decomposed = Pattern::parse(&units, true)?
+                .map(|mut p| {
+                    p.tokens = fold_runs(p.tokens, decomposed_run);
+                    p
+                })
+                .filter(Pattern::spells_after_a_wildcard);
             chars.tokens = fold_runs(chars.tokens, folded_run);
         }
         let mut written = Vec::new();
@@ -278,6 +291,7 @@ impl Glob {
             bytes,
             chars,
             one_for_one,
+            decomposed,
             written: written.into(),
         }))
     }
@@ -291,15 +305,23 @@ impl Glob {
             || self.bytes.matches(name.raw)
             || self.chars.matches(name.key_chars())
             || (!name.raw.is_ascii()
-                && self
+                && (self
                     .one_for_one
                     .as_ref()
-                    .is_some_and(|p| p.matches(name.one_for_one_chars())))
+                    .is_some_and(|p| p.matches(name.one_for_one_chars()))
+                    || self
+                        .decomposed
+                        .as_ref()
+                        .is_some_and(|p| p.matches(name.decomposed_chars()))))
     }
 }
 
 fn folded_run(run: &str) -> Vec<char> {
     folded(run).collect()
+}
+
+fn decomposed_run(run: &str) -> Vec<char> {
+    folded(run).nfd().collect()
 }
 
 fn one_for_one_run(run: &str) -> Vec<char> {
@@ -373,8 +395,8 @@ impl<U: Unit> Pattern<U> {
                     last_star = Some((t, n));
                     continue;
                 }
-                Some(token) => {
-                    if let Some(used) = self.take(token, &name[n..]) {
+                Some(_) => {
+                    if let Some(used) = self.take(t, &name[n..]) {
                         t += 1;
                         n += used;
                         continue;
@@ -394,15 +416,37 @@ impl<U: Unit> Pattern<U> {
         }
     }
 
-    fn take(&self, token: &Token<U>, rest: &[U]) -> Option<usize> {
+    fn spells_after_a_wildcard(&self) -> bool {
+        self.tokens.windows(2).any(|pair| {
+            !matches!(pair[0], Token::Unit(_))
+                && matches!(pair[1], Token::Unit(u) if u.ascii().is_none())
+        })
+    }
+
+    fn take(&self, t: usize, rest: &[U]) -> Option<usize> {
         let &first = rest.first()?;
-        match token {
-            Token::Unit(u) => (first == *u).then_some(1),
-            Token::One => Some(U::with_marks(rest)),
-            Token::Set(set) => set
-                .admits(first, self.either_case)
-                .then(|| U::with_marks(rest)),
-            Token::Star => None,
+        let admitted = match &self.tokens[t] {
+            Token::Unit(u) => return (first == *u).then_some(1),
+            Token::One => true,
+            Token::Set(set) => set.admits(first, self.either_case),
+            Token::Star => return None,
+        };
+        admitted.then(|| self.width(t, rest))
+    }
+
+    /// `?` and `[...]` take a character with the combining marks after it, so a key that NFC
+    /// could not compose still counts one letter as one. When the pattern spells a mark next,
+    /// past any `*`, the wildcard takes the character alone and leaves the marks to the
+    /// pattern: `a?\u{300}t` keeps `a_\u{300}t`.
+    fn width(&self, t: usize, rest: &[U]) -> usize {
+        let spells_a_mark = self.tokens[t + 1..]
+            .iter()
+            .find(|token| !matches!(token, Token::Star))
+            .is_some_and(|token| matches!(token, Token::Unit(u) if u.is_mark()));
+        if spells_a_mark {
+            1
+        } else {
+            1 + rest[1..].iter().take_while(|u| u.is_mark()).count()
         }
     }
 }

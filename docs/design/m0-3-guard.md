@@ -520,7 +520,7 @@ Mole matches an entry with `[[ $path == $pattern ]]`, and its commands export `L
 
 1. Its bytes match the pattern under those C-locale rules, as Mole's would. `caf??` keeps an NFC `café`, whose `é` is two bytes.
 2. Its fold key equals the entry's text folded, as Mole's quoted comparison does. An entry for a folder named `[2020] Album` keeps that folder.
-3. Its fold key matches the pattern with `?` and `[...]` taking one character and the combining marks after it. `caf?` keeps `café` in either normalization form, and `Stra?e` keeps `STRAßE`.
+3. Its fold key matches the pattern with `?` and `[...]` taking one character and the combining marks after it. `caf?` keeps `café` in either normalization form, and `Stra?e` keeps `STRAßE`. A mark the entry spells right after a wildcard is left for the pattern to match. When the entry spells a character outside ASCII right after a wildcard, the key's NFD is matched too, because NFC can compose that mark into the character the wildcard takes. `caf?` followed by U+0301 keeps an NFC `café`.
 
 The first is Mole's meaning. The other two only add names. In every form, `*` is any run inside one name: Mole's `*` also crosses `/`, and an earlier decision row keeps it inside one name. Sets take ranges, `!` or `^` negation, the POSIX classes, and `[=e=]` or `[.e.]` for one character, as the C locale reads them. `\` takes the next byte as written. A `[` with no closing `]` is a plain character, as in a shell.
 
@@ -556,7 +556,7 @@ The key has to meet every name the volume treats as the same. Matching more can 
 - NTFS folds case through its upcase table, one character for one, and keeps normalization forms apart. The key folds the same case pairs. It also joins normalization forms, which only keeps more.
 - The upper-then-lower map joins pairs that lowercase alone misses, such as final sigma and `σ`.
 - One-for-one maps keep `?` counting `ß` as one character, so `Stra?e` still matches `Straße`. Full case folding would turn `ß` into `ss`, and `?` would then match less.
-- NFC rather than NFD keeps `é` one character for `?` and `[...]`. Both also take any combining marks that follow the character they match.
+- NFC rather than NFD keeps `é` one character for `?` and `[...]`. Both also take any combining marks that follow the character they match, unless the entry spells a mark next.
 
 The resolution through `Probe::spelling` already meets any spelling the volume itself accepts for an existing name. The fold matters for names after a wildcard and for names that do not exist yet.
 

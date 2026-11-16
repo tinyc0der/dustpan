@@ -750,3 +750,45 @@ fn whitelist_entries_hold_at_the_accounts_home_when_home_points_elsewhere() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Marks a volume that ignores normalization treats as one: each pair is canonically equivalent.
+const EQUIVALENT_MARKS: &[(&str, &str)] = &[
+    ("\u{300}", "\u{340}"),
+    ("\u{301}", "\u{341}"),
+    ("\u{313}", "\u{343}"),
+    ("\u{308}\u{301}", "\u{344}"),
+    ("\u{f71}\u{f72}", "\u{f73}"),
+];
+
+/// A mark an entry spells right after `?`, `[...]` or `*` is the pattern's to match, so the
+/// wildcard must not take it with the character before it, even where NFC composes the two.
+#[test]
+fn a_mark_right_after_a_wildcard_keeps_the_name_in_either_spelling() {
+    let mut cases = Vec::new();
+    for &(one, other) in EQUIVALENT_MARKS {
+        for (stored, written) in [(one, other), (other, one), (one, one)] {
+            cases.extend([
+                (format!("a_{stored}t"), format!("a?{written}t")),
+                (format!("a_{stored}t"), format!("a[_]{written}[t]")),
+                (format!("a_{stored}t"), format!("a?*{written}t")),
+                (
+                    format!("a_{stored}{stored}x{stored}"),
+                    format!("a_{written}{written}?{written}"),
+                ),
+            ]);
+        }
+    }
+    for entry in ["caf?\u{301}", "caf[e]\u{301}", "ca*\u{301}"] {
+        cases.push((NFC.to_lowercase(), entry.to_owned()));
+    }
+    let mut wrong = Vec::new();
+    for (name, entry) in cases {
+        let path = format!("/Users/alice/U/{name}");
+        let fs = FakeProbe::new().dir(&path);
+        let got = outcome(&judge(&fs, text(&format!("~/U/{entry}\n")), &path));
+        if got != "whitelist/whitelisted" {
+            wrong.push(format!("entry {entry:?}, name {name:?}: {got}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

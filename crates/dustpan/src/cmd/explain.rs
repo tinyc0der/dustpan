@@ -48,13 +48,14 @@ pub fn run(args: &[OsString], json: bool, out: &mut dyn Write) -> Exit {
         Ok(account) => account,
         Err(exit) => return exit,
     };
-    let whitelist = match config::whitelist(os, &env, &home) {
+    let homes = Homes::new(home.clone(), account);
+    let whitelist = match config::whitelist(os, &env, &homes) {
         Ok(whitelist) => whitelist,
         Err(e) => return fail(format_args!("{e}"), Exit::Failed),
     };
     let inputs = GuardInputs {
         os,
-        homes: Homes::new(home.clone(), account),
+        homes,
         env: &env,
         whitelist,
     };

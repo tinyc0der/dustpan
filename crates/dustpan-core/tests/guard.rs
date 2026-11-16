@@ -52,7 +52,7 @@ fn guard(fs: &FakeProbe) -> Guard {
             os: Os::MacOs,
             homes: Homes::new(p(HOME), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(p(HOME), None)),
         },
         fs,
     )
@@ -1478,7 +1478,7 @@ fn an_unreadable_protected_anchor_means_no_guard() {
             os: Os::MacOs,
             homes: Homes::new(p(HOME), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(p(HOME), None)),
         },
         &fs,
     );
@@ -1503,7 +1503,7 @@ fn a_home_that_is_a_system_root_means_no_guard() {
                     os: Os::MacOs,
                     homes,
                     env: &env,
-                    whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
+                    whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(p(HOME), None)),
                 },
                 &mac(),
             );
@@ -1530,12 +1530,13 @@ fn home_rows_hold_at_the_accounts_home_when_home_points_elsewhere() {
         .dir("/Users/alice/Library/Caches/com.google.Chrome")
         .running(42, chrome);
     let env = |_: &str| None;
+    let homes = Homes::new(p(fixture), Some(p(HOME)));
     let guard = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            homes: Homes::new(p(fixture), Some(p(HOME))),
+            whitelist: Whitelist::defaults(Os::MacOs, &homes),
+            homes,
             env: &env,
-            whitelist: Whitelist::defaults(Os::MacOs, &p(fixture)),
         },
         &fs,
     )

@@ -57,7 +57,7 @@ fn guard(fs: &FakeProbe) -> Guard {
         os: Os::MacOs,
         homes: Homes::new(home.clone(), None),
         env: &env,
-        whitelist: Whitelist::defaults(Os::MacOs, &home),
+        whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(home.clone(), None)),
     };
     Guard::new(inputs, fs).unwrap()
 }

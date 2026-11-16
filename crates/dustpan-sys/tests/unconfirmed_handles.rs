@@ -137,7 +137,7 @@ impl Home {
         let home = AbsPath::parse(home.as_ref()).unwrap();
         let inputs = GuardInputs {
             os: Os::MacOs,
-            whitelist: Whitelist::defaults(Os::MacOs, &home),
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(home.clone(), None)),
             homes: Homes::new(home, None),
             env: &env,
         };

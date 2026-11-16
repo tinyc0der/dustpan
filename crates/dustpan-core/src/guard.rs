@@ -40,10 +40,10 @@ pub struct GuardInputs<'a> {
     pub whitelist: Whitelist,
 }
 
-/// The folders every `~` row anchors at, each physically resolved: the `HOME` (`USERPROFILE`)
-/// folder, and the account's home from the user database when that is another folder. `HOME`
-/// alone would let the environment steer protection away from the real home (I-64). Never
-/// empty, so no home row can be left unanchored.
+/// The folders every `~` row and `~` whitelist entry anchor at, each physically resolved: the
+/// `HOME` (`USERPROFILE`) folder, and the account's home from the user database when that is
+/// another folder. `HOME` alone would let the environment steer protection away from the real
+/// home (I-64). Never empty, so no home row can be left unanchored.
 #[derive(Clone, Debug)]
 pub struct Homes(Vec<AbsPath>);
 

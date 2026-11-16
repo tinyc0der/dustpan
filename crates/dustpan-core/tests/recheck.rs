@@ -52,7 +52,7 @@ fn guard(fs: &FakeProbe) -> Guard {
             os: Os::MacOs,
             homes: Homes::new(p("/Users/alice"), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::MacOs, &p("/Users/alice")),
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(p("/Users/alice"), None)),
         },
         fs,
     )

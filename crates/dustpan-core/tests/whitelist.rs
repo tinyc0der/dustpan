@@ -15,7 +15,7 @@ fn p(s: &str) -> AbsPath {
 }
 
 fn load(read: Read) -> Result<Whitelist, LoadError> {
-    whitelist::load(Os::MacOs, &p(HOME), &p(FILE), read)
+    whitelist::load(Os::MacOs, &Homes::new(p(HOME), None), &p(FILE), read)
 }
 
 fn text(body: &str) -> Whitelist {
@@ -644,7 +644,7 @@ fn an_entry_under_a_linked_home_root_keeps_the_physical_home_on_linux() {
     let home = "/var/home/alice";
     let wl = whitelist::load(
         Os::Linux,
-        &p(home),
+        &Homes::new(p(home), None),
         &p("/var/home/alice/.config/dustpan/whitelist"),
         Read::Text("/home/alice/keep\n".into()),
     )
@@ -690,4 +690,63 @@ fn an_entry_whose_folders_cannot_be_inspected_stops_the_guard_build() {
         err.to_string().contains("/Users/alice/Locked/keep"),
         "{err}"
     );
+}
+
+/// I-64: `HOME` pointed at a fixture must not steer any whitelist entry away from the account's
+/// home. The fixture sits inside the account's home, as a test's target folder does.
+#[test]
+fn whitelist_entries_hold_at_the_accounts_home_when_home_points_elsewhere() {
+    const FIXTURE: &str = "/Users/alice/Projects/fixture";
+    let homes = Homes::new(p(FIXTURE), Some(p(HOME)));
+    let names = [
+        "Library/Caches/kitty",
+        "Library/Caches/pnpm/dlx",
+        ".gradle/caches/modules-2",
+        "x",
+        "Documents",
+    ];
+    let fs = [FIXTURE, HOME]
+        .iter()
+        .flat_map(|home| names.map(|name| format!("{home}/{name}/f")))
+        .fold(FakeProbe::new(), |fs, dir| fs.dir(&dir));
+    let file = p(&format!("{FIXTURE}/.config/dustpan/whitelist"));
+    let load = |read| whitelist::load(Os::MacOs, &homes, &file, read).unwrap();
+    let (w, home_folder) = ("whitelist/whitelisted", "critical/home-folder");
+    let lists = [
+        (
+            "defaults",
+            load(Read::Missing),
+            [w, w, w, "eligible", home_folder],
+        ),
+        (
+            "user file ~/x",
+            load(Read::Text("~/x\n".into())),
+            [w, w, "eligible", w, home_folder],
+        ),
+    ];
+    let env = |_: &str| None;
+    let mut wrong = Vec::new();
+    for (list, whitelist, wants) in lists {
+        let guard = Guard::new(
+            GuardInputs {
+                os: Os::MacOs,
+                homes: homes.clone(),
+                env: &env,
+                whitelist,
+            },
+            &fs,
+        )
+        .unwrap();
+        let mut pass = guard.pass(&fs);
+        for home in [FIXTURE, HOME] {
+            for (name, want) in names.iter().zip(wants) {
+                let path = format!("{home}/{name}");
+                let got = outcome(pass.evaluate(p(&path)).verdict());
+                if got != want {
+                    wrong.push(format!("{list}: {path}: got {got}, want {want}"));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

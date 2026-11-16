@@ -41,10 +41,11 @@ fn main() {
         .ok()
         .flatten()
         .and_then(|h| AbsPath::parse(h.as_os_str()).ok());
-    let whitelist = dustpan_core::whitelist::Whitelist::defaults(os, &home);
+    let homes = Homes::new(home, account);
+    let whitelist = dustpan_core::whitelist::Whitelist::defaults(os, &homes);
     let inputs = GuardInputs {
         os,
-        homes: Homes::new(home, account),
+        homes,
         env: &env,
         whitelist,
     };

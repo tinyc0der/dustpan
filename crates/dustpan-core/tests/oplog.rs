@@ -40,7 +40,7 @@ fn clean(
         os: Os::MacOs,
         homes: Homes::new(home.clone(), None),
         env: &env,
-        whitelist: Whitelist::defaults(Os::MacOs, &home),
+        whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(home.clone(), None)),
     };
     let guard = Guard::new(inputs, fs).unwrap();
     let rule = Arc::new(Rule {

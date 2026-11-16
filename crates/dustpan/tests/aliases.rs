@@ -45,7 +45,7 @@ impl Home {
             os: Os::MacOs,
             homes: Homes::new(p(&self.root), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::MacOs, &p(&self.root)),
+            whitelist: Whitelist::defaults(Os::MacOs, &Homes::new(p(&self.root), None)),
         };
         Guard::new(inputs, probe).unwrap()
     }

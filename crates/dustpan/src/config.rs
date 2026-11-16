@@ -1,9 +1,10 @@
 use dustpan_core::config;
+use dustpan_core::guard::Homes;
 use dustpan_core::path::{AbsPath, escaped};
 use dustpan_core::paths::{Env, Os};
 use dustpan_core::whitelist::{self, Whitelist};
 
-pub fn whitelist(os: Os, env: Env, home: &AbsPath) -> Result<Whitelist, String> {
+pub fn whitelist(os: Os, env: Env, homes: &Homes) -> Result<Whitelist, String> {
     let Some(path) = config::whitelist_path(os, env) else {
         let set = match os {
             Os::Windows => "APPDATA is not set",
@@ -16,5 +17,5 @@ pub fn whitelist(os: Os, env: Env, home: &AbsPath) -> Result<Whitelist, String> 
         format!("cannot use the whitelist path {shown}: {why}")
     })?;
     let read = dustpan_sys::read_config(&file);
-    whitelist::load(os, home, &file, read).map_err(|e| e.to_string())
+    whitelist::load(os, homes, &file, read).map_err(|e| e.to_string())
 }

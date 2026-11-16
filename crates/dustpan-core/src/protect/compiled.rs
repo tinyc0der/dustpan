@@ -918,7 +918,7 @@ mod tests {
             os: Os::current(),
             homes: Homes::new(home.clone(), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::current(), &home),
+            whitelist: Whitelist::defaults(Os::current(), &Homes::new(home.clone(), None)),
         };
         let guard = Guard::from_policy(Policy::from_table(&STATE, &inputs, fs).unwrap());
         let path = AbsPath::parse(path.as_ref()).unwrap();

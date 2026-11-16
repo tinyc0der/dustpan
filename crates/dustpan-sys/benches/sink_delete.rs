@@ -83,7 +83,7 @@ mod unix {
             os: Os::current(),
             homes: Homes::new(home.clone(), None),
             env: &env,
-            whitelist: Whitelist::defaults(Os::current(), &home),
+            whitelist: Whitelist::defaults(Os::current(), &Homes::new(home.clone(), None)),
         };
         let guard = Guard::new(inputs, &probe).expect("guard");
         let rule = Arc::new(Rule {

@@ -86,11 +86,12 @@ impl Fixture {
             .ok()
             .flatten()
             .and_then(|path| AbsPath::parse(path.as_os_str()).ok());
+        let homes = Homes::new(home, account);
         let inputs = GuardInputs {
             os: Os::current(),
-            homes: Homes::new(home.clone(), account),
+            whitelist: Whitelist::defaults(Os::current(), &homes),
+            homes,
             env: &env,
-            whitelist: Whitelist::defaults(Os::current(), &home),
         };
         Guard::new(inputs, probe).unwrap()
     }

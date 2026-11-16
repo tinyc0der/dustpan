@@ -111,7 +111,7 @@ fn main() {
         os: Os::current(),
         homes: Homes::new(abs_home.clone(), None),
         env: &env,
-        whitelist: Whitelist::defaults(Os::current(), &abs_home),
+        whitelist: Whitelist::defaults(Os::current(), &Homes::new(abs_home.clone(), None)),
     };
     let guard = Guard::new(inputs, &probe).unwrap();
 

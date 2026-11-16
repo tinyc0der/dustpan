@@ -46,7 +46,7 @@ fn guard(fs: &FakeProbe, env: &dyn Fn(&str) -> Option<String>) -> Guard {
             os: Os::Windows,
             homes: Homes::new(p(HOME), None),
             env,
-            whitelist: Whitelist::defaults(Os::Windows, &p(HOME)),
+            whitelist: Whitelist::defaults(Os::Windows, &Homes::new(p(HOME), None)),
         },
         fs,
     )
@@ -196,7 +196,7 @@ fn a_profile_that_is_a_system_tree_means_no_guard() {
                 os: Os::Windows,
                 homes: Homes::new(p(home), None),
                 env: &env,
-                whitelist: Whitelist::defaults(Os::Windows, &p(home)),
+                whitelist: Whitelist::defaults(Os::Windows, &Homes::new(p(home), None)),
             },
             &windows(),
         );
@@ -225,7 +225,7 @@ fn docker_state_keeps_the_folders_that_hold_it() {
 fn load(body: &str) -> Result<Whitelist, dustpan_core::whitelist::LoadError> {
     dustpan_core::whitelist::load(
         Os::Windows,
-        &p(HOME),
+        &Homes::new(p(HOME), None),
         &p(r"C:\Users\alice\AppData\Roaming\dustpan\whitelist"),
         dustpan_core::config::Read::Text(body.into()),
     )

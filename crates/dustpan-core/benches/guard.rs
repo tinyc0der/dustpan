@@ -3,8 +3,9 @@
 //!
 //! The fixture is the home `tests/fixtures/mkhome.sh` builds, plus 100,000 cache entries, under
 //! the target folder. It is built once and kept. It is walked once, outside timing, to collect
-//! each entry's `Node` the way a scanner's directory read does. The guard anchors home rows at
-//! the fixture and at the account's home, as a run with `HOME` pointed at the fixture does.
+//! each entry's `Node` the way a scanner's directory read does. The guard anchors home rows and
+//! `~` whitelist entries at the fixture and at the account's home, as a run with `HOME` pointed
+//! at the fixture does.
 //! Three numbers are printed so each can be explained:
 //! - `scan` (the gated number): `Pass::candidate` with `LiveProbe` and walker nodes, so it counts
 //!   core CPU plus the ancestor `lstat`s a scan really adds
@@ -205,7 +206,7 @@ mod unix {
         }
     }
 
-    fn big_whitelist(home: &AbsPath) -> Whitelist {
+    fn big_whitelist(home: &AbsPath, homes: &Homes) -> Whitelist {
         let mut text = String::from("# bench whitelist\n");
         for n in 0..250 {
             text.push_str(&format!("~/Projects/app{n}/node_modules/.cache\n"));
@@ -218,12 +219,12 @@ mod unix {
         }
         let file = AbsPath::parse(home.as_path().join(".config/dustpan/whitelist").as_os_str())
             .expect("the whitelist path is absolute");
-        let list = whitelist::load(Os::current(), home, &file, Read::Text(text))
+        let list = whitelist::load(Os::current(), homes, &file, Read::Text(text))
             .expect("the bench whitelist parses");
         assert_eq!(
             list.entries().len(),
-            500 + 11,
-            "500 user lines and the safety entries"
+            (500 + 10) * homes.iter().count() + 1,
+            "500 user lines and 10 safety entries at each home, and the Finder sentinel once"
         );
         list
     }
@@ -250,11 +251,12 @@ mod unix {
             .map(|dir| dir.canonicalize().expect("the account home resolves"))
             .map(|dir| AbsPath::parse(dir.as_os_str()).expect("the account home is absolute"));
         let env = |_: &str| None;
+        let homes = Homes::new(home.clone(), account);
         let inputs = || GuardInputs {
             os: Os::current(),
-            homes: Homes::new(home.clone(), account.clone()),
+            homes: homes.clone(),
             env: &env,
-            whitelist: big_whitelist(&home),
+            whitelist: big_whitelist(&home, &homes),
         };
         let live = LiveProbe::new();
         let live_guard = Guard::new(inputs(), &live).expect("the policy loads on this host");

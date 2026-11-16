@@ -1,8 +1,8 @@
 use crate::guard::{PolicyError, Reach, WhitelistHit};
 use crate::identity::NodeKind;
 use crate::path::AbsPath;
-use crate::probe::{self, Probe, Seen};
-use crate::whitelist::glob::{Glob, fold};
+use crate::probe::{self, Probe, Seen, Unseen};
+use crate::whitelist::glob::{Glob, Name, Subject, fold};
 use crate::whitelist::{Entry, Origin, Pattern, Whitelist};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -42,8 +42,6 @@ impl Whitelisted {
         }
     }
 
-    /// Each entry goes in as written and as the file system spells it, both under `canonical`'s
-    /// mapping of firmlinks, so every spelling the guard can judge meets the entry.
     pub(crate) fn compile(
         whitelist: &Whitelist,
         fold_case: bool,
@@ -57,7 +55,7 @@ impl Whitelisted {
         };
         let mut resolver = Resolver {
             probe,
-            physical: HashMap::new(),
+            physical_by_prefix: HashMap::new(),
             stored: HashMap::new(),
         };
         for (index, entry) in whitelist.entries().iter().enumerate() {
@@ -67,39 +65,51 @@ impl Whitelisted {
                     this.finder.get_or_insert(index);
                 }
                 Pattern::Path(path) => {
-                    let written = canonical(path);
-                    let (root, names) = split_root(&written);
-                    this.insert(&root, names, index);
-                    let (found, depth) = resolver.resolve(path)?;
-                    let (_, names) = split_root(path);
-                    this.insert(&canonical(&found), names.skip(depth), index);
+                    this.insert_as_written(&canonical(path), index);
+                    let found = resolver.locate(path)?;
+                    this.insert_as_found(&canonical(&found.path), path, found.names_used, index);
                 }
             }
         }
         Ok(this)
     }
 
-    /// Adds `head`'s names as they are, since a folder on disk may hold `*` or `[` in its name,
-    /// then `tail`'s as the entry wrote them.
-    fn insert<'n>(&mut self, head: &AbsPath, tail: impl Iterator<Item = &'n OsStr>, entry: u32) {
+    fn insert_as_written(&mut self, path: &AbsPath, entry: u32) {
+        let (root, names) = split_root(path);
+        self.insert(&root, names, entry);
+    }
+
+    fn insert_as_found(&mut self, found: &AbsPath, entry_path: &AbsPath, used: usize, entry: u32) {
+        let (_, names) = split_root(entry_path);
+        self.insert(found, names.skip(used), entry);
+    }
+
+    /// `on_disk` names come from the file system, which allows `*` and `[` in a name, so they
+    /// go in as plain names. `written` names go in as the entry spells them.
+    fn insert<'n>(
+        &mut self,
+        on_disk: &AbsPath,
+        written: impl Iterator<Item = &'n OsStr>,
+        entry: u32,
+    ) {
         let mut at = 0;
         let fold_case = self.fold_case;
-        let head = head.names().map(|name| (name, None));
-        let tail = tail.map(|name| {
-            let glob = Glob::parse(name, fold_case).expect("load checked every entry's names");
-            (name, glob)
+        let on_disk = on_disk.names().map(|name| (name, Name::Plain));
+        let written = written.map(|name| {
+            let parsed = Glob::parse(name, fold_case).expect("load checked every entry's names");
+            (name, parsed)
         });
-        for (name, glob) in head.chain(tail) {
+        for (name, parsed) in on_disk.chain(written) {
             self.nodes[at as usize].below.get_or_insert(entry);
             let new = self.nodes.len() as u32;
             let node = &mut self.nodes[at as usize];
-            at = match glob {
-                None => {
+            at = match parsed {
+                Name::Plain => {
                     let mut key = Vec::new();
-                    fold(name, self.fold_case, &mut key);
+                    fold(name, fold_case, &mut key);
                     *node.exact.entry(key.into()).or_insert(new)
                 }
-                Some(glob) => match node.globs.iter().find(|(g, _)| g.same(&glob)) {
+                Name::Glob(glob) => match node.globs.iter().find(|(g, _)| g.same(&glob)) {
                     Some(&(_, child)) => child,
                     None => {
                         node.globs.push((glob, new));
@@ -128,8 +138,9 @@ impl Whitelisted {
             return from.clone();
         };
         fold(name, self.fold_case, scratch);
+        let subject = Subject::new(name, scratch);
         let mut next = Vec::new();
-        for child in self.children(nodes, scratch) {
+        for child in self.children(nodes, &subject) {
             if let Some(entry) = self.nodes[child as usize].ends {
                 return Position::Inside(entry);
             }
@@ -158,8 +169,9 @@ impl Whitelisted {
             Position::Inside(entry) => Some(self.hit_of(*entry, Reach::Within)),
             Position::At(nodes) => {
                 fold(name, self.fold_case, scratch);
+                let subject = Subject::new(name, scratch);
                 let mut above = None;
-                for child in self.children(nodes, scratch) {
+                for child in self.children(nodes, &subject) {
                     let node = &self.nodes[child as usize];
                     if let Some(entry) = node.ends {
                         return Some(self.hit_of(entry, Reach::Within));
@@ -182,11 +194,14 @@ impl Whitelisted {
         }
     }
 
-    /// `name` is a key from [`fold`].
-    fn children<'a>(&'a self, nodes: &'a [u32], name: &'a [u8]) -> impl Iterator<Item = u32> + 'a {
+    fn children<'a>(
+        &'a self,
+        nodes: &'a [u32],
+        name: &'a Subject<'a>,
+    ) -> impl Iterator<Item = u32> + 'a {
         nodes.iter().flat_map(move |&at| {
             let node = &self.nodes[at as usize];
-            node.exact.get(name).copied().into_iter().chain(
+            node.exact.get(name.key()).copied().into_iter().chain(
                 node.globs
                     .iter()
                     .filter(move |(glob, _)| glob.matches(name))
@@ -215,16 +230,6 @@ impl Whitelisted {
     }
 }
 
-/// Finds where each entry lies on disk, asking once per folder the entries share.
-struct Resolver<'p> {
-    probe: &'p dyn Probe,
-    /// A run of leading names as written, and the physical folder it leads to (`None` when it
-    /// does not exist).
-    physical: HashMap<PathBuf, Option<AbsPath>>,
-    stored: HashMap<AbsPath, AbsPath>,
-}
-
-/// The root of `path` (`/` or a drive's `C:\`), and the names below it.
 fn split_root(path: &AbsPath) -> (AbsPath, std::path::Iter<'_>) {
     let path = path.as_path();
     let root = path.ancestors().last().unwrap_or(path);
@@ -232,44 +237,53 @@ fn split_root(path: &AbsPath) -> (AbsPath, std::path::Iter<'_>) {
     (AbsPath::trusted(root.to_path_buf()), names)
 }
 
+/// Where an entry's leading names without a wildcard lead on disk: physical, through every
+/// link including the last, and spelled as stored. A link's target holds everything inside
+/// the link, so the entry keeps it too.
+struct Located {
+    path: AbsPath,
+    names_used: usize,
+}
+
+enum Walked {
+    Missing,
+    At(AbsPath),
+}
+
+struct Resolver<'p> {
+    probe: &'p dyn Probe,
+    physical_by_prefix: HashMap<PathBuf, Walked>,
+    stored: HashMap<AbsPath, AbsPath>,
+}
+
 impl Resolver<'_> {
-    /// Where `entry` lies on disk, and how many of its names below the root that covers. The
-    /// longest run of its leading names with no wildcard that exists is followed through every
-    /// link, the last one included, and spelled as stored. An entry that names a link therefore
-    /// also keeps what the link points at, which is where everything inside it lies.
-    fn resolve(&mut self, entry: &AbsPath) -> Result<(AbsPath, usize), PolicyError> {
-        let (mut found, names) = split_root(entry);
-        let mut written = found.as_path().to_path_buf();
-        let mut depth = 0;
-        for name in names.take_while(|&name| matches!(Glob::parse(name, false), Ok(None))) {
-            written.push(name);
-            let next = match self.physical.get(&written) {
-                Some(known) => known.clone(),
-                None => {
-                    let seen = self.step(&found, name, entry)?;
-                    self.physical.insert(written.clone(), seen.clone());
-                    seen
-                }
-            };
-            let Some(next) = next else {
-                break;
-            };
-            found = next;
-            depth += 1;
-        }
-        let spelled = match depth {
-            0 => found,
-            _ => self.stored(found),
+    fn locate(&mut self, entry: &AbsPath) -> Result<Located, PolicyError> {
+        let unreadable = |why| PolicyError::AnchorUnreadable {
+            anchor: entry.clone(),
+            why,
         };
-        Ok((spelled, depth))
+        let (mut path, names) = split_root(entry);
+        let mut prefix = path.as_path().to_path_buf();
+        let mut names_used = 0;
+        for name in names.take_while(|&name| matches!(Glob::parse(name, false), Ok(Name::Plain))) {
+            prefix.push(name);
+            if !self.physical_by_prefix.contains_key(&prefix) {
+                let walked = self.step(&path, name).map_err(unreadable)?;
+                self.physical_by_prefix.insert(prefix.clone(), walked);
+            }
+            match &self.physical_by_prefix[&prefix] {
+                Walked::At(next) => path = next.clone(),
+                Walked::Missing => break,
+            }
+            names_used += 1;
+        }
+        if names_used > 0 {
+            path = self.stored(path).map_err(unreadable)?;
+        }
+        Ok(Located { path, names_used })
     }
 
-    fn step(
-        &self,
-        parent: &AbsPath,
-        name: &OsStr,
-        entry: &AbsPath,
-    ) -> Result<Option<AbsPath>, PolicyError> {
+    fn step(&self, parent: &AbsPath, name: &OsStr) -> Result<Walked, Unseen> {
         let next = AbsPath::trusted(parent.as_path().join(name));
         let seen = match self.probe.node(&next) {
             Seen::Found(node) if node.kind == NodeKind::Link => probe::physical(self.probe, &next),
@@ -278,26 +292,23 @@ impl Resolver<'_> {
             Seen::Unknown(why) => Seen::Unknown(why),
         };
         match seen {
-            Seen::Found(next) => Ok(Some(next)),
-            Seen::Missing => Ok(None),
-            Seen::Unknown(why) => Err(PolicyError::AnchorUnreadable {
-                anchor: entry.clone(),
-                why,
-            }),
+            Seen::Found(next) => Ok(Walked::At(next)),
+            Seen::Missing => Ok(Walked::Missing),
+            Seen::Unknown(why) => Err(why),
         }
     }
 
-    /// The stored spelling of a physical path. When the probe cannot say, the physical path
-    /// stands: folding already meets its case and normalization aliases.
-    fn stored(&mut self, physical: AbsPath) -> AbsPath {
+    /// `physical` was found a moment ago, so a probe that cannot spell it now is an unknown.
+    fn stored(&mut self, physical: AbsPath) -> Result<AbsPath, Unseen> {
         if let Some(known) = self.stored.get(&physical) {
-            return known.clone();
+            return Ok(known.clone());
         }
         let spelled = match self.probe.spelling(&physical) {
             Seen::Found(spelled) => spelled,
-            Seen::Missing | Seen::Unknown(_) => physical.clone(),
+            Seen::Missing => return Err(Unseen::Failed),
+            Seen::Unknown(why) => return Err(why),
         };
         self.stored.insert(physical, spelled.clone());
-        spelled
+        Ok(spelled)
     }
 }

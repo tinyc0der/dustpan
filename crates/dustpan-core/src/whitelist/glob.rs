@@ -1,19 +1,16 @@
-//! One name of a whitelist entry, matched as Mole matches it with `[[ $path == $pattern ]]`: `*`
-//! is any run of characters, `?` is one character, `[...]` is one character from a set, and `\`
-//! takes the next character as written. Matching never asks the disk, so a name that does not
-//! exist yet matches the same way.
 use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::ffi::OsStr;
 use std::fmt;
 use unicode_normalization::UnicodeNormalization as _;
 use unicode_normalization::char::canonical_combining_class;
 
-/// Why a name cannot be matched the way Mole's shell would match it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum GlobError {
     UnknownClass(String),
-    BackwardRange(char, char),
-    /// `[=e=]` and `[.e.]` name what the shell's locale treats as one letter.
+    BackwardRange(String, String),
+    /// `[=ab=]` or `[.ab.]`: the C locale Mole matches under has no element of more than one
+    /// character.
     Collation(String),
 }
 
@@ -24,17 +21,16 @@ impl fmt::Display for GlobError {
             Self::BackwardRange(lo, hi) => {
                 write!(f, "the range {lo}-{hi} runs backwards and matches nothing")
             }
-            Self::Collation(form) => write!(f, "{form} depends on the shell's locale"),
+            Self::Collation(form) => write!(f, "{form} names no single character"),
         }
     }
 }
 
 impl std::error::Error for GlobError {}
 
-/// The key a name is compared under. On a volume that folds case it is the name in NFC, with
-/// each character mapped to lowercase through its uppercase, one character for one. `É`, `é`
-/// and `e` + U+0301 then share a key, and `?` still counts `ß` as one character. On other
-/// volumes it is the name's bytes.
+/// On a volume that folds case, the key is NFC of the NFD form with each character mapped
+/// to the lowercase of its uppercase, only where each map gives one character. Canonically
+/// equivalent names then share a key, final sigma meets `σ`, and `?` still counts `ß` as one.
 pub(crate) fn fold(name: &OsStr, fold_case: bool, out: &mut Vec<u8>) {
     out.clear();
     let bytes = name.as_encoded_bytes();
@@ -64,30 +60,66 @@ fn single(mut mapped: impl Iterator<Item = char>) -> Option<char> {
     mapped.next().is_none().then_some(first)
 }
 
-enum Token {
-    Char(char),
-    Star,
-    One,
-    Set(Set),
+/// One name a glob is asked about: the bytes the disk gave, and its [`fold`] key.
+pub(crate) struct Subject<'a> {
+    raw: &'a [u8],
+    key: &'a [u8],
+    chars: OnceCell<Vec<char>>,
 }
 
-struct Set {
-    negated: bool,
-    items: Vec<Item>,
+impl<'a> Subject<'a> {
+    pub(crate) fn new(raw: &'a OsStr, key: &'a [u8]) -> Self {
+        Self {
+            raw: raw.as_encoded_bytes(),
+            key,
+            chars: OnceCell::new(),
+        }
+    }
+
+    pub(crate) fn key(&self) -> &[u8] {
+        self.key
+    }
+
+    fn key_chars(&self) -> &[char] {
+        self.chars
+            .get_or_init(|| String::from_utf8_lossy(self.key).chars().collect())
+    }
 }
 
-type Class = fn(char) -> bool;
-
-enum Item {
-    Char(char),
-    Range(char, char),
-    Class(Class),
+/// What a pattern reads one at a time: a byte, as Mole's `LC_ALL=C` shell does, or a
+/// character of a fold key.
+trait Unit: Copy + PartialOrd {
+    fn ascii(self) -> Option<u8>;
+    fn text(units: &[Self]) -> String;
+    fn class(name: &str) -> Option<fn(Self) -> bool>;
+    fn with_marks(rest: &[Self]) -> usize;
+    fn other_case(self) -> Self;
 }
 
-/// The POSIX classes, read as a UTF-8 shell locale reads them.
-const CLASSES: &[(&str, Class)] = &[
+type ByteClass = fn(u8) -> bool;
+type CharClass = fn(char) -> bool;
+
+const BYTE_CLASSES: &[(&str, ByteClass)] = &[
+    ("alnum", |b| b.is_ascii_alphanumeric()),
+    ("alpha", |b| b.is_ascii_alphabetic()),
+    ("ascii", |b| b.is_ascii()),
+    ("blank", |b| b == b' ' || b == b'\t'),
+    ("cntrl", |b| b.is_ascii_control()),
+    ("digit", |b| b.is_ascii_digit()),
+    ("graph", |b| b.is_ascii_graphic()),
+    ("lower", |b| b.is_ascii_lowercase()),
+    ("print", |b| b.is_ascii_graphic() || b == b' '),
+    ("punct", |b| b.is_ascii_punctuation()),
+    ("space", |b| b.is_ascii_whitespace() || b == 0x0b),
+    ("upper", |b| b.is_ascii_uppercase()),
+    ("word", |b| b.is_ascii_alphanumeric() || b == b'_'),
+    ("xdigit", |b| b.is_ascii_hexdigit()),
+];
+
+const CHAR_CLASSES: &[(&str, CharClass)] = &[
     ("alnum", char::is_alphanumeric),
     ("alpha", char::is_alphabetic),
+    ("ascii", |c| c.is_ascii()),
     ("blank", |c| c == ' ' || c == '\t'),
     ("cntrl", char::is_control),
     ("digit", |c| c.is_ascii_digit()),
@@ -103,71 +135,127 @@ const CLASSES: &[(&str, Class)] = &[
     ("xdigit", |c| c.is_ascii_hexdigit()),
 ];
 
-/// A name with a wildcard or an escape in it.
+impl Unit for u8 {
+    fn ascii(self) -> Option<u8> {
+        self.is_ascii().then_some(self)
+    }
+
+    fn text(units: &[Self]) -> String {
+        String::from_utf8_lossy(units).into_owned()
+    }
+
+    fn class(name: &str) -> Option<ByteClass> {
+        BYTE_CLASSES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|&(_, c)| c)
+    }
+
+    fn with_marks(_: &[Self]) -> usize {
+        1
+    }
+
+    fn other_case(self) -> Self {
+        self
+    }
+}
+
+impl Unit for char {
+    fn ascii(self) -> Option<u8> {
+        u8::try_from(self).ok().filter(u8::is_ascii)
+    }
+
+    fn text(units: &[Self]) -> String {
+        units.iter().collect()
+    }
+
+    fn class(name: &str) -> Option<CharClass> {
+        CHAR_CLASSES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|&(_, c)| c)
+    }
+
+    /// `?` and `[...]` take a character with the combining marks after it, so a key that NFC
+    /// could not compose still counts one letter as one.
+    fn with_marks(rest: &[Self]) -> usize {
+        1 + rest[1..]
+            .iter()
+            .take_while(|&&c| canonical_combining_class(c) != 0)
+            .count()
+    }
+
+    fn other_case(self) -> Self {
+        single(self.to_uppercase()).unwrap_or(self)
+    }
+}
+
+enum Token<U: Unit> {
+    Unit(U),
+    Star,
+    One,
+    Set(Set<U>),
+}
+
+struct Set<U: Unit> {
+    negated: bool,
+    items: Vec<Item<U>>,
+}
+
+enum Item<U: Unit> {
+    Unit(U),
+    Range(U, U),
+    Class(fn(U) -> bool),
+}
+
+struct Pattern<U: Unit> {
+    tokens: Box<[Token<U>]>,
+    /// A folded key no longer says which case Mole would have seen, so a set tries both.
+    either_case: bool,
+}
+
 pub(crate) struct Glob {
-    tokens: Box<[Token]>,
-    /// The name as written, folded. A folder named `[2020] Album` matches it, as it matches
-    /// Mole's quoted comparison.
+    bytes: Pattern<u8>,
+    chars: Pattern<char>,
+    /// A folder named `[2020] Album` matches this, as it matches Mole's quoted comparison.
     written: Box<[u8]>,
-    fold_case: bool,
+}
+
+pub(crate) enum Name {
+    Plain,
+    Glob(Glob),
 }
 
 impl Glob {
-    /// `Ok(None)` for a name with nothing to expand, which matches by its [`fold`] key alone.
-    pub(crate) fn parse(name: &OsStr, fold_case: bool) -> Result<Option<Self>, GlobError> {
-        let Some(text) = name.to_str() else {
-            return Ok(None);
-        };
-        if !text.contains(['*', '?', '[', '\\']) {
-            return Ok(None);
+    /// A name matches as Mole matches it, by its bytes, or by its key: as written, or with
+    /// each wildcard taking characters. The key only ever adds names.
+    pub(crate) fn parse(name: &OsStr, fold_case: bool) -> Result<Name, GlobError> {
+        let raw = name.as_encoded_bytes();
+        if !raw.iter().any(|b| b"*?[\\".contains(b)) {
+            return Ok(Name::Plain);
         }
+        let Some(bytes) = Pattern::parse(raw, false)? else {
+            return Ok(Name::Plain);
+        };
+        let text = String::from_utf8_lossy(raw);
         let text: Cow<'_, str> = if fold_case {
             Cow::Owned(text.nfc().collect())
         } else {
-            Cow::Borrowed(text)
+            text
         };
-        let chars: Vec<char> = text.chars().collect();
-        let mut tokens = Vec::new();
-        let mut expands = false;
-        let mut i = 0;
-        while let Some(&c) = chars.get(i) {
-            i += 1;
-            match c {
-                '*' => {
-                    expands = true;
-                    if !matches!(tokens.last(), Some(Token::Star)) {
-                        tokens.push(Token::Star);
-                    }
-                }
-                '?' => {
-                    expands = true;
-                    tokens.push(Token::One);
-                }
-                '\\' if i < chars.len() => {
-                    expands = true;
-                    tokens.push(Token::Char(chars[i]));
-                    i += 1;
-                }
-                '[' => match Set::parse(&chars[i..])? {
-                    Some((set, used)) => {
-                        expands = true;
-                        tokens.push(Token::Set(set));
-                        i += used;
-                    }
-                    None => tokens.push(Token::Char('[')),
-                },
-                _ => tokens.push(Token::Char(c)),
-            }
-        }
-        if !expands {
-            return Ok(None);
+        let units: Vec<char> = text.chars().collect();
+        let Some(mut chars) = Pattern::parse(&units, fold_case)? else {
+            return Ok(Name::Plain);
+        };
+        if fold_case {
+            chars.tokens = fold_runs(chars.tokens);
         }
         let mut written = Vec::new();
         fold(name, fold_case, &mut written);
-        Ok(Some(Self {
-            tokens: fold_runs(tokens, fold_case),
+        Ok(Name::Glob(Self {
+            bytes,
+            chars,
             written: written.into(),
-            fold_case,
         }))
     }
 
@@ -175,21 +263,79 @@ impl Glob {
         self.written == other.written
     }
 
-    /// `name` is a key from [`fold`].
-    pub(crate) fn matches(&self, name: &[u8]) -> bool {
-        *name == *self.written || self.matches_text(&String::from_utf8_lossy(name))
+    pub(crate) fn matches(&self, name: &Subject<'_>) -> bool {
+        *name.key == *self.written
+            || self.bytes.matches(name.raw)
+            || self.chars.matches(name.key_chars())
+    }
+}
+
+fn fold_runs(tokens: Box<[Token<char>]>) -> Box<[Token<char>]> {
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut run = String::new();
+    for token in tokens {
+        match token {
+            Token::Unit(c) => run.push(c),
+            other => {
+                out.extend(folded(&run).map(Token::Unit));
+                run.clear();
+                out.push(other);
+            }
+        }
+    }
+    out.extend(folded(&run).map(Token::Unit));
+    out.into()
+}
+
+impl<U: Unit> Pattern<U> {
+    /// `Ok(None)` when nothing in `units` expands.
+    fn parse(units: &[U], either_case: bool) -> Result<Option<Self>, GlobError> {
+        let mut tokens = Vec::new();
+        let mut expands = false;
+        let mut i = 0;
+        while let Some(&u) = units.get(i) {
+            i += 1;
+            match u.ascii() {
+                Some(b'*') => {
+                    expands = true;
+                    if !matches!(tokens.last(), Some(Token::Star)) {
+                        tokens.push(Token::Star);
+                    }
+                }
+                Some(b'?') => {
+                    expands = true;
+                    tokens.push(Token::One);
+                }
+                Some(b'\\') if i < units.len() => {
+                    expands = true;
+                    tokens.push(Token::Unit(units[i]));
+                    i += 1;
+                }
+                Some(b'[') => match Set::parse(&units[i..])? {
+                    Some((set, used)) => {
+                        expands = true;
+                        tokens.push(Token::Set(set));
+                        i += used;
+                    }
+                    None => tokens.push(Token::Unit(u)),
+                },
+                _ => tokens.push(Token::Unit(u)),
+            }
+        }
+        Ok(expands.then(|| Self {
+            tokens: tokens.into(),
+            either_case,
+        }))
     }
 
-    /// The shell's one-star backtrack: each token takes a fixed run, so on a mismatch only the
-    /// last `*` takes one more character.
-    fn matches_text(&self, name: &str) -> bool {
+    fn matches(&self, name: &[U]) -> bool {
         let (mut t, mut n) = (0, 0);
-        let mut retry: Option<(usize, usize)> = None;
+        let mut last_star: Option<(usize, usize)> = None;
         loop {
             match self.tokens.get(t) {
                 Some(Token::Star) => {
                     t += 1;
-                    retry = Some((t, n));
+                    last_star = Some((t, n));
                     continue;
                 }
                 Some(token) => {
@@ -202,135 +348,104 @@ impl Glob {
                 None if n == name.len() => return true,
                 None => {}
             }
-            let Some((after, from)) = retry else {
-                return false;
-            };
-            let Some(skipped) = name[from..].chars().next() else {
-                return false;
-            };
-            t = after;
-            n = from + skipped.len_utf8();
-            retry = Some((t, n));
+            match last_star {
+                Some((after, from)) if from < name.len() => {
+                    t = after;
+                    n = from + 1;
+                    last_star = Some((t, n));
+                }
+                _ => return false,
+            }
         }
     }
 
-    /// The bytes `token` takes from the front of `rest`, when it matches there.
-    fn take(&self, token: &Token, rest: &str) -> Option<usize> {
-        let first = rest.chars().next()?;
+    fn take(&self, token: &Token<U>, rest: &[U]) -> Option<usize> {
+        let &first = rest.first()?;
         match token {
-            Token::Char(c) => (first == *c).then(|| c.len_utf8()),
-            Token::One => Some(cluster(rest)),
-            Token::Set(set) => set.has(first, self.fold_case).then(|| cluster(rest)),
+            Token::Unit(u) => (first == *u).then_some(1),
+            Token::One => Some(U::with_marks(rest)),
+            Token::Set(set) => set
+                .admits(first, self.either_case)
+                .then(|| U::with_marks(rest)),
             Token::Star => None,
         }
     }
 }
 
-/// Folds each run of plain characters the way [`fold`] folds a name.
-fn fold_runs(tokens: Vec<Token>, fold_case: bool) -> Box<[Token]> {
-    if !fold_case {
-        return tokens.into();
-    }
-    let mut out = Vec::with_capacity(tokens.len());
-    let mut run = String::new();
-    for token in tokens {
-        match token {
-            Token::Char(c) => run.push(c),
-            other => {
-                out.extend(folded(&run).map(Token::Char));
-                run.clear();
-                out.push(other);
-            }
-        }
-    }
-    out.extend(folded(&run).map(Token::Char));
-    out.into()
-}
-
-/// One character and the combining marks after it, which `?` and `[...]` take whole.
-fn cluster(rest: &str) -> usize {
-    rest.char_indices()
-        .skip(1)
-        .find(|&(_, c)| canonical_combining_class(c) == 0)
-        .map_or(rest.len(), |(at, _)| at)
-}
-
-impl Set {
-    /// Parses what follows a `[`, and how many characters the set used with its `]`. `Ok(None)`
-    /// when no `]` closes it: the `[` is then a plain character, as it is in a shell.
-    fn parse(chars: &[char]) -> Result<Option<(Self, usize)>, GlobError> {
-        let negated = matches!(chars.first(), Some('!' | '^'));
+impl<U: Unit> Set<U> {
+    /// Reads what follows a `[`. With no `]` to close it, the `[` is a plain character, as in a
+    /// shell.
+    fn parse(units: &[U]) -> Result<Option<(Self, usize)>, GlobError> {
+        let negated = matches!(units.first().and_then(|u| u.ascii()), Some(b'!' | b'^'));
         let open = usize::from(negated);
         let mut i = open;
         let mut items = Vec::new();
         loop {
-            let Some(&c) = chars.get(i) else {
+            let Some(&u) = units.get(i) else {
                 return Ok(None);
             };
-            if c == ']' && i > open {
+            if u.ascii() == Some(b']') && i > open {
                 return Ok(Some((Self { negated, items }, i + 1)));
             }
-            if c == '['
-                && let Some(&kind @ (':' | '=' | '.')) = chars.get(i + 1)
-                && let Some(len) = chars[i + 2..].windows(2).position(|w| w == [kind, ']'])
+            if u.ascii() == Some(b'[')
+                && let Some(kind @ (b':' | b'=' | b'.')) = units.get(i + 1).and_then(|u| u.ascii())
+                && let Some(len) = units[i + 2..]
+                    .windows(2)
+                    .position(|w| w[0].ascii() == Some(kind) && w[1].ascii() == Some(b']'))
             {
-                let name: String = chars[i + 2..i + 2 + len].iter().collect();
-                if kind != ':' {
-                    return Err(GlobError::Collation(format!("[{kind}{name}{kind}]")));
-                }
-                let Some(&(_, has)) = CLASSES.iter().find(|(known, _)| *known == name) else {
-                    return Err(GlobError::UnknownClass(name));
-                };
-                items.push(Item::Class(has));
+                let inner = &units[i + 2..i + 2 + len];
+                let name = U::text(inner);
+                items.push(match (kind, inner) {
+                    (b':', _) => Item::Class(U::class(&name).ok_or(GlobError::UnknownClass(name))?),
+                    (_, &[one]) => Item::Unit(one),
+                    _ => {
+                        let kind = char::from(kind);
+                        return Err(GlobError::Collation(format!("[{kind}{name}{kind}]")));
+                    }
+                });
                 i += len + 4;
                 continue;
             }
-            let (lo, used) = escaped(chars, i);
+            let (lo, used) = unescaped(units, i);
             i += used;
-            if chars.get(i) == Some(&'-')
-                && let Some(&next) = chars.get(i + 1)
-                && next != ']'
+            if units.get(i).and_then(|u| u.ascii()) == Some(b'-')
+                && let Some(&next) = units.get(i + 1)
+                && next.ascii() != Some(b']')
             {
-                let (hi, used) = escaped(chars, i + 1);
+                let (hi, used) = unescaped(units, i + 1);
                 if hi < lo {
-                    return Err(GlobError::BackwardRange(lo, hi));
+                    return Err(GlobError::BackwardRange(U::text(&[lo]), U::text(&[hi])));
                 }
                 items.push(Item::Range(lo, hi));
                 i += 1 + used;
             } else {
-                items.push(Item::Char(lo));
+                items.push(Item::Unit(lo));
             }
         }
     }
 
-    /// A folded name has lost its case, so either case of `c` may be the one Mole saw. Taking
-    /// both can only keep more.
-    fn has(&self, c: char, fold_case: bool) -> bool {
-        let inside = |x: char| self.items.iter().any(|item| item.has(x));
-        let other = if fold_case {
-            single(c.to_uppercase()).unwrap_or(c)
-        } else {
-            c
-        };
-        [c, other].into_iter().any(|x| inside(x) != self.negated)
+    fn admits(&self, u: U, either_case: bool) -> bool {
+        let inside = |x: U| self.items.iter().any(|item| item.has(x));
+        let other = if either_case { u.other_case() } else { u };
+        [u, other].into_iter().any(|x| inside(x) != self.negated)
     }
 }
 
-impl Item {
-    fn has(&self, c: char) -> bool {
+impl<U: Unit> Item<U> {
+    fn has(&self, u: U) -> bool {
         match *self {
-            Self::Char(m) => c == m,
-            Self::Range(lo, hi) => (lo..=hi).contains(&c),
-            Self::Class(has) => has(c),
+            Self::Unit(m) => u == m,
+            Self::Range(lo, hi) => lo <= u && u <= hi,
+            Self::Class(has) => has(u),
         }
     }
 }
 
-/// The character at `i`, or the one after it when `i` holds a `\`, and how many it used.
-fn escaped(chars: &[char], i: usize) -> (char, usize) {
-    match chars.get(i + 1) {
-        Some(&next) if chars[i] == '\\' => (next, 2),
-        _ => (chars[i], 1),
+/// The unit at `i`, or the one after it when `i` holds a `\`, and how many units that used.
+fn unescaped<U: Unit>(units: &[U], i: usize) -> (U, usize) {
+    match units.get(i + 1) {
+        Some(&next) if units[i].ascii() == Some(b'\\') => (next, 2),
+        _ => (units[i], 1),
     }
 }
 
@@ -339,15 +454,16 @@ mod tests {
     use super::*;
 
     fn glob(pattern: &str, fold_case: bool) -> Glob {
-        Glob::parse(OsStr::new(pattern), fold_case)
-            .unwrap()
-            .unwrap_or_else(|| panic!("{pattern} has a wildcard"))
+        match Glob::parse(OsStr::new(pattern), fold_case).unwrap() {
+            Name::Glob(glob) => glob,
+            Name::Plain => panic!("{pattern} has a wildcard"),
+        }
     }
 
     fn matches(pattern: &str, name: &str, fold_case: bool) -> bool {
         let mut key = Vec::new();
         fold(OsStr::new(name), fold_case, &mut key);
-        glob(pattern, fold_case).matches(&key)
+        glob(pattern, fold_case).matches(&Subject::new(OsStr::new(name), &key))
     }
 
     #[test]
@@ -367,6 +483,8 @@ mod tests {
             ("[]]x", "]x", true),
             ("v[[:digit:]]", "v7", true),
             ("v[[:digit:]]", "vx", false),
+            ("[[=e=]]x", "ex", true),
+            ("[[.e.]]x", "ex", true),
             ("a\\*b", "a*b", true),
             ("a\\*b", "aXb", false),
         ] {
@@ -377,7 +495,10 @@ mod tests {
 
     #[test]
     fn a_bracket_with_no_close_is_a_plain_character() {
-        assert!(Glob::parse(OsStr::new("x[y"), false).unwrap().is_none());
+        assert!(matches!(
+            Glob::parse(OsStr::new("x[y"), false),
+            Ok(Name::Plain)
+        ));
     }
 
     #[test]
@@ -385,6 +506,15 @@ mod tests {
         assert!(matches("[2020] Album", "[2020] Album", false));
         assert!(matches("[2020] Album", "2 Album", false));
         assert!(!matches("[2020] Album", "3 Album", false));
+    }
+
+    #[test]
+    fn wildcards_take_bytes_as_mole_does_and_characters_as_the_key_does() {
+        assert!(matches("caf??", "caf\u{e9}", false));
+        assert!(matches("caf?", "caf\u{e9}", false));
+        assert!(matches("v[![:alpha:]]*", "v\u{e9}", true));
+        assert!(matches("caf?", "cafe\u{301}", false));
+        assert!(!matches("caf???", "caf\u{e9}", false));
     }
 
     #[test]
@@ -396,6 +526,7 @@ mod tests {
         };
         assert_eq!(key("Caf\u{e9}"), key("Cafe\u{301}"));
         assert_eq!(key("\u{c9}T\u{c9}"), key("\u{e9}t\u{e9}"));
+        assert_eq!(key("\u{3a3}"), key("\u{3c2}"));
         assert_eq!(key("Stra\u{df}e").chars().count(), 6);
         assert_ne!(key("Caf\u{e9}"), key("Cafe"));
         let mut raw = Vec::new();
@@ -410,16 +541,16 @@ mod tests {
         assert!(matches("Stra?e", "STRA\u{df}E", true));
         assert!(matches("[\u{c9}]t\u{e9}", "\u{e9}t\u{e9}", true));
         assert!(matches("[A-C]x", "bx", true));
-        assert!(matches("caf?", "cafe\u{301}", false));
         assert!(!matches("caf?", "Cafe\u{301}", false));
     }
 
     #[test]
     fn brackets_mole_would_read_another_way_are_errors() {
+        let text = |s: &str| s.to_owned();
         for (pattern, want) in [
-            ("[[:nope:]]", GlobError::UnknownClass("nope".into())),
-            ("[z-a]", GlobError::BackwardRange('z', 'a')),
-            ("[[=e=]]", GlobError::Collation("[=e=]".into())),
+            ("[[:nope:]]", GlobError::UnknownClass(text("nope"))),
+            ("[z-a]", GlobError::BackwardRange(text("z"), text("a"))),
+            ("[[=ab=]]", GlobError::Collation(text("[=ab=]"))),
         ] {
             let got = Glob::parse(OsStr::new(pattern), false).err();
             assert_eq!(got, Some(want), "{pattern}");

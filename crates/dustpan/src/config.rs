@@ -7,7 +7,7 @@ pub fn whitelist(os: Os, env: Env, home: &AbsPath) -> Result<Whitelist, String> 
     let Some(path) = config::whitelist_path(os, env) else {
         let set = match os {
             Os::Windows => "APPDATA is not set",
-            Os::MacOs | Os::Linux => "neither XDG_CONFIG_HOME nor HOME is set",
+            Os::MacOs | Os::Linux => "neither an absolute XDG_CONFIG_HOME nor HOME is set",
         };
         return Err(format!("cannot tell where the whitelist is: {set}"));
     };

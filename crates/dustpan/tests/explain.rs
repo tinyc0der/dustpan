@@ -319,12 +319,13 @@ fn xdg_config_home_names_the_folder_the_whitelist_is_read_from() {
     );
 }
 
-/// Runs `explain` against a whitelist that must stop it. The deadline turns a read that blocks
-/// into a failure instead of a hung test.
+#[cfg(unix)]
+const BLOCKED_READ_FAILS_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[cfg(unix)]
 fn stops_on_the_whitelist(home: &Path, cause: &str) {
     explain(home)
-        .timeout(std::time::Duration::from_secs(20))
+        .timeout(BLOCKED_READ_FAILS_AFTER)
         .arg("~/Projects/keep/a")
         .assert()
         .code(1)

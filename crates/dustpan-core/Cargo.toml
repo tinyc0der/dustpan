@@ -9,7 +9,6 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-# The whitelist compares names under one normalization form on volumes that ignore it.
 unicode-normalization = "0.1"
 
 [features]

@@ -239,6 +239,10 @@ fn a_log_over_the_read_cap_exits_1_and_names_the_file() {
         .assert()
         .code(1);
     let stderr = String::from_utf8_lossy(&out.get_output().stderr);
-    assert!(stderr.contains(&*file.to_string_lossy()), "{stderr}");
-    assert!(stderr.contains("64 MiB"), "{stderr}");
+    // The folder's spelling mixes separators on Windows, so the file is matched by its name.
+    let name = file.file_name().unwrap().to_string_lossy();
+    assert!(
+        stderr.contains(&format!("{name}: larger than 64 MiB")),
+        "{stderr}"
+    );
 }

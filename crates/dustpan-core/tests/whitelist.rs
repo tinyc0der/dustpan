@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use dustpan_core::config::Read;
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Layer, Source, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Layer, Source, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
@@ -124,7 +124,7 @@ fn judge(fs: &FakeProbe, wl: Whitelist, path: &str) -> Verdict {
     let guard = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: wl,
         },
@@ -264,7 +264,7 @@ fn one_pass_judges_paths_that_share_ancestors_like_separate_passes() {
     let guard = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: text("~/Projects/keep/deep/*\n"),
         },
@@ -334,7 +334,7 @@ fn judge_on(os: Os, home: &str, fs: &FakeProbe, wl: Whitelist, path: &str) -> Ve
     let guard = Guard::new(
         GuardInputs {
             os,
-            home: p(home),
+            homes: Homes::new(p(home), None),
             env: &env,
             whitelist: wl,
         },
@@ -677,7 +677,7 @@ fn an_entry_whose_folders_cannot_be_inspected_stops_the_guard_build() {
     let built = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: text("~/Locked/keep\n"),
         },

@@ -5,7 +5,8 @@
 
 use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
 use dustpan_core::guard::{
-    Guard, GuardInputs, How, KeptReason, Kind, Layer, LiveReason, PolicyError, ShapeReason, Verdict,
+    Guard, GuardInputs, Homes, How, KeptReason, Kind, Layer, LiveReason, PolicyError, ShapeReason,
+    Verdict,
 };
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
@@ -49,7 +50,7 @@ fn guard(fs: &FakeProbe) -> Guard {
     Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
         },
@@ -1475,7 +1476,7 @@ fn an_unreadable_protected_anchor_means_no_guard() {
     let built = Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env: &env,
             whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
         },
@@ -1493,21 +1494,81 @@ fn an_unreadable_protected_anchor_means_no_guard() {
 #[test]
 fn a_home_that_is_a_system_root_means_no_guard() {
     let env = |_: &str| None;
-    for home in ["/", "/Users", "/usr/local", "/System/x", "/private/var"] {
-        let built = Guard::new(
-            GuardInputs {
-                os: Os::MacOs,
-                home: p(home),
-                env: &env,
-                whitelist: Whitelist::defaults(Os::MacOs, &p(home)),
-            },
-            &mac(),
-        );
-        assert!(
-            matches!(&built, Err(PolicyError::HomeIsCritical(h)) if *h == p(home)),
-            "{home}"
-        );
+    for root in ["/", "/Users", "/usr/local", "/System/x", "/private/var"] {
+        let as_home = Homes::new(p(root), None);
+        let as_account = Homes::new(p(HOME), Some(p(root)));
+        for homes in [as_home, as_account] {
+            let built = Guard::new(
+                GuardInputs {
+                    os: Os::MacOs,
+                    homes,
+                    env: &env,
+                    whitelist: Whitelist::defaults(Os::MacOs, &p(HOME)),
+                },
+                &mac(),
+            );
+            assert!(
+                matches!(&built, Err(PolicyError::HomeIsCritical(h)) if *h == p(root)),
+                "{root}"
+            );
+        }
     }
+}
+
+/// I-64: `HOME` pointed at another folder still leaves every layer guarding the account's home.
+/// The fixture sits inside the account's home, as a test's target folder does, and keeps its
+/// own rows there.
+#[test]
+fn home_rows_hold_at_the_accounts_home_when_home_points_elsewhere() {
+    let fixture = "/Users/alice/Projects/fixture";
+    let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    let fs = mac()
+        .dir("/Users/alice/Projects/fixture/Documents")
+        .dir("/Users/alice/Projects/fixture/Library/Caches/com.google.Chrome")
+        .dir("/Users/alice/Projects/fixture/Library/Caches/com.example.app")
+        .dir("/Users/alice/.yarn/berry/cache")
+        .dir("/Users/alice/Library/Caches/com.google.Chrome")
+        .running(42, chrome);
+    let env = |_: &str| None;
+    let guard = Guard::new(
+        GuardInputs {
+            os: Os::MacOs,
+            homes: Homes::new(p(fixture), Some(p(HOME))),
+            env: &env,
+            whitelist: Whitelist::defaults(Os::MacOs, &p(fixture)),
+        },
+        &fs,
+    )
+    .unwrap();
+    let mut pass = guard.pass(&fs);
+    let cases = [
+        (
+            "/Users/alice/Projects/fixture/Documents",
+            "critical/home-folder",
+        ),
+        (
+            "/Users/alice/Projects/fixture/Library/Caches/com.google.Chrome",
+            "live/owner-running",
+        ),
+        (
+            "/Users/alice/Projects/fixture/Library/Caches/com.example.app",
+            "eligible",
+        ),
+        ("/Users/alice/Documents", "critical/home-folder"),
+        ("/Users/alice/.yarn/berry/cache/x", "protection/user-data"),
+        (
+            "/Users/alice/Library/Caches/com.google.Chrome",
+            "live/owner-running",
+        ),
+    ];
+    let wrong: Vec<String> = cases
+        .iter()
+        .filter_map(|(path, want)| {
+            let got = outcome(pass.evaluate(p(path)).verdict());
+            (got != *want).then(|| format!("{path}: got {got}, want {want}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 #[test]

@@ -3,8 +3,8 @@
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
 use dustpan_core::guard::{
-    Guard, GuardInputs, IdentityReason, KeptReason, Layer, LiveReason, Rejection, ShapeReason,
-    Verdict,
+    Guard, GuardInputs, Homes, IdentityReason, KeptReason, Layer, LiveReason, Rejection,
+    ShapeReason, Verdict,
 };
 use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
@@ -48,7 +48,7 @@ fn guard(fs: &FakeProbe) -> Guard {
     Guard::new(
         GuardInputs {
             os: Os::MacOs,
-            home: p("/Users/alice"),
+            homes: Homes::new(p("/Users/alice"), None),
             env: &env,
             whitelist: Whitelist::defaults(Os::MacOs, &p("/Users/alice")),
         },

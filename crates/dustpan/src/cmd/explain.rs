@@ -4,7 +4,7 @@
 //! errors.
 use crate::config;
 use crate::exit::Exit;
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, ShapeReason, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, ShapeReason, Verdict};
 use dustpan_core::path::{AbsPath, escaped};
 use dustpan_core::paths::{self, Os};
 use dustpan_core::probe::{self, Probe, Seen};
@@ -40,17 +40,13 @@ pub fn run(args: &[OsString], json: bool, out: &mut dyn Write) -> Exit {
             Exit::Failed,
         );
     };
-    // The guard refuses every path below a link, so a home behind one (`/home` on Fedora
-    // Atomic) is named by its physical path before any `~` rule is anchored on it.
-    let home = match probe::physical(&probe, &home) {
-        Seen::Found(physical) => physical,
-        Seen::Missing => home,
-        Seen::Unknown(why) => {
-            return fail(
-                format_args!("cannot inspect the home folder {home}: {}", why.sentence()),
-                Exit::Failed,
-            );
-        }
+    let home = match physical_home(&probe, home) {
+        Ok(home) => home,
+        Err(exit) => return exit,
+    };
+    let account = match account_home(&probe) {
+        Ok(account) => account,
+        Err(exit) => return exit,
     };
     let whitelist = match config::whitelist(os, &env, &home) {
         Ok(whitelist) => whitelist,
@@ -58,7 +54,7 @@ pub fn run(args: &[OsString], json: bool, out: &mut dyn Write) -> Exit {
     };
     let inputs = GuardInputs {
         os,
-        home: home.clone(),
+        homes: Homes::new(home.clone(), account),
         env: &env,
         whitelist,
     };
@@ -128,6 +124,45 @@ fn absolute(arg: &OsStr, home: &AbsPath, cwd: Option<&Path>) -> Option<PathBuf> 
         Some(typed.to_path_buf())
     } else {
         Some(cwd?.join(typed))
+    }
+}
+
+/// The guard refuses every path below a link, so a home behind one (`/home` on Fedora Atomic) is
+/// named by its physical path before any `~` rule is anchored on it. A home that does not exist
+/// is used as spelled.
+fn physical_home(probe: &dyn Probe, home: AbsPath) -> Result<AbsPath, Exit> {
+    match probe::physical(probe, &home) {
+        Seen::Found(physical) => Ok(physical),
+        Seen::Missing => Ok(home),
+        Seen::Unknown(why) => Err(fail(
+            format_args!("cannot inspect the home folder {home}: {}", why.sentence()),
+            Exit::Failed,
+        )),
+    }
+}
+
+/// The account's home from the user database, physically resolved. `HOME` alone would let the
+/// environment steer the guard away from the real home (I-64).
+fn account_home(probe: &dyn Probe) -> Result<Option<AbsPath>, Exit> {
+    let dir = match dustpan_sys::account_home() {
+        Ok(Some(dir)) => dir,
+        Ok(None) => return Ok(None),
+        Err(e) => {
+            return Err(fail(
+                format_args!("cannot read the home folder from the user database: {e}"),
+                Exit::Failed,
+            ));
+        }
+    };
+    match AbsPath::parse(dir.as_os_str()) {
+        Ok(home) => physical_home(probe, home).map(Some),
+        Err(e) => Err(fail(
+            format_args!(
+                "the user database names {} as the home folder: {e}",
+                escaped(dir.as_os_str())
+            ),
+            Exit::Failed,
+        )),
     }
 }
 

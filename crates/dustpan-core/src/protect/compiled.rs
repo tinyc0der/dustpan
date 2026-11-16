@@ -244,10 +244,12 @@ impl Policy {
             policy.add_row(Which::Critical, row, inputs)?;
         }
         // `HOME=/` or `HOME=/Users` would anchor every `~` row on a system tree.
-        if let Some(kind) = policy.critical_by_spelling(&inputs.home)
-            && kind != Kind::HomeRoot
-        {
-            return Err(PolicyError::HomeIsCritical(inputs.home.clone()));
+        for home in inputs.homes.iter() {
+            if let Some(kind) = policy.critical_by_spelling(home)
+                && kind != Kind::HomeRoot
+            {
+                return Err(PolicyError::HomeIsCritical(home.clone()));
+            }
         }
         for row in table.critical.iter().filter(is_home) {
             policy.add_row(Which::Critical, row, inputs)?;
@@ -304,24 +306,28 @@ impl Policy {
             .collect()
     }
 
-    /// The path a row is anchored at. `None` for a floating row, and for an env row whose
-    /// variable is unset or not an absolute path.
-    fn anchor(row: &Row, inputs: &GuardInputs<'_>) -> Result<Option<AbsPath>, PolicyError> {
+    /// The paths a row is anchored at: one per home for a `~` row, none for a floating row or
+    /// for an env row whose variable is unset or not an absolute path.
+    fn anchors(row: &Row, inputs: &GuardInputs<'_>) -> Result<Vec<AbsPath>, PolicyError> {
         match row.at {
             Anchor::Abs(text) => AbsPath::parse(text.as_ref())
-                .map(Some)
+                .map(|path| vec![path])
                 .map_err(|_| PolicyError::BadAnchor(text)),
-            Anchor::Home(rel) => {
-                let mut path = inputs.home.as_path().to_path_buf();
-                path.extend(rel.split(['/', '\\']).filter(|part| !part.is_empty()));
-                AbsPath::parse(path.as_os_str())
-                    .map(Some)
-                    .map_err(|_| PolicyError::BadAnchor(rel))
-            }
+            Anchor::Home(rel) => inputs
+                .homes
+                .iter()
+                .map(|home| {
+                    let mut path = home.as_path().to_path_buf();
+                    path.extend(rel.split(['/', '\\']).filter(|part| !part.is_empty()));
+                    AbsPath::parse(path.as_os_str()).map_err(|_| PolicyError::BadAnchor(rel))
+                })
+                .collect(),
             Anchor::Env(var, suffix) => Ok((inputs.env)(var)
                 .filter(|value| !value.is_empty())
-                .and_then(|value| AbsPath::parse(format!("{value}{suffix}").as_ref()).ok())),
-            Anchor::Segments(_) => Ok(None),
+                .and_then(|value| AbsPath::parse(format!("{value}{suffix}").as_ref()).ok())
+                .into_iter()
+                .collect()),
+            Anchor::Segments(_) => Ok(Vec::new()),
         }
     }
 
@@ -331,18 +337,28 @@ impl Policy {
         row: &Row,
         inputs: &GuardInputs<'_>,
     ) -> Result<(), PolicyError> {
-        let anchor = Self::anchor(row, inputs)?;
-        let (start, comps) = match (&anchor, row.at) {
-            (Some(anchor), _) => (ORIGIN, self.comps(anchor)),
-            (None, Anchor::Segments(segments)) => (
-                FLOATING,
-                segments
-                    .iter()
-                    .map(|s| Comp::new(s.as_bytes(), self.fold_case))
-                    .collect(),
-            ),
-            (None, _) => return Ok(()),
-        };
+        if let Anchor::Segments(segments) = row.at {
+            let comps = segments
+                .iter()
+                .map(|s| Comp::new(s.as_bytes(), self.fold_case))
+                .collect();
+            return self.insert_row(which, row, FLOATING, comps, None);
+        }
+        for anchor in Self::anchors(row, inputs)? {
+            let comps = self.comps(&anchor);
+            self.insert_row(which, row, ORIGIN, comps, Some(anchor))?;
+        }
+        Ok(())
+    }
+
+    fn insert_row(
+        &mut self,
+        which: Which,
+        row: &Row,
+        start: u32,
+        comps: Vec<Comp>,
+        anchor: Option<AbsPath>,
+    ) -> Result<(), PolicyError> {
         let (outcome, guards_ancestors) = match row.effect {
             Effect::Refuse(kind) => (Outcome::Refuse(kind), None),
             Effect::RefuseWithAncestors(kind) => (Outcome::Refuse(kind), Some(kind)),
@@ -382,35 +398,38 @@ impl Policy {
         let (Effect::Refuse(kind) | Effect::RefuseWithAncestors(kind)) = row.effect else {
             return Ok(());
         };
-        let Some(anchor) = Self::anchor(row, inputs)?.filter(|a| !has_glob(a)) else {
-            return Ok(());
-        };
-        // The folders above the anchor are resolved, the anchor itself is not. An anchor that is a
-        // link (`C:\Documents and Settings` to `C:\Users`, `/etc` to `/private/etc`) binds the
-        // link, so its row never spreads to the folder behind it. That folder has its own rows.
-        let node = match (anchor.parent(), anchor.name()) {
-            (Some(parent), Some(name)) => match probe::physical(probe, &parent) {
-                Seen::Found(real) => probe.node(&AbsPath::trusted(real.as_path().join(name))),
-                Seen::Missing => Seen::Missing,
-                Seen::Unknown(why) => Seen::Unknown(why),
-            },
-            _ => probe.node(&anchor),
-        };
-        match node {
-            Seen::Found(node) => {
-                self.id_rows.push(IdRow {
-                    which,
-                    scope: row.scope,
-                    kind,
-                    anchor,
-                });
-                let index = (self.id_rows.len() - 1) as u32;
-                self.identity.entry(node.id).or_default().push(index);
-                Ok(())
+        for anchor in Self::anchors(row, inputs)? {
+            if has_glob(&anchor) {
+                continue;
             }
-            Seen::Missing => Ok(()),
-            Seen::Unknown(why) => Err(PolicyError::AnchorUnreadable { anchor, why }),
+            // The folders above the anchor are resolved, the anchor itself is not. An anchor that
+            // is a link (`C:\Documents and Settings` to `C:\Users`, `/etc` to `/private/etc`)
+            // binds the link, so its row never spreads to the folder behind it. That folder has
+            // its own rows.
+            let node = match (anchor.parent(), anchor.name()) {
+                (Some(parent), Some(name)) => match probe::physical(probe, &parent) {
+                    Seen::Found(real) => probe.node(&AbsPath::trusted(real.as_path().join(name))),
+                    Seen::Missing => Seen::Missing,
+                    Seen::Unknown(why) => Seen::Unknown(why),
+                },
+                _ => probe.node(&anchor),
+            };
+            match node {
+                Seen::Found(node) => {
+                    self.id_rows.push(IdRow {
+                        which,
+                        scope: row.scope,
+                        kind,
+                        anchor,
+                    });
+                    let index = (self.id_rows.len() - 1) as u32;
+                    self.identity.entry(node.id).or_default().push(index);
+                }
+                Seen::Missing => {}
+                Seen::Unknown(why) => return Err(PolicyError::AnchorUnreadable { anchor, why }),
+            }
         }
+        Ok(())
     }
 
     fn verified_firmlinks(
@@ -843,7 +862,7 @@ mod tests {
     use super::super::table::Scope::{Below, Exact, Subtree};
     use super::super::table::{Live, Names, row};
     use super::*;
-    use crate::guard::{Guard, KeptReason, Verdict};
+    use crate::guard::{Guard, Homes, KeptReason, Verdict};
     use crate::paths::Os;
     use crate::probe::fake::FakeProbe;
     use crate::whitelist::Whitelist;
@@ -878,7 +897,7 @@ mod tests {
         let home = AbsPath::parse("/home/a".as_ref()).unwrap();
         let inputs = GuardInputs {
             os: Os::current(),
-            home: home.clone(),
+            homes: Homes::new(home.clone(), None),
             env: &env,
             whitelist: Whitelist::defaults(Os::current(), &home),
         };

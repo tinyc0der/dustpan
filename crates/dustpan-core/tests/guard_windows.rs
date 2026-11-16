@@ -2,7 +2,7 @@
 //! Paths are host syntax, so these cases run on the Windows CI runners only.
 #![cfg(windows)]
 
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, PolicyError, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, PolicyError, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
@@ -44,7 +44,7 @@ fn guard(fs: &FakeProbe, env: &dyn Fn(&str) -> Option<String>) -> Guard {
     Guard::new(
         GuardInputs {
             os: Os::Windows,
-            home: p(HOME),
+            homes: Homes::new(p(HOME), None),
             env,
             whitelist: Whitelist::defaults(Os::Windows, &p(HOME)),
         },
@@ -194,7 +194,7 @@ fn a_profile_that_is_a_system_tree_means_no_guard() {
         let built = Guard::new(
             GuardInputs {
                 os: Os::Windows,
-                home: p(home),
+                homes: Homes::new(p(home), None),
                 env: &env,
                 whitelist: Whitelist::defaults(Os::Windows, &p(home)),
             },

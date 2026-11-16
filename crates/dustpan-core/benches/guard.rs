@@ -3,8 +3,9 @@
 //!
 //! The fixture is the home `tests/fixtures/mkhome.sh` builds, plus 100,000 cache entries, under
 //! the target folder. It is built once and kept. It is walked once, outside timing, to collect
-//! each entry's `Node` the way a scanner's directory read does. Three numbers are printed so
-//! each can be explained:
+//! each entry's `Node` the way a scanner's directory read does. The guard anchors home rows at
+//! the fixture and at the account's home, as a run with `HOME` pointed at the fixture does.
+//! Three numbers are printed so each can be explained:
 //! - `scan` (the gated number): `Pass::candidate` with `LiveProbe` and walker nodes, so it counts
 //!   core CPU plus the ancestor `lstat`s a scan really adds
 //! - `explain`: `Pass::evaluate` with `LiveProbe`, one leaf `lstat` and one stored-spelling
@@ -35,7 +36,7 @@ fn main() -> std::process::ExitCode {
 mod unix {
     use dustpan_core::candidate::{GroupId, Rule, RuleId, Sink};
     use dustpan_core::config::Read;
-    use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Verdict};
+    use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Verdict};
     use dustpan_core::identity::Node;
     use dustpan_core::path::AbsPath;
     use dustpan_core::paths::Os;
@@ -240,10 +241,14 @@ mod unix {
             .collect();
         let home = AbsPath::parse(home.as_os_str()).expect("fixture home is absolute");
 
+        let account = dustpan_sys::account_home()
+            .expect("the user database answers")
+            .map(|dir| dir.canonicalize().expect("the account home resolves"))
+            .map(|dir| AbsPath::parse(dir.as_os_str()).expect("the account home is absolute"));
         let env = |_: &str| None;
         let inputs = || GuardInputs {
             os: Os::current(),
-            home: home.clone(),
+            homes: Homes::new(home.clone(), account.clone()),
             env: &env,
             whitelist: big_whitelist(&home),
         };

@@ -4,7 +4,7 @@
 #![cfg(target_os = "macos")]
 
 use dustpan_core::candidate::{Candidate, GroupId, Rule, RuleId, Sink};
-use dustpan_core::guard::{Guard, GuardInputs, KeptReason, Rejection, Verdict};
+use dustpan_core::guard::{Guard, GuardInputs, Homes, KeptReason, Rejection, Verdict};
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::{OpenFiles, Pid, Probe, Seen};
@@ -134,7 +134,7 @@ impl Home {
         let inputs = GuardInputs {
             os: Os::MacOs,
             whitelist: Whitelist::defaults(Os::MacOs, &home),
-            home,
+            homes: Homes::new(home, None),
             env: &env,
         };
         Self {

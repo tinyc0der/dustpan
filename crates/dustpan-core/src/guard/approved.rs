@@ -231,7 +231,7 @@ impl Recheck<'_> {
         let started = self.clock.elapsed();
         let seeded = self.fresh(started);
         let found = candidate.identity();
-        let mut pass = Pass::with_evidence(policy, probe, seeded.clone(), true);
+        let mut pass = Pass::with_evidence(policy, probe, seeded.clone());
         // The pass binds identity in layer 1, before layer 3 asks who has the path open.
         let (verdict, before) = pass.judge(candidate.path(), None, &candidate.rule().owners);
         let mut held = pass.evidence();
@@ -245,7 +245,7 @@ impl Recheck<'_> {
             // A swap while the owner probe ran leaves a path layer 1 never saw.
             (Verdict::Eligible, Some(_)) => match bind(candidate.path(), probe) {
                 Ok((after, kind)) if after == found => {
-                    let mut inside = Pass::with_evidence(policy, probe, held, false);
+                    let mut inside = Pass::contents(policy, probe, held);
                     let path = candidate.path();
                     let manifest =
                         survey::survey(&mut inside, probe, self.clock, path, found.target, kind);

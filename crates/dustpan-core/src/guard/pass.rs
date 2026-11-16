@@ -5,7 +5,7 @@ use crate::candidate::{Candidate, Rule};
 use crate::identity::{Node, NodeKind, PathIdentity};
 use crate::path::AbsPath;
 use crate::probe::{self, Owner, OwnerState, Probe, ProcessTable, Seen};
-use crate::protect::{LiveChecks, Policy, Position, ScopeOwner, Step};
+use crate::protect::{Bundles, LiveChecks, Policy, Position, ScopeOwner, Step};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -32,6 +32,7 @@ pub struct Pass<'a> {
     follows_leaf_link: bool,
     /// False while the stored spelling of a path is judged, which has no other spelling.
     checks_spelling: bool,
+    bundles: Bundles,
 }
 
 /// What a pass has observed of the running system. Each part is taken once, on first need. The
@@ -117,22 +118,30 @@ impl<'a> Pass<'a> {
             scratch: Vec::new(),
             follows_leaf_link: true,
             checks_spelling: true,
+            bundles: Bundles::Named,
         }
     }
 
     /// A pass for `Recheck`: it reads the batch's live evidence instead of taking its own where
-    /// the batch has some. `follows_leaf_link` is false for the survey of a candidate's
-    /// contents, where a link is removed as a link and never followed.
+    /// the batch has some.
     pub(super) fn with_evidence(
         policy: &'a Policy,
         probe: &'a dyn Probe,
         evidence: Evidence,
-        follows_leaf_link: bool,
     ) -> Self {
         let mut pass = Self::new(policy, probe);
         pass.live.processes = evidence.processes;
         pass.live.open = evidence.open;
-        pass.follows_leaf_link = follows_leaf_link;
+        pass
+    }
+
+    /// The pass that surveys a candidate's contents for `Recheck`. A link inside is removed as a
+    /// link, so it is never followed. A folder inside named for an app is part of the candidate,
+    /// so the bundle-id names are left out (`Bundles::Ignored`).
+    pub(super) fn contents(policy: &'a Policy, probe: &'a dyn Probe, evidence: Evidence) -> Self {
+        let mut pass = Self::with_evidence(policy, probe, evidence);
+        pass.follows_leaf_link = false;
+        pass.bundles = Bundles::Ignored;
         pass
     }
 
@@ -146,7 +155,8 @@ impl<'a> Pass<'a> {
 
     /// Judges an entry the survey listed inside a candidate, with the `Node` the listing
     /// reported. Every layer applies, with no rule owners: the candidate's owners were judged on
-    /// the candidate itself, and a cache scope inside it brings its own (SAFE-06).
+    /// the candidate itself, and a cache scope inside it brings its own (SAFE-06). The pass is
+    /// `Pass::contents`, so bundle-id names do not apply.
     pub(super) fn descendant(&mut self, path: &AbsPath, seen: Node) -> Option<KeptReason> {
         match self.judge(path, Some(seen), &[]).0 {
             Verdict::Kept(reason) => Some(reason),
@@ -275,7 +285,7 @@ impl<'a> Pass<'a> {
             (Some(at), Some(name)) => {
                 policy.rule(path, &self.frames[at].step, name, id, &mut self.scratch)
             }
-            _ => policy.rule_root(path, id, &mut self.scratch),
+            _ => policy.rule_root(path, id, self.bundles, &mut self.scratch),
         };
         if let Some(hit) = ruling.critical {
             return (Verdict::Kept(KeptReason::Critical(hit)), identity);
@@ -468,7 +478,9 @@ impl<'a> Pass<'a> {
             (Some(parent), Some(name)) => {
                 self.policy.step(&parent.step, name, id, &mut self.scratch)
             }
-            _ => self.policy.root_step(&path, id, &mut self.scratch),
+            _ => self
+                .policy
+                .root_step(&path, id, self.bundles, &mut self.scratch),
         };
         let listing = &self.policy.whitelist;
         let listed = match (parent, path.name()) {

@@ -393,12 +393,20 @@ fn a_bind_mount_on_the_same_volume_keeps_the_folder() {
 }
 
 #[test]
-fn a_protected_bundle_name_deep_inside_keeps_the_folder() {
-    let inner = format!("{CACHE}/x/com.apple.Safari");
-    let fs = fixture().file(&format!("{inner}/state"));
+fn a_protected_row_deep_inside_keeps_the_folder() {
+    let inner = format!("{CACHE}/x/.claude/projects");
+    let fs = fixture().file(&format!("{inner}/session.jsonl"));
     let (at, reason) = holds(&fs);
     assert_eq!(at, p(&inner));
     assert_eq!(reason.layer(), Layer::Protection, "{reason:?}");
+}
+
+/// Bundle-id names mark an app's own folder. Inside a cache folder the guard approved, a folder
+/// named for an app is part of that cache.
+#[test]
+fn a_folder_named_for_an_app_inside_is_part_of_the_cache() {
+    approves(&fixture().file(&format!("{CACHE}/x/com.apple.Safari/state")));
+    approves(&fixture().file(&format!("{CACHE}/io.tailscale.ipn/deep/state")));
 }
 
 #[test]

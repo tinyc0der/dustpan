@@ -187,13 +187,13 @@ fn read_history(fixture: &Fixture) -> History {
 }
 
 #[test]
-fn a_run_removes_one_cache_keeps_one_that_holds_a_protected_name_and_logs_both() {
+fn a_run_removes_one_cache_keeps_one_that_holds_protected_state_and_logs_both() {
     let fixture = Fixture::new("removes-and-keeps");
     fixture.tree("Library/Caches/com.example.app", 20, 50);
-    std::fs::create_dir_all(fixture.at("Library/Caches/com.example.other/x/com.apple.Safari"))
+    std::fs::create_dir_all(fixture.at("Library/Caches/com.example.other/x/.claude/projects"))
         .unwrap();
     std::fs::write(
-        fixture.at("Library/Caches/com.example.other/x/com.apple.Safari/state"),
+        fixture.at("Library/Caches/com.example.other/x/.claude/projects/session.jsonl"),
         b"kept",
     )
     .unwrap();
@@ -214,7 +214,7 @@ fn a_run_removes_one_cache_keeps_one_that_holds_a_protected_name_and_logs_both()
         "{:?}",
         ran.outcomes[1]
     );
-    assert!(kept.join("x/com.apple.Safari/state").exists());
+    assert!(kept.join("x/.claude/projects/session.jsonl").exists());
     assert_eq!((ran.tally.removed, ran.tally.kept), (1, 1));
     assert!(ran.warnings.is_empty());
     let history = read_history(&fixture);

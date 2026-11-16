@@ -142,6 +142,17 @@ pub(crate) struct Step {
     protection: Position,
     /// Identity rows that refuse this directory's direct children.
     child_rows: Vec<u32>,
+    bundles: Bundles,
+}
+
+/// Whether the bundle-id name patterns take part in the contest. A bundle id names an app's own
+/// folder. Inside a candidate the guard approved, a folder named for an app is part of the
+/// candidate, so the survey of a candidate's contents passes `Ignored`. Every row anchored on a
+/// path still applies there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Bundles {
+    Named,
+    Ignored,
 }
 
 #[derive(Default)]
@@ -467,13 +478,13 @@ impl Policy {
         let names: Vec<&OsStr> = path.names().collect();
         let ruling = match names.split_last() {
             Some((leaf, dirs)) if path.as_path().parent().is_some() => {
-                let mut step = self.origin(None);
+                let mut step = self.origin(None, Bundles::Named);
                 for name in dirs {
                     step = self.step(&step, name, None, &mut scratch);
                 }
                 self.rule(path, &step, leaf, None, &mut scratch)
             }
-            _ => self.rule_root(path, None, &mut scratch),
+            _ => self.rule_root(path, None, Bundles::Named, &mut scratch),
         };
         ruling.critical.map(|hit| hit.kind)
     }
@@ -546,7 +557,8 @@ impl Policy {
     }
 
     /// The step above every path. On Unix it is `/` itself, and `id` is the root's identity.
-    fn origin(&self, id: Option<FileId>) -> Step {
+    /// Every step below it keeps its `bundles`.
+    fn origin(&self, id: Option<FileId>, bundles: Bundles) -> Step {
         let position = |which| {
             let mut inherit = None;
             for &(scope, outcome) in &self.trie(which).nodes[ORIGIN as usize].rules {
@@ -570,6 +582,7 @@ impl Policy {
             critical: position(Which::Critical),
             protection: position(Which::Protection),
             child_rows: self.child_rows(id),
+            bundles,
         }
     }
 
@@ -578,11 +591,12 @@ impl Policy {
         &self,
         root: &AbsPath,
         id: Option<FileId>,
+        bundles: Bundles,
         scratch: &mut Vec<u8>,
     ) -> Step {
         match root.names().next() {
-            None => self.origin(id),
-            Some(drive) => self.step(&self.origin(None), drive, id, scratch),
+            None => self.origin(id, bundles),
+            Some(drive) => self.step(&self.origin(None, bundles), drive, id, scratch),
         }
     }
 
@@ -621,6 +635,7 @@ impl Policy {
             critical,
             protection,
             child_rows: self.child_rows(id),
+            bundles: parent.bundles,
         }
     }
 
@@ -723,7 +738,7 @@ impl Policy {
                 enter(&mut at, name(kind, Via::Keyword));
                 enter(&mut inherit, name(kind, Via::Keyword));
             }
-            if !bundles_off(position.inherit) {
+            if parent.bundles == Bundles::Named && !bundles_off(position.inherit) {
                 let won = name(Kind::ProtectedBundle, Via::Bundle);
                 match self.names.bundle(folded) {
                     BundleMatch::No => {}
@@ -764,7 +779,10 @@ impl Policy {
             Some(&mut inside),
         );
         let depth = parent.depth + 1;
-        if !bundles_off(parent.protection.inherit) && self.names.whole_path(path.bytes()) {
+        if parent.bundles == Bundles::Named
+            && !bundles_off(parent.protection.inherit)
+            && self.names.whole_path(path.bytes())
+        {
             let won = Won {
                 depth,
                 rank: RANK_NAME,
@@ -785,10 +803,11 @@ impl Policy {
         &'p self,
         root: &AbsPath,
         id: Option<FileId>,
+        bundles: Bundles,
         scratch: &mut Vec<u8>,
     ) -> Ruling<'p> {
         match root.names().next() {
-            Some(drive) => self.rule(root, &self.origin(None), drive, id, scratch),
+            Some(drive) => self.rule(root, &self.origin(None, bundles), drive, id, scratch),
             None => Ruling {
                 critical: self
                     .at_origin(Which::Critical, id)

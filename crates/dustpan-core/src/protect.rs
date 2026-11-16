@@ -15,7 +15,7 @@ mod table;
 mod whitelisted;
 mod windows;
 
-pub(crate) use compiled::{Policy, Step};
+pub(crate) use compiled::{Bundles, Policy, Step};
 pub(crate) use live::{LiveChecks, ScopeOwner};
 pub(crate) use whitelisted::Position;
 

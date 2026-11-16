@@ -299,7 +299,7 @@ fn preview_refuses_exactly_what_apply_refuses_and_removes_nothing() {
         fixture().mount(&format!("{INNER}/mnt"), 2),
         fixture().dataless(&format!("{INNER}/cloud")),
         fixture().unreadable(&format!("{INNER}/locked")),
-        fixture().file(&format!("{INNER}/x/com.apple.Safari/state")),
+        fixture().file(&format!("{INNER}/x/.claude/projects/session.jsonl")),
     ];
     for fs in unsafe_trees {
         let preview = run(&fs, Sink::Delete, false).outcome;

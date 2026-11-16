@@ -143,7 +143,17 @@ impl Tree {
             // A folder its owner closed to us: its parent lists it, opening it fails.
             Some(Entry::Unreadable) => Node {
                 kind: NodeKind::Dir,
-                id: FileId::new(VOLUME, u128::MAX - key.as_os_str().len() as u128),
+                // Above every id `fresh` hands out, and distinct per path.
+                id: FileId::new(
+                    VOLUME,
+                    key.as_os_str()
+                        .as_encoded_bytes()
+                        .iter()
+                        .fold(1 << 127, |h: u128, &b| {
+                            (h ^ u128::from(b)).wrapping_mul(0x1000_0000_0000_0000_0000_013b)
+                                | 1 << 127
+                        }),
+                ),
             },
             None => return Err(DiskError::NotFound),
         };
@@ -193,9 +203,6 @@ impl Tree {
             Err(Lost::Unknown(Unseen::Denied)) => return Err(DiskError::Denied),
             Err(Lost::Unknown(_)) => return Err(DiskError::NotAFolder),
         };
-        if key != path {
-            return Err(DiskError::NotAFolder);
-        }
         self.open_at(key)
     }
 

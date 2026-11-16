@@ -4,7 +4,7 @@
 
 ## Sub-features
 
-- `plain-no-color` emits no foreground or background color codes and keeps the `➤` mark and "Coming in Mn" words.
+- `plain-no-color` emits no foreground or background color codes and keeps the `➤` mark and "soon" and "ready" tags and the "Arrives in milestone Mn" page words.
 - `plain-ascii` emits no non-ASCII character on Home, help or the too-small screen.
 - `plain-locale` falls back to ASCII when `LC_ALL=C`.
 - `plain-no-tty` prints help, no escape codes, exit 0.

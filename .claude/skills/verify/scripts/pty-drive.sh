@@ -4,6 +4,7 @@
 #   start  NAME COLS ROWS [-- CMD...]   new pane running CMD (default: an interactive bash with a plain prompt)
 #   keys   NAME KEY...                  tmux key names: Down Up Enter Escape C-c q ? , 1 j k
 #   text   NAME STRING                  type the literal string (use for shell commands, add Enter as a key)
+#   paste  NAME STRING                  paste the string as the terminal does (bracketed, when the program asked for it)
 #   wheel  NAME up|down COL ROW         SGR mouse wheel event at a 1-based cell
 #   click  NAME COL ROW                 SGR left click at a 1-based cell
 #   resize NAME COLS ROWS
@@ -35,6 +36,10 @@ case $cmd in
     ;;
   keys) t send-keys -t "$name" "$@" ;;
   text) t send-keys -t "$name" -l "$1" ;;
+  paste)
+    t set-buffer -b dpverify -- "$1"
+    t paste-buffer -p -d -b dpverify -t "$name"
+    ;;
   wheel)
     button=64
     [[ $1 == down ]] && button=65

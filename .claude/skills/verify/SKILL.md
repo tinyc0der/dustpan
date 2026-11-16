@@ -46,8 +46,9 @@ If the screen is locked the GUI path fails (`ioreg -n Root -d1 -a | grep -A1 CGS
 | Move down four, up one | `$V keys home Down Down Down Down k` |
 | Open help, close it | `$V keys home '?'` then `$V keys home Escape` |
 | Jump to entry 9 | `$V keys home 9` |
-| Open the entry (toast) | `$V keys home Enter` |
+| Open the entry (a screen) | `$V keys home Enter` |
 | Settings toast | `$V keys home ,` |
+| Paste text, as a terminal does | `$V paste home "text"` |
 | Quit / Quit now | `$V keys home q` / `$V keys home C-c` |
 | Resize | `$V resize home 70 20` |
 | Wheel at column 10, row 5 | `$V wheel home down 10 5` |
@@ -58,7 +59,7 @@ If the screen is locked the GUI path fails (`ioreg -n Root -d1 -a | grep -A1 CGS
 
 Wait after a key with `$V wait home "<text>" 3`, not a fixed sleep. For restore checks start a shell pane (`$V start sh 120 40`), type the binary path with `$V text sh "$BIN"` plus `$V keys sh Enter`, then quit it and read `$V info sh` and `stty -a` from the same shell.
 
-The lane runner drives all of this for the M0-6 checklist lanes (1 to 8 and 10) plus lane 0 (the wrap check bites on a wrapped capture), 11 (hangup), 12 (`Tab` swap at 80 by 24) and 13 (terminal closed without SIGHUP), and saves one capture per lane:
+The lane runner drives all of this for the M0-6 checklist lanes (1 to 8 and 10) plus lane 0 (the wrap check bites on a wrapped capture), 11 (hangup), 12 (`Tab` swap at 80 by 24) and 13 (terminal closed without SIGHUP), 14 (About pages), 15 (History over a fixture log), 16 (History empty and unreadable), 17 (Check) and 18 (mouse open), and saves one capture per lane. Lane 1 reads Home only and does not run Mole:
 
 ```bash
 python3 .claude/skills/verify/scripts/home-lanes.py /tmp/swarm-m0-6/owner --bin $BIN

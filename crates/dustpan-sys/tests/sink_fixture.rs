@@ -24,8 +24,8 @@ use dustpan_core::time::Clock;
 use dustpan_core::whitelist::Whitelist;
 use dustpan_sys::{FileStore, LiveDisk, LiveProbe, SystemClock};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 struct Fixture {
     home: PathBuf,
@@ -293,6 +293,68 @@ fn a_linked_log_folder_warns_once_logs_nothing_and_the_delete_still_happens() {
     assert!(!target.exists());
     let logged: Vec<_> = std::fs::read_dir(&elsewhere).unwrap().collect();
     assert!(logged.is_empty(), "{logged:?}");
+}
+
+fn mkfifo(path: &Path) {
+    let made = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(made.success(), "mkfifo {}", path.display());
+}
+
+/// Runs two deletes on a thread of their own after `block` has set up the log folder, so a log
+/// call that blocks fails the test instead of hanging it. `block` returns what must stay alive
+/// for the run, such as a held lock.
+fn a_blocking_log_warns_once_and_the_delete_still_happens<T>(
+    test: &str,
+    block: impl FnOnce(&Path) -> T,
+) {
+    let fixture = Fixture::new(test);
+    fixture.tree("Library/Caches/com.example.one", 2, 3);
+    fixture.tree("Library/Caches/com.example.two", 1, 1);
+    let dir = fixture.log_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let _held = block(&dir);
+    let targets = vec![
+        fixture.at("Library/Caches/com.example.one"),
+        fixture.at("Library/Caches/com.example.two"),
+    ];
+    let (done, finished) = mpsc::channel();
+    let paths = targets.clone();
+    std::thread::spawn(move || {
+        let ran = run(&fixture, &paths, || Sink::Delete);
+        let _ = done.send((fixture, ran));
+    });
+    let (_fixture, ran) = finished
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the run finishes in time");
+    assert_eq!(ran.warnings.len(), 1, "{:?}", ran.warnings);
+    assert_eq!(ran.tally.removed, 2, "{:?}", ran.outcomes);
+    assert!(targets.iter().all(|t| !t.exists()));
+}
+
+#[test]
+fn a_fifo_at_the_log_warns_once_and_the_delete_still_happens() {
+    a_blocking_log_warns_once_and_the_delete_still_happens("fifo-log", |dir| {
+        mkfifo(&dir.join(FileStore::FILE));
+    });
+}
+
+#[test]
+fn a_fifo_at_the_lock_warns_once_and_the_delete_still_happens() {
+    a_blocking_log_warns_once_and_the_delete_still_happens("fifo-lock", |dir| {
+        mkfifo(&dir.join(FileStore::LOCK));
+    });
+}
+
+#[test]
+fn a_lock_another_run_holds_warns_once_and_the_delete_still_happens() {
+    a_blocking_log_warns_once_and_the_delete_still_happens("held-lock", |dir| {
+        let lock = std::fs::File::create(dir.join(FileStore::LOCK)).unwrap();
+        lock.lock().unwrap();
+        lock
+    });
 }
 
 /// Lanes 5, 6 and 10: moves a uniquely named fixture folder to the real Trash of the user

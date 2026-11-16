@@ -8,9 +8,15 @@
 //! Rotation is the one step two runs could race on, so it holds an advisory lock on
 //! `operations.log.lock` and reads the size again under it: two runs that start together rotate
 //! once, and the second cannot replace a full `operations.log.old` with a near-empty one.
+//!
+//! No call here can block the run (SAFE-22). Every open is non-blocking and must find a regular
+//! file, so a FIFO at a log name is an error, and the lock is waited for at most
+//! [`LOCK_WAIT`]. `OpLog` turns any error into its one warning and the run goes on.
 use dustpan_core::oplog::LogStore;
+use std::fs::{File, TryLockError};
 use std::io::{self, Write as _};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use unix::Folder;
@@ -41,11 +47,39 @@ impl FileStore {
     }
 }
 
+/// A run holds the lock only to read one size and rename, so a lock held this long belongs to
+/// a run that is stopped or hung.
+const LOCK_WAIT: Duration = Duration::from_secs(1);
+
+fn take_lock(lock: &File) -> io::Result<()> {
+    let start = Instant::now();
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) if start.elapsed() < LOCK_WAIT => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+fn regular(file: File) -> io::Result<File> {
+    if file.metadata()?.is_file() {
+        Ok(file)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ))
+    }
+}
+
 impl LogStore for FileStore {
     fn rotate_above(&mut self, limit: u64) -> io::Result<()> {
         let folder = self.folder()?;
         let lock = folder.open_file(Self::LOCK)?;
-        lock.lock()?;
+        take_lock(&lock)?;
         if folder.open_file(Self::FILE)?.metadata()?.len() > limit {
             folder.rename(Self::FILE, Self::OLD)?;
         }
@@ -85,13 +119,15 @@ mod unix {
         }
 
         /// `openat` to append, creating the file owner-only. A link at the name is refused
-        /// (`O_NOFOLLOW`), so the log cannot be pointed at another file.
+        /// (`O_NOFOLLOW`), so the log cannot be pointed at another file, and a FIFO fails or
+        /// opens at once (`O_NONBLOCK`) and is then refused as not a regular file.
         pub(super) fn open_file(&self, name: &str) -> io::Result<File> {
             let c = CString::new(name)?;
             let flags = libc::O_WRONLY
                 | libc::O_APPEND
                 | libc::O_CREAT
                 | libc::O_NOFOLLOW
+                | libc::O_NONBLOCK
                 | libc::O_CLOEXEC;
             let mode: libc::c_uint = 0o600;
             // SAFETY: the folder is open and `c` is NUL-terminated.
@@ -100,7 +136,7 @@ mod unix {
                 return Err(io::Error::last_os_error());
             }
             // SAFETY: `fd` was just returned by the kernel and nothing else owns it.
-            Ok(unsafe { File::from_raw_fd(fd) })
+            super::regular(unsafe { File::from_raw_fd(fd) })
         }
 
         // SAFE: replaces dustpan's own rotated log, a file this program created (SAFE-01).
@@ -168,6 +204,7 @@ mod windows {
                 .append(true)
                 .create(true)
                 .open(self.0.join(name))
+                .and_then(super::regular)
         }
 
         // SAFE: replaces dustpan's own rotated log, a file this program created (SAFE-01).

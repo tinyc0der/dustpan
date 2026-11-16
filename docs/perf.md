@@ -198,3 +198,37 @@ The branch merged `main` at `a2d839c`, which adds M0-3's open-file layer. Layer 
 Medians: `scan` 605,858 on main and 592,089 at the merge (2.3% slower, inside the spread of 579,215 to 619,038 on main and 578,483 to 609,073 at the merge), `explain` 169,700 and 165,244, `cpu` 1,045,522 and 1,033,420. The rule passes, and `scan` passes at 2.96 times the budget. Both sides sit below the fix round 1 numbers. M0-3's fix round 3 measured its snapshot of open files at 12% of `scan`, and the load here was 5.9 to 9.1 against 1.8 then. No profile was taken, so how the gap splits between the two is inferred.
 
 **The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain` on both sides, and the merge's bench checks that a path the whitelist names is kept.
+
+## Delete sink against `rm -rf` (M0-5)
+
+**Budget.** The Delete sink's median time to remove a 100,000-file tree must not exceed twice the `/bin/rm -rf` median on the same tree. Trunk has no sink, so `rm -rf` is the reference. The bench exits 1 over the budget.
+
+**Probe.** `cargo bench -p dustpan-sys --bench sink_delete`. Each round builds two identical trees (1,000 folders of 100 one-byte files) in the bench's own folder in the system temporary folder, named `.noindex` so Spotlight stays out. It times `/bin/rm -rf` on one tree and the sink on the other, alternating which goes first, for ten rounds. The sink's time is the whole item as `clean` pays it: `Executor::start`, `Recheck::approve`, the delete walk, the log row in a real `operations.log`, and `finish`. `Recheck::approve` covers every guard layer, identity before and after the live probes, one process table, one snapshot of open files, and the survey that lists and judges all 101,000 entries. Discovery runs outside the timer. A median is the upper of the two middle rounds.
+
+| Run | Head | Load (1 min, start to end) | `rm -rf` median | Sink median | Ratio |
+|---|---|---|---|---|---|
+| 4 | `0430963` | 11.8 to 9.2 | 7.806 s | 6.220 s | 0.80 |
+| 5 | `0430963` | 9.2 to 11.0 | 8.206 s | 6.208 s | 0.76 |
+| 6 | `eb09327` | 11.1 to 13.6 | 8.658 s | 6.508 s | 0.75 |
+
+All three runs use the same bench binary (`eb09327` changes only a test). The rule passes: the sink takes 0.75 to 0.80 of the `rm -rf` time, against a budget of 2.
+
+**Machine.** Apple M1 Pro, 10 cores, 32 GB, macOS 26.6.2, APFS on the internal SSD. Other agents were building on the machine throughout, so the load average stayed between 9 and 14.
+
+**What limits the number.** Kernel time in the file system's unlink path, for both sides. `/usr/bin/time -l /bin/rm -rf` on the same tree took 8.14 to 8.38 s real, of which 7.75 to 7.98 s was system time and 0.04 s user time, about 88 billion instructions per run. Python's `shutil.rmtree`, which removes relative to open folder handles as the sink does, took 5.98 to 6.53 s real with 5.32 to 5.59 s of system time. The sink matches that figure. Its survey lists and `fstatat`s every entry before the walk lists them again, so the extra listing is small next to the unlinks. `/bin/rm` spends about 2.4 s more in the kernel per tree than a handle-relative walk. Its system calls were not traced (`dtruss` needs root), so where that time goes inside `rm` is not established.
+
+**The work happened.** Every round asserts that the sink returned `Removed` with a known byte count above zero and that the tree is gone, or the bench stops.
+
+**Runs left out.**
+
+- Run 1 kept its trees in the repository's target folder. In round 7 the guard refused the tree, because the operator's terminal (Warp) held one of its folders open. A file watcher on the project does this. The guard was right, and the bench moved its trees out of the repository. The first `rm -rf` baseline (median 12.031 s) was measured in that folder and is not comparable either.
+- Run 2 overlapped a second bench process started by mistake.
+- Run 3 (`rm -rf` 8.438 s, sink 6.273 s, ratio 0.74) overlapped a local test build for about a minute.
+
+### The evidence lease (SAFE-10)
+
+**Question.** Is a 1 s lease on the process table and the snapshot of open files the right window?
+
+**Probe.** `cargo run --release -p dustpan-sys --example lease_cost`. It builds 200 small cache folders, then runs one preview-mode executor over all of them with `Lease::NONE` (a fresh process table and snapshot per candidate) and with `Lease::BATCH`, interleaved over five rounds. A preview holds no disk. Each rule names an owner, as M3's cache rows do, so every recheck consults the process table.
+
+**Result.** One process table plus one snapshot of open files costs 90.4 ms (median of 5). Rechecking all 200 candidates took 21,759 ms with `Lease::NONE` (108.79 ms each) and 145 ms with `Lease::BATCH` (0.73 ms each), medians of 5 rounds. Every candidate came out as a would-be removal in both modes. At 90.4 ms per snapshot pair, a 1 s lease spends at most 9% of each second taking evidence; a 250 ms lease would spend 36%. The window stays 1 s.

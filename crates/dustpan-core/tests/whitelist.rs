@@ -1,5 +1,3 @@
-//! The whitelist: how a file's text becomes entries (`whitelist::load`), and what layer 5 keeps
-//! because of them. The macOS table runs on every Unix host, because it is selected by value.
 #![cfg(unix)]
 
 use dustpan_core::config::Read;

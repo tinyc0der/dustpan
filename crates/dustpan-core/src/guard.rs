@@ -28,8 +28,6 @@ use crate::whitelist::Whitelist;
 use std::fmt;
 
 /// Everything a guard is built from. No `Default`: each field is a decision the caller makes.
-/// `whitelist` is the loaded user file merged with the hard-safety patterns (SAFE-11), so a
-/// caller that could not read the file has no value to pass and cannot build a guard.
 pub struct GuardInputs<'a> {
     pub os: Os,
     /// The invoking user's home folder, physically resolved. Anchors every `~` row.

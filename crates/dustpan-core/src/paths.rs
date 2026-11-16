@@ -37,15 +37,12 @@ pub fn home_dir(os: Os, env: Env) -> Option<PathBuf> {
     )
 }
 
-/// A folder an XDG variable names when it holds an absolute path, else `fallback` under home.
 fn xdg(os: Os, env: Env, key: &str, fallback: &str) -> Option<PathBuf> {
     var(env, key)
         .filter(|p| p.starts_with("/"))
         .or_else(|| Some(home_dir(os, env)?.join(fallback)))
 }
 
-/// Where `whitelist` and other user settings live. macOS and Linux share `~/.config/dustpan`,
-/// as Mole shares `~/.config/mole`, so one dotfiles entry covers both.
 pub fn config_dir(os: Os, env: Env) -> Option<PathBuf> {
     match os {
         Os::MacOs | Os::Linux => Some(xdg(os, env, "XDG_CONFIG_HOME", ".config")?.join("dustpan")),
@@ -53,7 +50,6 @@ pub fn config_dir(os: Os, env: Env) -> Option<PathBuf> {
     }
 }
 
-/// Rebuildable state. Never under `~/Library/Caches`, which the clean command sweeps.
 pub fn cache_dir(os: Os, env: Env) -> Option<PathBuf> {
     match os {
         Os::MacOs | Os::Linux => Some(xdg(os, env, "XDG_CACHE_HOME", ".cache")?.join("dustpan")),

@@ -1,7 +1,3 @@
-//! What the binary hands core after it tries to read a config file. Core does no I/O, so the
-//! three outcomes are data: a missing file means "use the built-in answer", an unreadable one
-//! means "stop", and the two must never be confused (Mole's WL-01 read an unreadable whitelist
-//! as an empty one and cleaned what it protected).
 use crate::paths::{self, Env, Os};
 use std::path::PathBuf;
 

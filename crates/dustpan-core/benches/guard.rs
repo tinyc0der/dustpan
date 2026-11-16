@@ -200,9 +200,6 @@ mod unix {
         }
     }
 
-    /// A 500-line user whitelist that names none of the fixture's paths, so every path is still
-    /// judged eligible and the number measures what layer 5 costs to say no: 250 literals under
-    /// `~/Projects`, 150 literal cache folders and 100 cache globs beside the fixture's own.
     fn big_whitelist(home: &AbsPath) -> Whitelist {
         let mut text = String::from("# bench whitelist\n");
         for n in 0..250 {

@@ -68,7 +68,6 @@ pub enum ShapeReason {
     MountPoint,
 }
 
-/// A whitelist entry matched. `file` is the user file behind a `User` entry.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct WhitelistHit {
     pub origin: Origin,
@@ -77,7 +76,6 @@ pub struct WhitelistHit {
     pub reach: Reach,
 }
 
-/// How a path relates to the entry that keeps it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reach {
     /// The path is what the entry names, or inside it.
@@ -86,10 +84,8 @@ pub enum Reach {
     Above,
 }
 
-/// Where the rule behind a refusal is written.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Source<'a> {
-    /// Built into dustpan: every layer but a user's whitelist entry.
     BuiltIn,
     File(&'a AbsPath),
 }

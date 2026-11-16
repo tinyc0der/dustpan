@@ -1,8 +1,3 @@
-//! The whitelist: paths the user (and dustpan itself) never wants cleaned. Layer 5 of the guard.
-//!
-//! The binary reads the file and hands core its text as a [`Read`]; this module parses it and
-//! merges the built-in entries. An unreadable file is an error, never an empty list, so a run
-//! that cannot learn what the user protects does not start (SAFE-11, Mole's WL-01).
 use crate::config::Read;
 use crate::path::{AbsPath, ShapeError, escaped};
 use crate::paths::Os;
@@ -49,7 +44,6 @@ const SAFETY: &[&str] = &[
     "~/Library/Caches/Buzz",
 ];
 
-/// Where an entry came from. Decides what `explain` says and whether a user file can drop it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Origin {
     Default,
@@ -115,7 +109,6 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-/// An entry as written, with `~` and `~/` standing for the home folder.
 fn expand(os: Os, home: &AbsPath, raw: &str) -> Result<Pattern, ShapeError> {
     if raw == FINDER_METADATA {
         return Ok(Pattern::FinderMetadata);

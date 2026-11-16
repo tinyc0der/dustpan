@@ -158,8 +158,8 @@ fn quoted_or_null(text: Option<String>) -> String {
 }
 
 /// PLAN's envelope with one item per path. `layer`, `reason` and `detail` are null for an
-/// eligible path. `source` names the user file behind a refusal, which only the whitelist layer
-/// (M0-4) has. The keys are written in this order by hand, so the output reads the same in
+/// eligible path. `source` is the user file behind a whitelist refusal, `default` for a built-in
+/// whitelist entry, and null for every other layer. The keys are written in this order by hand, so the output reads the same in
 /// every run; M0-5 moves the envelope into core.
 fn write_json(out: &mut dyn Write, rows: &[Row]) -> io::Result<()> {
     let secs = SystemTime::now()

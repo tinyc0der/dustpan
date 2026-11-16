@@ -506,6 +506,57 @@ fn an_entry_keeps_a_folder_stored_in_the_other_normalization_form() {
     );
 }
 
+/// Names APFS and NTFS treat as one: the stored character, and the text it folds to.
+const MULTI_CHARACTER_FOLDS: &[(&str, &str)] = &[
+    ("\u{df}", "ss"),
+    ("\u{1e9e}", "ss"),
+    ("\u{fb00}", "ff"),
+    ("\u{fb01}", "fi"),
+    ("\u{fb02}", "fl"),
+    ("\u{fb03}", "ffi"),
+    ("\u{fb04}", "ffl"),
+    ("\u{fb05}", "st"),
+    ("\u{fb06}", "st"),
+    ("\u{149}", "\u{2bc}n"),
+    ("\u{1e9a}", "a\u{2be}"),
+    ("\u{587}", "\u{565}\u{582}"),
+    ("\u{fb13}", "\u{574}\u{576}"),
+    ("\u{fb14}", "\u{574}\u{565}"),
+    ("\u{fb15}", "\u{574}\u{56b}"),
+    ("\u{fb16}", "\u{57e}\u{576}"),
+    ("\u{fb17}", "\u{574}\u{56d}"),
+];
+
+fn multi_character_fold_cases(entry_for: impl Fn(&str, &str) -> String) {
+    for &(stored, folded) in MULTI_CHARACTER_FOLDS {
+        for (name, spelling) in [
+            (format!("a{stored}z"), format!("A{}Z", folded.to_uppercase())),
+            (format!("A{}Z", folded.to_uppercase()), format!("a{stored}z")),
+            (format!("a{stored}z"), format!("a{folded}z")),
+        ] {
+            let path = format!("/Users/alice/P/a/{name}");
+            let fs = FakeProbe::new().dir(&path);
+            let entry = entry_for(&spelling, folded);
+            let got = outcome(&judge(&fs, text(&entry), &path));
+            assert_eq!(got, "whitelist/whitelisted", "entry {entry:?}, name {name:?}");
+        }
+    }
+}
+
+#[test]
+fn a_wildcard_component_keeps_a_name_that_folds_to_several_characters() {
+    multi_character_fold_cases(|spelling, _| format!("~/P/*/{spelling}\n"));
+}
+
+#[test]
+fn a_wildcard_inside_the_name_keeps_a_name_that_folds_to_several_characters() {
+    multi_character_fold_cases(|spelling, _| {
+        let mut chars = spelling.chars();
+        chars.next_back();
+        format!("~/P/a/{}?\n", chars.as_str())
+    });
+}
+
 #[test]
 fn an_entry_keeps_a_folder_whose_name_differs_only_in_non_ascii_case() {
     let fs = FakeProbe::new().dir("/Users/alice/V/\u{e9}t\u{e9}/f");

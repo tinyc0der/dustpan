@@ -184,6 +184,38 @@ fn a_folder_that_holds_a_whitelisted_path_is_kept_too() {
 }
 
 #[test]
+fn a_whitelisted_path_a_process_holds_open_keeps_the_whitelist_reason_and_takes_no_snapshot() {
+    let app = "/Users/alice/Projects/app";
+    let (kept, scratch) = (
+        format!("{app}/keep/data.db"),
+        format!("{app}/scratch/data.db"),
+    );
+    let fs = FakeProbe::new()
+        .file(&kept)
+        .file(&scratch)
+        .open_by(42, &kept)
+        .open_by(42, &scratch);
+    let file = p(FILE);
+    for (path, said) in [
+        (format!("{app}/keep"), "whitelist/whitelisted"),
+        (kept.clone(), "whitelist/whitelisted"),
+        (app.to_owned(), "whitelist/contains-whitelisted"),
+    ] {
+        let v = judge(&fs, text("~/Projects/app/keep\n"), &path);
+        assert_eq!(outcome(&v), said, "{path}");
+        assert_eq!(v.kept().unwrap().source(), Some(Source::File(&file)));
+    }
+    assert_eq!(fs.open_file_calls(), 0);
+    let held = judge(
+        &fs,
+        text("~/Projects/app/keep\n"),
+        &format!("{app}/scratch"),
+    );
+    assert_eq!(outcome(&held), "live/file-open");
+    assert_eq!(fs.open_file_calls(), 1);
+}
+
+#[test]
 fn a_glob_keeps_what_it_matches_and_not_a_name_that_only_shares_a_prefix() {
     let fs = mac();
     let wl = text("~/Library/Caches/com.foo.*\n");

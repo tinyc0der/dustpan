@@ -26,7 +26,7 @@ pub(crate) struct LiveChecks<'p> {
     pub edr: bool,
     /// Who owns the user-cache scope the path is in, when it is in one.
     pub scope_owner: Option<ScopeOwner<'p>>,
-    /// The SQLite family or partial download to ask `Probe::in_use` about.
+    /// The SQLite family or partial download: an open member keeps every member.
     pub family: Option<Vec<AbsPath>>,
     /// A SQLite companion whose name cannot be split, so its family cannot be asked about.
     pub family_unreadable: bool,

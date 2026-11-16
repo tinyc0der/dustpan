@@ -41,11 +41,13 @@ jobs:
         run: cargo test --workspace
       - name: build
         run: cargo build --release
-      # An unidentified process of the runner's user keeps every owned cache, so the log shows them.
-      - name: process table on this runner
+      # An unidentified process of the runner's user keeps every owned cache, and one that lists no
+      # open files keeps every path no rule protects, so the log shows them.
+      - name: process table and open files on this runner
         run: cargo run --release -p dustpan-sys --example process_table
-      # M0-3 live lane 10: the release binary judges a real Windows profile.
-      - name: explain keeps Windows and Documents, and not a file in Documents
+      # M0-3 live lane 10: the release binary judges a real Windows profile. Windows cannot
+      # list open files before M8, so a file no rule keeps is kept as unknown.
+      - name: explain keeps Windows and Documents, and cannot call a file in Documents free
         if: runner.os == 'Windows'
         run: |
           documents="$USERPROFILE\\Documents"
@@ -58,7 +60,7 @@ jobs:
           while IFS= read -r line; do lines+=("${line%$'\r'}"); done <<< "$out"
           [[ "${lines[0]}" == 'C:\Windows  Kept · critical system path' ]]
           [[ "${lines[1]}" == "$documents  Kept · home folder" ]]
-          [[ "${lines[2]}" == "$documents\\dustpan-lane-10.txt  Eligible" ]]
+          [[ "${lines[2]}" == "$documents\\dustpan-lane-10.txt  Kept · cannot tell whether a process has it open: this build cannot check it yet" ]]
       - name: explain keeps a path the Windows whitelist names
         if: runner.os == 'Windows'
         run: |
@@ -73,7 +75,7 @@ jobs:
           while IFS= read -r line; do lines+=("${line%$'\r'}"); done <<< "$out"
           [[ "${lines[0]}" == *'Kept · protected by your whitelist'*"$config\\whitelist"* ]]
           [[ "${lines[1]}" == *'Kept · protected by your whitelist'* ]]
-          [[ "${lines[2]}" == *'Eligible' ]]
+          [[ "${lines[2]}" == "$USERPROFILE\\Projects\\keeper  Kept · cannot tell whether a process has it open: this build cannot check it yet" ]]
       - name: explain reads the whitelist from XDG_CONFIG_HOME
         if: runner.os == 'Linux'
         run: |

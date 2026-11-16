@@ -10,7 +10,7 @@ use dustpan_core::identity::Node;
 use dustpan_core::path::AbsPath;
 use dustpan_core::paths::Os;
 use dustpan_core::probe::fake::FakeProbe;
-use dustpan_core::probe::{Owner, Probe, Seen};
+use dustpan_core::probe::{Owner, Probe, Seen, Unseen};
 use dustpan_core::whitelist::Whitelist;
 use std::sync::Arc;
 
@@ -80,6 +80,50 @@ fn an_untouched_candidate_is_approved_with_discovery_identity() {
     assert_eq!(approved.identity(), expected);
     assert_eq!(approved.path(), &p(CACHE));
     assert!(matches!(approved.sink(), Sink::Delete));
+}
+
+#[test]
+fn a_file_opened_after_discovery_is_refused_at_the_sink() {
+    let fs = fixture();
+    let guard = guard(&fs);
+    let candidate = discover(&guard, &fs);
+    let held = format!("{CACHE}/data_0");
+    fs.open_now(31, &held);
+    let rejection = refusal(&guard, &fs, candidate);
+    assert!(
+        matches!(&rejection, Rejection::Kept(KeptReason::Live(LiveReason::InUse { pid, file }))
+            if pid.0 == 31 && *file == p(&held)),
+        "{rejection:?}"
+    );
+
+    fs.close_all();
+    let candidate = discover(&guard, &fs);
+    let snapshots = fs.open_file_calls();
+    guard.recheck(candidate, &fs).unwrap();
+    assert_eq!(fs.open_file_calls(), snapshots + 1);
+}
+
+#[test]
+fn a_process_whose_open_files_cannot_be_listed_at_the_sink_is_a_refusal() {
+    let fs = fixture();
+    let guard = guard(&fs);
+    let candidate = discover(&guard, &fs);
+    fs.unlisted_now(31, true);
+    let rejection = refusal(&guard, &fs, candidate);
+    assert!(
+        matches!(
+            &rejection,
+            Rejection::Kept(KeptReason::Live(LiveReason::InUseUnknown(Unseen::Unlisted(pid))))
+                if pid.0 == 31
+        ),
+        "{rejection:?}"
+    );
+
+    // Another user's process holds nothing in this user's cache.
+    let fs = fixture();
+    let candidate = discover(&guard, &fs);
+    fs.unlisted_now(1, false);
+    guard.recheck(candidate, &fs).unwrap();
 }
 
 #[test]

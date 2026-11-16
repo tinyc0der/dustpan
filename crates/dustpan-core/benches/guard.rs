@@ -40,7 +40,7 @@ mod unix {
     use dustpan_core::path::AbsPath;
     use dustpan_core::paths::Os;
     use dustpan_core::probe::fake::FakeProbe;
-    use dustpan_core::probe::{Handles, Probe, ProcessTable, Seen};
+    use dustpan_core::probe::{OpenFiles, Probe, ProcessTable, Seen};
     use dustpan_core::whitelist::{self, Whitelist};
     use dustpan_sys::LiveProbe;
     use std::hint::black_box;
@@ -83,8 +83,8 @@ mod unix {
             self.inner.processes()
         }
 
-        fn in_use(&self, files: &[AbsPath]) -> Handles {
-            self.inner.in_use(files)
+        fn open_files(&self) -> Seen<OpenFiles> {
+            self.inner.open_files()
         }
     }
 

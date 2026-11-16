@@ -1,11 +1,11 @@
-//! An in-memory file system and process table for core tests. Compiled only for core's own unit
-//! tests and with the `testkit` feature, which no shipped crate enables; a source test fails if
-//! `FakeProbe` or `testkit` appears under `crates/dustpan/src` or `crates/dustpan-sys/src`
-//! (SAFE-17).
-use super::{App, Handles, Pid, Probe, Proc, ProcessTable, Seen, Unseen};
+//! An in-memory file system, process table and set of open files for core tests. Compiled only for
+//! core's own unit tests and with the `testkit` feature, which no shipped crate enables; a source
+//! test fails if `FakeProbe` or `testkit` appears under `crates/dustpan/src` or
+//! `crates/dustpan-sys/src` (SAFE-17).
+use super::{App, OpenFile, OpenFiles, Pid, Probe, Proc, ProcessTable, Seen, Unlisted, Unseen};
 use crate::identity::{FileId, Node, NodeKind};
 use crate::path::AbsPath;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -20,11 +20,11 @@ const MAX_LINK_HOPS: usize = 40;
 pub struct FakeProbe {
     tree: Mutex<Tree>,
     processes: Seen<ProcessTable>,
-    open: BTreeSet<PathBuf>,
-    in_use_unknown: bool,
+    open: Mutex<Seen<OpenFiles>>,
     swap_on_process_probe: Mutex<Option<PathBuf>>,
     node_calls: AtomicUsize,
     process_calls: AtomicUsize,
+    open_file_calls: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -121,7 +121,7 @@ impl Tree {
 }
 
 impl FakeProbe {
-    /// Holds the root folder on Unix, and an empty, complete process table.
+    /// Holds the root folder on Unix, an empty, complete process table and no open file.
     pub fn new() -> Self {
         let mut tree = Tree::default();
         if cfg!(unix) {
@@ -133,11 +133,11 @@ impl FakeProbe {
                 complete: true,
                 procs: Vec::new(),
             }),
-            open: BTreeSet::new(),
-            in_use_unknown: false,
+            open: Mutex::new(Seen::Found(OpenFiles::default())),
             swap_on_process_probe: Mutex::new(None),
             node_calls: AtomicUsize::new(0),
             process_calls: AtomicUsize::new(0),
+            open_file_calls: AtomicUsize::new(0),
         }
     }
 
@@ -245,16 +245,59 @@ impl FakeProbe {
         }
     }
 
-    pub fn open_file(mut self, path: &str) -> Self {
-        self.open.insert(abs(path).as_path().to_path_buf());
+    fn open(&self) -> std::sync::MutexGuard<'_, Seen<OpenFiles>> {
+        self.open.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Process 1 holds `path` open.
+    pub fn open_file(self, path: &str) -> Self {
+        self.open_now(1, path);
         self
     }
 
-    pub fn in_use_unknown(self) -> Self {
-        Self {
-            in_use_unknown: true,
-            ..self
+    pub fn open_by(self, pid: u32, path: &str) -> Self {
+        self.open_now(pid, path);
+        self
+    }
+
+    /// Process `pid` opens `path` from now on, as an app does between discovery and the sink.
+    pub fn open_now(&self, pid: u32, path: &str) {
+        if let Seen::Found(open) = &mut *self.open() {
+            open.files.push(OpenFile {
+                pid: Pid(pid),
+                path: abs(path).as_path().to_path_buf(),
+            });
         }
+    }
+
+    pub fn close_all(&self) {
+        if let Seen::Found(open) = &mut *self.open() {
+            open.files.clear();
+        }
+    }
+
+    /// Process `pid` runs and does not let the probe list its open files. `mine` says it runs
+    /// as the user dustpan runs as.
+    pub fn unlisted(self, pid: u32, mine: bool) -> Self {
+        self.unlisted_now(pid, mine);
+        self
+    }
+
+    /// The probe cannot list the open files of process `pid` from now on, as when the process
+    /// opens a file whose path the probe cannot confirm between discovery and the sink.
+    pub fn unlisted_now(&self, pid: u32, mine: bool) {
+        if let Seen::Found(open) = &mut *self.open() {
+            open.unlisted.push(Unlisted {
+                pid: Pid(pid),
+                mine,
+            });
+        }
+    }
+
+    /// The snapshot of open files cannot be taken at all.
+    pub fn in_use_unknown(self) -> Self {
+        *self.open() = Seen::Unknown(Unseen::Denied);
+        self
     }
 
     /// Runs [`FakeProbe::swap`] on `path` in the middle of the next process-table probe, as an
@@ -306,6 +349,10 @@ impl FakeProbe {
 
     pub fn process_calls(&self) -> usize {
         self.process_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn open_file_calls(&self) -> usize {
+        self.open_file_calls.load(Ordering::Relaxed)
     }
 }
 
@@ -369,19 +416,8 @@ impl Probe for FakeProbe {
         self.processes.clone()
     }
 
-    fn in_use(&self, files: &[AbsPath]) -> Handles {
-        if self.in_use_unknown {
-            return Handles::Unknown(Unseen::Denied);
-        }
-        // Like a case-insensitive volume, where `X.DB-wal` and `X.DB-WAL` are one file.
-        let same = |open: &PathBuf, file: &AbsPath| {
-            let (open, file) = (open.as_os_str(), file.as_path().as_os_str());
-            open.eq_ignore_ascii_case(file)
-        };
-        if files.iter().any(|f| self.open.iter().any(|o| same(o, f))) {
-            Handles::Open
-        } else {
-            Handles::Closed
-        }
+    fn open_files(&self) -> Seen<OpenFiles> {
+        self.open_file_calls.fetch_add(1, Ordering::Relaxed);
+        self.open().clone()
     }
 }

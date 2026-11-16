@@ -156,8 +156,12 @@ pub enum LiveReason {
         owner: Owner,
         why: Unseen,
     },
-    /// A member of the SQLite family, or a partial download, is open (SAFE-09).
-    InUse,
+    /// A process holds open the path, a file below it, or a member of its SQLite family
+    /// (SAFE-09). `file` is the one it holds, as the system spells it.
+    InUse {
+        pid: Pid,
+        file: AbsPath,
+    },
     InUseUnknown(Unseen),
     /// A `Current*` PowerLog store, live even inside the allowlisted powerlog tree (SAFE-06).
     LiveDatabase,
@@ -226,7 +230,7 @@ impl KeptReason {
             Self::Live(live) => match live {
                 LiveReason::OwnerRunning { .. } => "owner-running",
                 LiveReason::OwnerUnknown { .. } => "owner-unknown",
-                LiveReason::InUse => "file-open",
+                LiveReason::InUse { .. } => "file-open",
                 LiveReason::InUseUnknown(_) => "file-open-unknown",
                 LiveReason::LiveDatabase => "live-database",
                 LiveReason::EndpointSecurity => "edr-cache",
@@ -366,7 +370,17 @@ impl fmt::Display for KeptReason {
                     why.sentence()
                 )
             }
-            Self::Live(LiveReason::InUse) => f.write_str("a process has it open; quit that app"),
+            Self::Live(LiveReason::InUse { pid, file }) => {
+                write!(f, "process {} has {file} open; quit it first", pid.0)
+            }
+            Self::Live(LiveReason::InUseUnknown(Unseen::Unlisted(pid))) => {
+                write!(
+                    f,
+                    "cannot tell whether a process has it open: the open files of process {} \
+                     cannot be listed; quit it first",
+                    pid.0
+                )
+            }
             Self::Live(LiveReason::InUseUnknown(why)) => {
                 write!(
                     f,

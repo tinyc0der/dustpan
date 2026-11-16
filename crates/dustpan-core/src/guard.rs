@@ -10,6 +10,7 @@
 //! decides, and its reason is data ([`KeptReason`]), never a string a caller parses. Identity
 //! refusals come only from `recheck`.
 mod approved;
+mod open;
 mod pass;
 mod verdict;
 

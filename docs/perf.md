@@ -77,7 +77,58 @@ Five runs of each side, alternated (before, after, and so on), 2026-11-16, same 
 - The work happened: every run of both sides reports 99,998 of 100,000 eligible for `scan` and `explain` and 99,999 for `cpu`, with 0.022 `lstat` calls per path for `scan`. No run failed the budget.
 - Where the fixture sits changes every number. A first set of five alternated runs had "before" in a folder with a longer path than "after" (`bench-ab-confounded.txt`): `cpu` read 964,482 against 1,125,649, a 17% gap that the side-by-side runs do not show. The cause is inferred, not profiled: the in-memory probe and the policy both hash and compare whole path strings, and the paths of that folder are 45 bytes longer. Fix round 1's comparison above had the same layout, so its "9% slower" for `scan` and "9% to 13% faster" for `cpu` both carry that bias. Compare two sides only from folders whose paths have the same length.
 
+**After fix round 3 (open handles, capped bundle reads).** `scan` is 12% slower and passes at 3.4 times the budget: 772,544 before and 679,373 after, medians of five runs each. The ranges do not overlap (729,563 to 789,328 before, 640,718 to 699,821 after).
+
+Five runs of each side, alternated, 2026-11-16, same machine, load average 4.5 to 7.5 from other agents' builds. "Before" is an export of `a2b9f07` and "after" an export of the fix round 3 tree, in two sibling folders whose paths have the same length. Each cell is the median of five rounds in paths per second. The last column is the number of paths in a snapshot of open files taken right before the run.
+
+| Run | Side | Load | `scan` | `explain` | `cpu` | Open paths |
+|---|---|---|---|---|---|---|
+| 1 | before | 7.49 | 771,285 | 181,135 | 936,796 | 6,024 |
+| 1 | after | 6.96 | 691,965 | 177,291 | 922,530 | 6,024 |
+| 2 | before | 6.11 | 789,328 | 183,176 | 941,005 | 6,036 |
+| 2 | after | 5.86 | 679,271 | 180,994 | 911,709 | 6,020 |
+| 3 | before | 5.49 | 780,234 | 183,577 | 949,211 | 6,034 |
+| 3 | after | 4.80 | 679,373 | 174,539 | 930,304 | 6,013 |
+| 4 | before | 4.53 | 729,563 | 174,905 | 933,438 | 6,038 |
+| 4 | after | 4.87 | 640,718 | 170,328 | 900,138 | 6,223 |
+| 5 | before | 5.28 | 772,544 | 180,291 | 940,906 | 6,121 |
+| 5 | after | 5.24 | 699,821 | 178,180 | 925,937 | 6,122 |
+
+- The loss is a fixed cost per pass. The median `scan` round grew from 129.4 ms to 147.2 ms, 18 ms for 100,000 paths. One snapshot of open files costs 11 to 13 ms on this host (below), and sorting its 6,000 paths and asking it once per folder is the rest. On a longer scan the cost per path shrinks toward nothing.
+- The snapshot itself: 11.0, 12.7 and 13.1 ms, each the median of seven snapshots in one process (`cargo run --release -p dustpan-sys --example process_table`), with 836 processes, 6,206 paths and 541 processes of this user listed. A separate count on the same host found 7,021 descriptors in 509 listed processes: 5,493 files and folders and 552 sockets, of which 110 are Unix sockets bound to a path. The 295 processes of other users refuse the list at once and cost one call each.
+- What limits the snapshot is one kernel call per descriptor, about 1.6 µs each. While a Docker VM held 102,000 files of a shared folder open, the snapshot took 181 ms for 114,977 paths, and with one more process that held 50,000 descriptors it took 225 ms for 157,268. No kernel limit holds the number of descriptors down: `kern.maxfiles` counts open files, and `dup` and `fork` add descriptors that share one. So a snapshot stops at 262,144 descriptors and answers "timed out", which keeps every path no rule protects. At 1.6 µs each that is about 0.4 s, which is arithmetic, not a measurement.
+- The pass asks the snapshot once per folder, not once per path: a folder with nothing open in it answers for its files. Without that, five alternated runs measured 776,413 before and 564,364 after, 27% slower (`bench-ab-lookup-per-path.txt`). A temporary switch in the bench split that 48 ms per round into the snapshot (10 to 17 ms) and the sort and lookups (about 27 ms, 270 ns per path) by feeding the pass a cached snapshot and then an empty one (`bench-explain.txt`).
+- A folder that is held costs more. With the Docker VM holding every file of the fixture, `scan` measured 275,207 per second in one run, with 0 of 100,000 paths eligible: the snapshot was 181 ms and every path was looked up and found. It still met the budget. One run, not a comparison.
+- `explain` shows no measurable difference: 181,135 and 177,291, and the ranges overlap. It takes the same one snapshot per pass.
+- `cpu` is 2% slower (940,906 to 922,530, ranges 933,438 to 949,211 and 900,138 to 930,304). The in-memory probe has no open files, so this is the one lookup per folder against an empty index and the larger frame. No profile was taken, so the cause is inferred.
+- The process snapshot did not change on this host: 46 ms before and 45 ms after for 844 processes (the first snapshot in a process, one run of seven processes before and one after). The caps on `Info.plist` reads are far above what its processes need (242 files, 0.77 MB against 8 MiB). With the round 3 fixture running, `explain` took 6.32 s before and 0.05 s after with one process, and 31.46 s and 0.05 s with five.
+- The work happened: every run of both sides reports 99,998 of 100,000 eligible for `scan` and `explain` and 99,999 for `cpu`. No run failed the budget.
+- At the sink the snapshot is paid per candidate, on top of the process table (see the design's open questions).
+- The evidence files are in `/tmp/swarm-m0-3/fix3/`.
+
 **History.** The first working build measured 415,627 for `scan` at a load average near 7. Two changes followed: `*x*` bundle patterns are grouped by first byte, and a cache folder's owner is looked up without building an owner value per file. The same fixture then measured 874,594 at the same load.
+
+**After fix round 4 (a held file the snapshot cannot place).** No measurable difference for `scan`: 660,862 before and 664,166 after, medians of five runs each, and the ranges overlap (451,097 to 697,492 before, 608,524 to 700,379 after). It passes at 3.3 times the budget.
+
+Five runs of each side, alternated, 2026-11-16, same machine, load average 2.9 to 8.5 from other agents' builds. "Before" is an export of `f3c8ce7` and "after" an export of the fix round 4 tree, in two sibling folders whose paths have the same length. Each cell is the median of five rounds in paths per second. The last column is the number of paths in a snapshot of open files taken right after the run.
+
+| Run | Side | Load | `scan` | `explain` | `cpu` | Open paths |
+|---|---|---|---|---|---|---|
+| 1 | before | 2.92 | 451,097 | 121,975 | 745,911 | 6,373 |
+| 1 | after | 5.33 | 656,786 | 167,022 | 931,932 | 6,374 |
+| 2 | before | 5.12 | 679,191 | 173,645 | 921,049 | 7,175 |
+| 2 | after | 7.46 | 608,524 | 151,623 | 916,098 | 9,025 |
+| 3 | before | 8.48 | 620,821 | 168,852 | 901,742 | 9,005 |
+| 3 | after | 8.48 | 664,166 | 172,457 | 926,418 | 8,996 |
+| 4 | before | 8.02 | 660,862 | 171,380 | 951,413 | 8,996 |
+| 4 | after | 7.18 | 700,379 | 179,814 | 956,606 | 8,996 |
+| 5 | before | 6.23 | 697,492 | 180,713 | 953,191 | 8,986 |
+| 5 | after | 5.57 | 696,864 | 182,627 | 961,059 | 8,987 |
+
+- The change adds one `lstat` for each reported path of 768 bytes or more, and the host has none among 6,267, so a snapshot makes the same calls as before. That is why nothing moved. The check for a socket address is the `realpath` round 3 already made.
+- Run 1 "before" is an outlier in all three shapes, `cpu` included, which makes no system call. Its five `scan` rounds spanned 162.7 to 298.2 ms. Another agent's build is the likely cause; it was not traced. Without that run the "before" median is 670,027.
+- The snapshot of open files took 11.8 to 22.5 ms, each the median of seven in one process, and followed the number of open paths, which rose from 6,373 to about 9,000 during the runs on both sides.
+- The work happened: every run of both sides reports 99,998 of 100,000 eligible for `scan` and `explain` and 99,999 for `cpu`, and no process of this user was unlisted. No run failed the budget.
 
 **Not measured.** Linux and Windows. A cold fixture. More than one thread: a scan uses one `Pass` per worker, and the passes share nothing but the read-only policy.
 

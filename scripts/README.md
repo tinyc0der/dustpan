@@ -34,3 +34,15 @@ scripts/gen-bundle-globs.sh --check    # exit 1 when the committed file is stale
 ```
 
 To take a newer Mole, change `MOLE_SHA` in the script and run it again. The script stops on a pattern that uses glob syntax other than `*`.
+
+## Open-handles check
+
+`scripts/open-handles-check.sh` tests one claim on the machine it runs on: a cache folder in which a process holds a file open never reads `Eligible`. It is macOS only. It reads the live machine with `lsof`, so two runs can list different folders, and it deletes nothing.
+
+```sh
+cargo build --release
+scripts/open-handles-check.sh                      # target/release/dustpan
+scripts/open-handles-check.sh path/to/dustpan out  # another binary, and keep the two lists in out/
+```
+
+It prints the number of held folders and each one that reads `Eligible`, and exits 1 when there is one. Before the guard read open handles, 7 of 41 held folders on the bench host read `Eligible` (`docs/design/m0-3-guard.md`, "Fix round 3").

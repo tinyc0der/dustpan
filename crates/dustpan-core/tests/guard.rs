@@ -885,17 +885,173 @@ fn an_open_sqlite_companion_keeps_the_whole_family() {
 }
 
 #[test]
-fn an_unanswered_open_file_probe_keeps_the_family() {
+fn a_sqlite_family_is_free_once_every_member_is_closed() {
+    let dir = "/Users/alice/Library/Caches/com.example.app";
+    let (db, wal) = (format!("{dir}/x.db"), format!("{dir}/x.db-wal"));
+    let fs = mac().file(&db).file(&wal).open_by(9, &wal);
+    let held = Verdict::Kept(KeptReason::Live(LiveReason::InUse {
+        pid: Pid(9),
+        file: p(&wal),
+    }));
+    assert_eq!(judge(&fs, &db), held);
+    assert_eq!(judge(&fs, &wal), held);
+    fs.close_all();
+    assert_eq!(judge(&fs, &db), Verdict::Eligible);
+    assert_eq!(judge(&fs, &wal), Verdict::Eligible);
+}
+
+#[test]
+fn an_unanswered_open_file_probe_keeps_what_no_rule_protects() {
     let fs = mac().in_use_unknown();
-    let v = judge(&fs, "/Users/alice/Library/Caches/com.example.app/x.sqlite");
+    for path in [
+        "/Users/alice/Library/Caches/com.example.app/x.sqlite",
+        "/Users/alice/Library/Caches/BraveSoftware",
+    ] {
+        let v = judge(&fs, path);
+        assert_eq!(
+            v,
+            Verdict::Kept(KeptReason::Live(LiveReason::InUseUnknown(Unseen::Denied)))
+        );
+        assert_eq!(
+            v.to_string(),
+            "Kept · cannot tell whether a process has it open: permission denied"
+        );
+    }
+    // A protected path keeps the reason that holds whatever is open.
+    assert_outcomes(
+        &fs,
+        &[
+            ("/System", "critical/critical-system-path"),
+            ("~/Documents", "critical/home-folder"),
+            ("~/.orbstack", "protection/app-state"),
+        ],
+    );
+}
+
+#[test]
+fn an_open_file_keeps_every_folder_above_it_whatever_the_folder_is_named() {
+    let vendor = "/Users/alice/Library/Caches/BraveSoftware";
+    let held = format!("{vendor}/Brave-Browser/Default/Cache/data_0");
+    let fs = mac()
+        .file(&held)
+        .file(&format!("{vendor}/Brave-Browser-Beta/data_0"))
+        .dir("/Users/alice/Library/Caches/BraveSoftwareUpdate")
+        .open_by(4242, &held);
+    let kept = Verdict::Kept(KeptReason::Live(LiveReason::InUse {
+        pid: Pid(4242),
+        file: p(&held),
+    }));
     assert_eq!(
-        v,
-        Verdict::Kept(KeptReason::Live(LiveReason::InUseUnknown(Unseen::Denied)))
+        kept.to_string(),
+        format!("Kept · process 4242 has {held} open; quit it first")
+    );
+    for path in [
+        vendor,
+        &format!("{vendor}/Brave-Browser"),
+        &format!("{vendor}/Brave-Browser/Default/Cache"),
+        &held,
+        // APFS ignores case, so this names the same folder.
+        "/Users/alice/Library/Caches/bravesoftware",
+    ] {
+        assert_eq!(judge(&fs, path), kept, "{path}");
+    }
+    assert_outcomes(
+        &fs,
+        &[
+            (&format!("{vendor}/Brave-Browser-Beta"), "eligible"),
+            (
+                &format!("{vendor}/Brave-Browser/Default/Cache/data_1"),
+                "eligible",
+            ),
+            ("~/Library/Caches/BraveSoftwareUpdate", "eligible"),
+            // A folder a rule keeps has that reason, open or not.
+            ("~/Library/Caches", "critical/structural-folder"),
+        ],
+    );
+}
+
+#[test]
+fn a_folder_with_nothing_open_answers_for_its_files_and_a_held_folder_does_not() {
+    let caches = "/Users/alice/Library/Caches";
+    let fs = mac()
+        .file(&format!("{caches}/Quiet/a"))
+        .file(&format!("{caches}/Quiet/b.db"))
+        .file(&format!("{caches}/Busy/a"))
+        .file(&format!("{caches}/Busy/b.db"))
+        .file(&format!("{caches}/Busy/sub/c"))
+        .file(&format!("{caches}/Busy/sub/d"))
+        .open_by(3, &format!("{caches}/Busy/b.db-wal"))
+        .open_by(4, &format!("{caches}/Busy/sub/c"));
+    // The last row goes back into the held folder after a quiet one.
+    assert_outcomes(
+        &fs,
+        &[
+            (&format!("{caches}/Busy"), "live/file-open"),
+            (&format!("{caches}/Busy/a"), "eligible"),
+            (&format!("{caches}/Busy/b.db"), "live/file-open"),
+            (&format!("{caches}/Busy/sub"), "live/file-open"),
+            (&format!("{caches}/Busy/sub/c"), "live/file-open"),
+            (&format!("{caches}/Busy/sub/d"), "eligible"),
+            (&format!("{caches}/Quiet"), "eligible"),
+            (&format!("{caches}/Quiet/a"), "eligible"),
+            (&format!("{caches}/Quiet/b.db"), "eligible"),
+            (&format!("{caches}/Busy/b.db"), "live/file-open"),
+        ],
+    );
+}
+
+#[test]
+fn a_process_that_does_not_list_its_open_files_keeps_what_no_rule_protects() {
+    let cache = "/Users/alice/Library/Caches/BraveSoftware";
+    let mine = mac().dir(cache).unlisted(1, false).unlisted(77, true);
+    let unknown = judge(&mine, cache);
+    assert_eq!(
+        unknown,
+        Verdict::Kept(KeptReason::Live(LiveReason::InUseUnknown(
+            Unseen::Unlisted(Pid(77))
+        )))
     );
     assert_eq!(
-        v.to_string(),
-        "Kept · cannot tell whether a process has it open: permission denied"
+        unknown.to_string(),
+        "Kept · cannot tell whether a process has it open: the open files of process 77 \
+         cannot be listed; quit it first"
     );
+    assert_eq!(
+        outcome(&judge(&mine, "/Users/alice/.orbstack")),
+        "protection/app-state"
+    );
+    // A holder the probe did see is the better answer.
+    let seen = mine.open_by(5, &format!("{cache}/x"));
+    assert_eq!(outcome(&judge(&seen, cache)), "live/file-open");
+
+    // Another user's process cannot be listed by any run that is not root, so it is set aside.
+    let theirs = mac().dir(cache).unlisted(1, false);
+    assert_eq!(judge(&theirs, cache), Verdict::Eligible);
+}
+
+#[test]
+fn a_pass_takes_one_snapshot_of_open_files_and_none_for_a_protected_path() {
+    let caches = "/Users/alice/Library/Caches";
+    let fs = mac()
+        .file(&format!("{caches}/Vendor/a"))
+        .file(&format!("{caches}/Vendor/b"))
+        .file(&format!("{caches}/Other/c"))
+        .symlink(&format!("{caches}/Vendor/link"), "../Other/c");
+    let guard = guard(&fs);
+    let mut pass = guard.pass(&fs);
+    for path in ["/System", "/Users/alice/Documents", caches] {
+        assert!(pass.evaluate(p(path)).verdict().kept().is_some(), "{path}");
+    }
+    assert_eq!(fs.open_file_calls(), 0);
+    for name in ["Vendor", "Vendor/a", "Vendor/b", "Vendor/link", "Other/c"] {
+        let path = format!("{caches}/{name}");
+        assert_eq!(
+            pass.evaluate(p(&path)).verdict(),
+            &Verdict::Eligible,
+            "{path}"
+        );
+    }
+    assert_eq!(fs.open_file_calls(), 1);
 }
 
 #[test]

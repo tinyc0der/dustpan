@@ -57,6 +57,14 @@ fn shown(home: &Path, rest: &str) -> String {
     )
 }
 
+/// What `explain` says about a path that no rule keeps and no process holds open. Windows
+/// cannot list open files before M8, so there the path is kept and the reason says so.
+const FREE: &str = if cfg!(windows) {
+    "Kept · cannot tell whether a process has it open: this build cannot check it yet"
+} else {
+    "Eligible"
+};
+
 #[test]
 fn a_head_folder_is_kept_and_a_file_in_it_is_eligible() {
     let home = fixture_home();
@@ -66,7 +74,7 @@ fn a_head_folder_is_kept_and_a_file_in_it_is_eligible() {
         lines,
         [
             format!("{}  Kept · home folder", shown(home.path(), "/Documents")),
-            format!("{}  Eligible", shown(home.path(), "/Documents/report.txt")),
+            format!("{}  {FREE}", shown(home.path(), "/Documents/report.txt")),
         ]
     );
 }
@@ -77,7 +85,7 @@ fn a_relative_path_is_judged_from_the_working_folder() {
     let text = stdout(explain(home.path()).arg("Documents/report.txt"));
     assert_eq!(
         text.trim_end(),
-        format!("{}  Eligible", shown(home.path(), "/Documents/report.txt"))
+        format!("{}  {FREE}", shown(home.path(), "/Documents/report.txt"))
     );
 }
 
@@ -159,17 +167,27 @@ fn json_is_one_envelope_with_an_item_per_path() {
             "source": null,
         })
     );
-    assert_eq!(
-        items[1],
+    let report = shown(home.path(), "/Documents/report.txt");
+    let free = if cfg!(windows) {
         serde_json::json!({
-            "path": shown(home.path(), "/Documents/report.txt"),
+            "path": report,
+            "verdict": "kept",
+            "layer": "live",
+            "reason": "file-open-unknown",
+            "detail": FREE.strip_prefix("Kept · "),
+            "source": null,
+        })
+    } else {
+        serde_json::json!({
+            "path": report,
             "verdict": "eligible",
             "layer": null,
             "reason": null,
             "detail": null,
             "source": null,
         })
-    );
+    };
+    assert_eq!(items[1], free);
 }
 
 #[cfg(unix)]

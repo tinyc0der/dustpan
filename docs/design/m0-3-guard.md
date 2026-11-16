@@ -89,10 +89,10 @@ assert!(matches!(pass.evaluate(p("/Users/alice/link/Library")).verdict(),
 | `FileId { volume: u64, file: u128 }` | `crates/dustpan-core/src/identity.rs` | dev and ino on Unix. Volume serial and the 128-bit `FILE_ID_INFO` id on Windows, because ReFS Dev Drives need all 128 bits. |
 | `Node { kind, id }`, `PathIdentity { parent, target }` | `crates/dustpan-core/src/identity.rs` | What `lstat` saw. The identity a candidate carries from discovery to the sink. |
 | `Probe` trait, `Seen<T>`, `Unseen` | `crates/dustpan-core/src/probe.rs` | Four primitive, policy-free questions with tri-state answers. Implementations hold nothing between calls. |
-| `Owner`, `OwnerState`, `ProcessTable`, `Handles` | `crates/dustpan-core/src/probe.rs` | Literal owner names (SAFE-33). `OwnerState::permits_removal` is the one translation of the tri-state (SAFE-08). Owner matching against the table is pure core code. |
+| `Owner`, `OwnerState`, `ProcessTable`, `OpenFiles` | `crates/dustpan-core/src/probe.rs` | Literal owner names (SAFE-33). `OwnerState::permits_removal` is the one translation of the tri-state (SAFE-08). Owner matching against the table is pure core code. |
 | `Policy` (private) | `crates/dustpan-core/src/protect/` | One `Table` of rows per OS, compiled into three tries (critical, protection, carve-outs), an identity table and verified firmlinks. |
 | `Guard`, `GuardInputs`, `PolicyError` | `crates/dustpan-core/src/guard.rs` | The only public face of the policy. Built by `Guard::new` or not at all. |
-| `Pass`, `Judgment` | `crates/dustpan-core/src/guard/pass.rs` | A stack of ancestor frames shared by every path a pass judges, plus at most one process table. |
+| `Pass`, `Judgment` | `crates/dustpan-core/src/guard/pass.rs` | A stack of ancestor frames shared by every path a pass judges, plus at most one process table and one snapshot of open files. |
 | `Verdict`, `KeptReason`, `Layer`, `Hit`, `Kind`, `ShapeReason`, `LiveReason` | `crates/dustpan-core/src/guard/verdict.rs` | Refusals as data. The outer `KeptReason` variant is the layer, so a reason cannot name the wrong layer. Stable codes for `--json` and the oplog. |
 | `Rule`, `Sink`, `Candidate` | `crates/dustpan-core/src/candidate.rs` | A rule's shared facts (owners, sink). A candidate carries one discovery verdict and identity, built only by `Pass::candidate`. |
 | `Size` | `crates/dustpan-core/src/size.rs` | `Known`, `Partial`, `Unknown`; unknown never renders as 0 (SAFE-21). |
@@ -101,7 +101,7 @@ assert!(matches!(pass.evaluate(p("/Users/alice/link/Library")).verdict(),
 
 ### How core reaches the file system without OS calls
 
-Core defines `Probe` with four questions: `node` (one `lstat`), `link_target` (one `readlink`), `processes` (one process-table snapshot) and `in_use` (are any of these files open, asked once for a SQLite family). Every decision about what to ask and what an answer means stays in core. Symlink resolution (`probe::physical`), owner matching (`Owner::state_in`), the SQLite family rule, firmlink mapping and alias detection are all pure core code over probe answers. `dustpan-sys` implements the four questions with syscalls and keeps no state, so every answer is fresh.
+Core defines `Probe` with four questions: `node` (one `lstat`), `link_target` (one `readlink`), `processes` (one process-table snapshot) and `open_files` (one snapshot of the files every process holds open; before fix round 3 this was `in_use`, asked per SQLite family). Every decision about what to ask and what an answer means stays in core. Symlink resolution (`probe::physical`), owner matching (`Owner::state_in`), the SQLite family rule, firmlink mapping and alias detection are all pure core code over probe answers. `dustpan-sys` implements the four questions with syscalls and keeps no state, so every answer is fresh.
 
 A core unit test passes `probe::fake::FakeProbe`, an in-memory tree where two spellings that share a `FileId` are aliases. It can model a case alias, a firmlink, a symlinked ancestor, an unreadable directory, a running owner, an unreadable process table, an open WAL file, and a swap between discovery and the sink. It also counts calls, so a test asserts ancestor sharing by what the probe saw, not by reading internals. The fake compiles only under the `testkit` feature, which core's integration tests turn on through a self dev-dependency. That dev-dependency is verified to compile. No shipped crate names `FakeProbe` or `testkit`, and M0-3 adds a source test that fails if one does (SAFE-17).
 
@@ -113,7 +113,7 @@ Core's integration tests and bench can also dev-depend on `dustpan-sys`. They li
 2. **Judge.** `Pass::judge(path, seen, owners)` runs four layers in order, and the first refusal decides.
    - Layer 1, shape. The path is mapped to its firmlink spelling. The pass reuses frames for ancestors it already holds and `lstat`s only new ones. Any linked ancestor refuses (`LinkedAncestor`), and so does an unreadable one (`Unreadable`). A leaf whose volume differs from its parent's is a mount point (`MountPoint`, SAFE-38). A leaf link has its target resolved and judged by a nested pass, and that target can refuse but never grant (`LinkToProtected`, SAFE-05).
    - Layer 2, critical. The deepest matching anchor wins, carve-out rows join as allow rows, and refuse beats allow at equal depth. Identity rows only refuse. They compare the leaf with Exact and Subtree anchors, the parent with Children anchors, and every ancestor with Subtree anchors (already folded into its frame).
-   - Layer 3, live. PowerLog `Current*` stores and EDR caches refuse by name. Owners come from the rule plus the bundle id of a user-cache scope, and are matched against the pass's single process table. A SQLite family or partial download is sent to `in_use`. These run even under carve-outs (SAFE-06).
+   - Layer 3, live. PowerLog `Current*` stores and EDR caches refuse by name. Owners come from the rule plus the bundle id of a user-cache scope, and are matched against the pass's single process table. These run even under carve-outs (SAFE-06). Since fix round 3 the layer also asks who holds the path, anything below it or a member of its SQLite family open, from one snapshot per pass, and it asks that last, after layer 4.
    - Layer 4, protection. The same trie contest over the protection rows and bundle-id globs. An anchor marked `RefuseWithAncestors` refuses every ancestor while it exists, one `lstat` each (SAFE-27).
    - The identity returned is the parent frame's `FileId` and the leaf's.
 3. **Recheck.** `Guard::recheck(candidate, &probe)` starts a fresh pass, judges the path with the rule's owners and a fresh `lstat` of the leaf, and compares parent and target identity with discovery's. It returns `Approved`, `Refused { Kept(reason) }` or `Refused { Gone }`. It never refreshes the identity to approve a replacement. Its body is real code, not pseudocode.
@@ -162,7 +162,7 @@ The public surface is three calls (`Guard::new`, `Guard::pass`, `Guard::recheck`
 
 - **M0-4, whitelist.** `GuardInputs` gains a required `whitelist` field, so both construction sites (the binary and the test helper) must supply one. `Policy` gains a fourth trie built from the same row vocabulary, with whitelist entries guarding their ancestors (SAFE-11). `judge` gains a layer-5 step after layer 4, and `KeptReason` gains `Whitelisted(WhitelistHit)` carrying `source`, which `explain --json` prints. `Layer::Whitelist` and its `whitelist` code already exist. `recheck` picks the layer up with no change, because it runs `judge`. An unreadable whitelist fails before `Guard::new`, so `explain` exits 1 by the same path as a policy error.
 - **M0-5, sinks and oplog.** Each sink takes `Approved` by value and reads `path()`, `identity()` and `sink()`. The oplog writes `KeptReason::code()` and `escaped()` paths. The executor maps `Rejection::Gone` to done. The sink's pre-delete walk uses a `Pass` to refuse a protected descendant.
-- **M3, rules with owners.** The catalog loader builds `Arc<Rule>` and may add fields (roots, minimum age, label). `Owner` may gain variants, sys implements `in_use`, and `OwnerCommand` gains variants. Review-only rows become planner rows that never reach `Pass::candidate`.
+- **M3, rules with owners.** The catalog loader builds `Arc<Rule>` and may add fields (roots, minimum age, label). `Owner` may gain variants, and `OwnerCommand` gains variants. Fix round 3 already reads open files on macOS and Linux. Review-only rows become planner rows that never reach `Pass::candidate`.
 - **M4, privileged helper.** `PrivilegedAction` gains variants. The helper deserializes candidates, builds its own `Guard` as root, and runs `recheck`. SAFE-14 needs each ancestor's owner and mode, so `Node` grows two fields then, which touches only the two probe implementations.
 - **M8, Windows.** `protect/windows.rs` holds the rows and already compiles everywhere. `crates/dustpan-sys/src/windows.rs` fills `node` and `link_target`. No core type changes.
 
@@ -236,7 +236,7 @@ The base sketch type-checks on three targets with clippy clean and three compile
 - We accept refusing every path below a linked ancestor (`/tmp/x` on macOS, every home path when `HOME` sits under a symlink) in exchange for a sink that only ever sees physical paths. The refusal names the physical spelling.
 - We accept an identity table taken once per process in exchange for zero per-path alias syscalls. An entry can only refuse, so staleness over-refuses. The one gap is an alias of an anchor created after start that string folding does not catch, such as a Unicode-normalization variant. It closes at the next run.
 - We accept over-protecting relative to Mole under carve-outs. A bundle-id glob on a leaf beats a shallower carve-out such as `/private/var/folders`, where Mole skips its protection check. M3's parity gate fails only on extra candidates, not on missing ones.
-- We accept `in_use` answering `Unknown` until M3. In M0, SQLite-family and partial-download paths show as kept with `file-open-unknown`. That fails closed.
+- We accepted `in_use` answering `Unknown` until M3, which kept every SQLite-family and partial-download path as `file-open-unknown`. Fix round 3 ended that on macOS and Linux. On Windows the answer is unknown for every path no rule keeps, until M8.
 - We accept sys implementing process tables in M0-3, which the checklist does not list. The live-user-cache rule (SAFE-06 order) needs one for `explain ~/Library/Caches/com.example.app` to print `Eligible`.
 
 ## Alternatives considered
@@ -297,7 +297,7 @@ The checklist names six core files and one identity file per OS. The shipped lay
 - The macOS process table holds each executable path, the id of every bundle that encloses it and, since fix round 2, the signing identifier and the app groups from the process's code signature. It holds no arguments: they need `KERN_PROCARGS2`, which answers for the caller's own processes alone. M3 adds them with the open-file probe (SAFE-08's first milestone).
 - A macOS process whose path the kernel will not give is listed by its short record (`PROC_PIDT_SHORTBSDINFO`) and marked unidentified. The table is incomplete only when a listed process has neither. See "Fix round 1" for what an unidentified process means for owners.
 - Linux marks the table incomplete when a `cmdline` cannot be read or when pid 1 is not listed, which is what `hidepid` looks like.
-- Windows answers `Unsupported` for the process table. No Windows rule asks for it in M0.
+- Windows answers `Unsupported` for the process table. No Windows rule asks for it in M0. Since fix round 3 it answers `Unsupported` for open files too, which every path no rule keeps asks for.
 - Windows falls back to the 64-bit file index when a volume does not answer `FileIdInfo` (FAT, exFAT).
 
 ### `explain`
@@ -378,6 +378,57 @@ A second adversarial review, on the fix round 1 diff, broke the intent three mor
 
 **Tests.** `crates/dustpan/tests/hostile_plist.rs` and `owners.rs` run a copy of the test binary from a folder they lay out and judge with the real `explain` under a one-second limit. The hostile cases run one at a time, because each leaves an unidentified process behind while it runs. `owners.rs` signs one copy ad hoc with an app group entitlement, which the system accepts. The first run of a new binary made the next process snapshot wait 0.5 to 0.9 seconds on the bench host, so each fixture runs one untimed `explain` before the timed ones.
 
+### Fix round 3: open handles
+
+A third adversarial review, on the fix round 2 diff, broke "a running app's data is kept" again (R3-A1) and made the guard slow (R3-A2). Before a third fix, the premise under the first two was written down and tested. The evidence files are in `/tmp/swarm-m0-3/fix3/`.
+
+**The premise.** Every earlier fix answered "is this path's owner running?" by naming the owner and matching processes to the name: words of the executable path, then bundle ids, then signing identifiers and app groups. All of them assumed one thing: the guard can name the owner of a path.
+
+**The test that falsified it.** If the premise held, no cache folder in which a process holds a file open would read `Eligible`. `scripts/open-handles-check.sh` lists every `~/Library/Caches/<name>` and `Group Containers/<name>/Library/Caches` folder in which `lsof` shows an open file of this user's processes, and asks `explain` about each. At `a2b9f07`, 7 of 41 read `Eligible`: `BraveSoftware` while Brave ran, `CloudKit`, `GeoServices`, `copilot`, `docker-secrets-engine`, `familycircled` and `group.com.apple.storekit/Library/Caches`, where `storekitagent` held `storeUser.db` and its WAL. Each is named for a vendor or a daemon. No rule about names reaches them, so a fourth rule about names would have failed the same way.
+
+**The new shape.** The guard now reads the direct signal PLAN's layer 3 already names: no handle is open.
+
+- `Probe::open_files` replaces `Probe::in_use`. It returns one snapshot, `OpenFiles`: a `(pid, path)` for every file, folder and bound Unix socket a process holds, and the processes whose list could not be read (`Unlisted { pid, mine }`). The `Handles` type is gone.
+- `guard::open::OpenIndex` sorts the snapshot once per pass. "Is anything open at this path or below it" is two binary searches, whatever the folder holds. Keys are lowercased where the policy folds case.
+- A path is kept with `LiveReason::InUse { pid, file }` when a process holds open the path, anything below it, or a member of its SQLite family. The code stays `file-open` and the layer stays `live`. The sentence is `process 13534 has <file> open; quit it first`.
+- A path that nothing holds is still kept, as `file-open-unknown`, when the snapshot failed or a process of this user did not list its files. The refusal names that process. Another user's unlisted process is set aside, as an unidentified one is in round 1: a run that is not root can list no root process, so it could otherwise call no path free.
+- The unknown applies to every path, not only to paths under the home folder. A process of this user can hold a file in `/private/var/folders` as well. On the bench host no process of this user is unlisted (0 of 541), so the wider rule costs nothing there.
+- The question is asked last, for a path every other rule lets go. Its answer can only keep a path, so no allowlist skips it (SAFE-06). A protected path keeps its own reason: `explain ~/Library/Keychains/login.keychain-db` says `keychains`, which stays true after the app quits, and a pass over protected paths takes no snapshot at all.
+- `recheck` starts its own pass, so it takes its own snapshot, after the first identity check and before the second (SAFE-10). A file opened between the scan and the sink refuses the candidate.
+- Name matching stays as a second signal that can only refuse. An app that runs and holds nothing open in its cache folder at that moment is still kept.
+- The snapshot leaves out dustpan's own process. The folders a scan has open are not another program's live data.
+
+**macOS.** `crates/dustpan-sys/src/macos/open.rs` asks the kernel through libproc: `proc_listallpids`, `proc_pidinfo(PROC_PIDLISTFDS)` for each process, and `proc_pidfdinfo` for each descriptor that is a file, a folder or a socket. No subprocess runs.
+
+- The kernel refuses the path of a file in a data vault (`EPERM`), 59 of 5,493 file descriptors on the bench host, all of eight Apple daemons such as `routined`. Those are skipped. Dustpan cannot open or remove such a file either. That the 59 sit in data vaults is inferred from `routined`, whose mapped files are in a `dv` folder; it was not checked for each one.
+- A bound Unix socket counts. The first run of the check after this change still read `docker-secrets-engine` as `Eligible`: Docker holds `engine.sock` there as a socket, not as a file. Removing it cuts the daemon off from its clients. The kernel keeps the address as the process spelled it, so its folder is resolved to a physical path (`$TMPDIR` is below the link `/var`). A relative address is skipped, 1 of 110 on the bench host.
+
+**Linux.** `crates/dustpan-sys/src/linux/open.rs` reads the links in `/proc/<pid>/fd`, and `/proc/net/unix` for the path a socket is bound to.
+
+- "This user's process" is one whose `/proc/<pid>` this user owns. A process that gave up being inspected (`ssh-agent`, `(sd-pam)`) belongs to root there and is set aside. Judging by the user id in `status` would make every desktop session keep everything.
+- A process that is starting a new program is shown to root alone for a moment. In a container, 3 of 9 `explain` tests failed with `the open files of process 2378 cannot be listed`, because a sibling test's `dustpan` was starting. A refusal from a process this user owns is now asked again, up to four times, a millisecond apart. The same tests then passed 30 runs of 30.
+
+**Windows.** `open_files` answers `Unsupported` until M8, which adds `NtQuerySystemInformation`. A path that no rule keeps is therefore kept on Windows, as `file-open-unknown`, with the sentence `this build cannot check it yet`. Critical and protected paths keep their own reasons. CI lane 10 and three `explain` tests expect this on Windows.
+
+**Not covered.**
+
+- A file a process has mapped and then closed, and a process's working folder. Neither is a descriptor.
+- A file held only by another user's process when dustpan is not root, for example a root daemon that writes into a user's cache.
+- An open file the kernel reports under its data-volume spelling (`/System/Volumes/Data/Users/...`). None of 5,439 paths on the bench host has one.
+- A file a process opened through a hard link under another name. The kernel reports one path per open file.
+- A bound on the Linux snapshot. Linux has no system-wide cap like `kern.maxfiles` within reach of a second, so M9 must add a deadline that answers `TimedOut`.
+
+**Cost.** One snapshot took 11 to 13 ms on the bench host: 836 processes, 541 of them this user's and listed, 6,206 paths (median of seven in one process, three runs). The pass asks it once per folder: a folder with nothing open in it answers for its files, and for a SQLite family, whose members share the folder. It is linear in open descriptors, about 1.6 µs each: while a Docker VM held 102,000 files of a shared folder open, the snapshot took 181 ms for 114,977 paths. The kernel caps descriptors at `kern.maxfiles` (245,760 here), which bounds a snapshot near 0.4 s. That bound is arithmetic, not a measurement. `docs/perf.md` has the bench. `recheck` pays one snapshot per candidate; see the open question below.
+
+**Capped bundle reads (R3-A2).** One process below 211 folders named like bundles, each with a well-formed 1 MiB `Info.plist`, made every process snapshot take 6.3 s, and five such processes 31 s. Round 2 capped one file and not their number.
+
+- At most 16 folders above one executable are asked for an `Info.plist`. The deepest of 787 processes on the bench host has 6 (a Brave helper inside a framework inside the app). An executable below more is not identified, and nothing is read for it.
+- One snapshot reads at most 8 MiB of `Info.plist` files and spends at most 250 ms of CPU on them. The bench host's processes need 242 files, 0.77 MB in all. CPU time is the thread's, so a cold disk does not spend the budget. Past either cap a bundle is unreadable, which leaves its process unidentified (round 1's rule: every owner is unknown and kept).
+- With the fixture running, `explain` answers in 0.06 s with one process and with five (`slow_snapshot.sh`).
+- Not covered: one user can still spend the shared budget and leave another user's processes unidentified. That keeps more and removes nothing.
+
+**Tests.** `guard.rs` has the rules against the fake: a vendor-named folder kept at every depth with the pid and file named, an unlisted process of this user and of another, a SQLite family that is free once closed, one snapshot per pass and none for a protected path. `recheck.rs` opens a file after discovery. `crates/dustpan-sys/tests/open_files.rs` holds a file, a folder and a socket open in a child process and reads the real snapshot, on macOS and Linux. `crates/dustpan/tests/owners.rs` runs `explain` against a child that holds a file in `Library/Caches/BraveSoftware`, then closes it and stays alive. `hostile_plist.rs` runs a process below the deep tree. Both live tests and the check script failed at `a2b9f07`.
+
 ### SAFE rules this code governs
 
 Each test fails when its guard is removed. The owner ran one mutation per rule marked with a star and saw the named test go red.
@@ -392,8 +443,8 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 | SAFE-06* | `guard.rs::a_live_powerlog_store_is_kept_inside_the_allowlisted_tree`, `an_endpoint_security_cache_is_kept_inside_the_allowlisted_tree`, `layers_decide_in_order` |
 | SAFE-07* | `guard.rs::an_unreadable_protected_anchor_means_no_guard`, `a_home_that_is_a_system_root_means_no_guard`, the third compile-fail doctest on `Approved`, `explain.rs::a_home_that_is_a_system_root_stops_the_command` |
 | SAFE-08 | `probe::tests::only_a_complete_table_proves_an_owner_idle`, `a_bundle_id_matches_the_bundle_a_process_runs_in`, `an_unidentified_process_of_this_user_leaves_every_owner_unknown`, `guard.rs::a_running_or_unknown_owner_keeps_its_cache`, `an_app_keeps_its_cache_when_only_its_bundle_names_the_id`, `an_unidentified_process_of_this_user_keeps_every_owned_cache`, `a_group_containers_caches_are_kept_while_an_app_of_the_group_runs`, `a_process_keeps_the_caches_of_the_groups_its_entitlements_name`, `the_words_of_a_bundle_layout_name_no_owner`, `probe::tests::a_layout_word_is_no_evidence`, `an_app_group_matches_its_entitled_processes_and_the_app_it_names`, `crates/dustpan-sys/tests/process_identity.rs`, `crates/dustpan/tests/owners.rs` and `hostile_plist.rs` (real processes, macOS) (the tri-state; the open-file probe is M3) |
-| SAFE-09 | `guard.rs::an_open_sqlite_companion_keeps_the_whole_family`, `an_unanswered_open_file_probe_keeps_the_family` (the family rule; the probe is M3) |
-| SAFE-10* | `recheck.rs`: `a_swapped_inode_is_refused`, `a_swapped_parent_is_refused`, `a_parent_replaced_by_a_symlink_is_refused`, `a_target_swapped_during_the_owner_probe_is_refused` |
+| SAFE-09 | `guard.rs::an_open_sqlite_companion_keeps_the_whole_family`, `a_sqlite_family_is_free_once_every_member_is_closed`, `an_unanswered_open_file_probe_keeps_what_no_rule_protects`, `an_open_file_keeps_every_folder_above_it_whatever_the_folder_is_named`, `a_process_that_does_not_list_its_open_files_keeps_what_no_rule_protects`, `a_pass_takes_one_snapshot_of_open_files_and_none_for_a_protected_path`, `guard::open::tests`, `crates/dustpan-sys/tests/open_files.rs` (real snapshot, macOS and Linux), `owners.rs::a_process_keeps_the_folder_it_holds_a_file_open_in` (real `explain`, macOS), `scripts/open-handles-check.sh` (the live machine) |
+| SAFE-10* | `recheck.rs`: `a_swapped_inode_is_refused`, `a_swapped_parent_is_refused`, `a_parent_replaced_by_a_symlink_is_refused`, `a_target_swapped_during_the_owner_probe_is_refused`, `a_file_opened_after_discovery_is_refused_at_the_sink` |
 | SAFE-17* | `crates/dustpan/tests/seams.rs` |
 | SAFE-18 | `Candidate::new` is `pub(crate)`, and `tests/usage.rs` type-checks the executor that shares `recheck` between preview and apply |
 | SAFE-21 | `size::tests::a_partial_size_is_marked_and_an_unknown_size_is_never_zero` |
@@ -408,7 +459,7 @@ Each test fails when its guard is removed. The owner ran one mutation per rule m
 - Does the operator accept the SAFE-05 deviation, refusing every linked ancestor, given that `explain /tmp/x` on macOS prints `Kept · symlinked ancestor /tmp` with the physical path as a hint?
 - Should `explain --json` follow PLAN's envelope (`schema_version`, `command`, `items[]`), with lane 8 reading `.items[0]`? Or should it print one bare object, as lane 8's wording suggests?
 - Is the scan-shaped number the right gate for the 200,000 per second budget? The `explain`-shaped number depends on the machine's vnode cache and swung tenfold between runs here.
-- `recheck` takes one process table per candidate that asks about an owner. Since fix round 2 a macOS table costs about 35 ms on 793 processes (13 ms after round 1, 3 ms before it), because it reads each running bundle's `Info.plist` and asks the kernel for each process's code signature. That is 35 seconds per thousand owned candidates. M0-5 must choose: one table per recheck batch with the identity check still per candidate, or a table that reads only the bundles the batch's owners could match. A cache across batches would reopen SAFE-10.
+- `recheck` takes one process table per candidate that asks about an owner. Since fix round 2 a macOS table costs about 35 ms on 793 processes (13 ms after round 1, 3 ms before it), because it reads each running bundle's `Info.plist` and asks the kernel for each process's code signature. That is 35 seconds per thousand owned candidates. M0-5 must choose: one table per recheck batch with the identity check still per candidate, or a table that reads only the bundles the batch's owners could match. A cache across batches would reopen SAFE-10. Since fix round 3 every recheck also takes one snapshot of open files, 11 to 13 ms on the same host and linear in open descriptors, and the same choice applies to it.
 - The `HOME` variable alone decides which home's rows apply. `HOME=<fixture>` makes the real home's `Documents` eligible. Should home rows anchor at both `$HOME` and the account's home from the user database? Recorded as a hardening follow-up from the adversarial review.
 - Should the binary resolve `HOME` physically before building the guard? On a host where `/home` is a symlink (Fedora Silverblue), every literal home path is otherwise refused as below a linked ancestor.
 - The Linux table is inference, since the inventory did not read Mole's Linux lists. Who confirms it before M9?

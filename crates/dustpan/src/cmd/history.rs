@@ -25,7 +25,7 @@ pub fn run(json: bool, limit: Limit, out: &mut dyn Write) -> Exit {
     let Some(dir) = paths::log_dir(Os::current(), &env) else {
         let _ = writeln!(
             io::stderr(),
-            "dustpan: the home folder is not set, so there is no log folder to read"
+            "dustpan: the home folder is not set or not an absolute path, so there is no log folder to read"
         );
         return Exit::Failed;
     };

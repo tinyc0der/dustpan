@@ -155,3 +155,19 @@ fn a_control_byte_in_the_log_is_escaped_in_text() {
     assert!(text.contains(r"/x/\x1B[31mred"), "{text}");
     assert!(!text.contains('\x1b'));
 }
+
+#[cfg(unix)]
+#[test]
+fn a_relative_home_is_refused_and_no_log_folder_is_named() {
+    let cwd = home();
+    let out = cargo_bin_cmd!("dustpan")
+        .current_dir(cwd.path())
+        .env("HOME", "rel")
+        .env_remove("XDG_STATE_HOME")
+        .arg("history")
+        .assert()
+        .code(1);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains("absolute"), "{stderr}");
+    assert!(out.get_output().stdout.is_empty());
+}

@@ -57,12 +57,15 @@ pub fn cache_dir(os: Os, env: Env) -> Option<PathBuf> {
     }
 }
 
+/// `None` for a relative folder on macOS and Linux: a relative `HOME` would put the log under
+/// whatever folder the command runs in.
 pub fn log_dir(os: Os, env: Env) -> Option<PathBuf> {
-    match os {
-        Os::MacOs => Some(home_dir(os, env)?.join("Library/Logs/dustpan")),
-        Os::Linux => Some(xdg(os, env, "XDG_STATE_HOME", ".local/state")?.join("dustpan")),
-        Os::Windows => Some(var(env, "LOCALAPPDATA")?.join("dustpan").join("logs")),
-    }
+    let dir = match os {
+        Os::MacOs => home_dir(os, env)?.join("Library/Logs/dustpan"),
+        Os::Linux => xdg(os, env, "XDG_STATE_HOME", ".local/state")?.join("dustpan"),
+        Os::Windows => var(env, "LOCALAPPDATA")?.join("dustpan").join("logs"),
+    };
+    (os == Os::Windows || dir.starts_with("/")).then_some(dir)
 }
 
 pub fn cargo_bin_dir(os: Os, env: Env) -> Option<PathBuf> {
@@ -185,6 +188,18 @@ mod tests {
     #[test]
     fn no_home_means_no_log_dir() {
         assert_eq!(log_dir(Os::MacOs, &env(&[])), None);
+    }
+
+    #[test]
+    fn a_relative_home_means_no_log_dir() {
+        for os in [Os::MacOs, Os::Linux] {
+            assert_eq!(log_dir(os, &env(&[("HOME", "rel")])), None, "{os:?}");
+        }
+        let state = env(&[("HOME", "rel"), ("XDG_STATE_HOME", "/s")]);
+        assert_eq!(
+            log_dir(Os::Linux, &state),
+            Some(PathBuf::from("/s/dustpan"))
+        );
     }
 
     #[test]

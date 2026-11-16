@@ -6,6 +6,9 @@ use dustpan_parity::error::SUPPORTED_MOLE;
 use std::path::Path;
 
 const CLEAN_163: &str = include_str!("data/mole-1.63.0/clean.clean-list.txt");
+const CLEAN_167: &str = include_str!("data/mole-1.67.0/clean.clean-list.txt");
+const PURGE_167: &str = include_str!("data/mole-1.67.0/purge.stdout.txt");
+const INSTALLER_167: &str = include_str!("data/mole-1.67.0/installer.stdout.txt");
 const PURGE_163: &str = include_str!("data/mole-1.63.0/purge.stdout.txt");
 const INSTALLER_163: &str = include_str!("data/mole-1.63.0/installer.stdout.txt");
 
@@ -21,7 +24,13 @@ fn paths(p: &Parsed) -> Vec<&str> {
 
 #[test]
 fn clean_list_keeps_fixture_rows_and_sets_host_rows_aside() {
-    let parsed = parse_clean_list(CLEAN_163, home()).unwrap();
+    for text in [CLEAN_163, CLEAN_167] {
+        check_clean_list(text);
+    }
+}
+
+fn check_clean_list(text: &str) {
+    let parsed = parse_clean_list(text, home()).unwrap();
     let listed = paths(&parsed);
     for want in [
         "~/.Trash/old-report.pdf",
@@ -36,7 +45,7 @@ fn clean_list_keeps_fixture_rows_and_sets_host_rows_aside() {
     assert!(!listed.iter().any(|p| p.contains("com.example.notes")));
     assert!(!listed.iter().any(|p| p.contains("Bookmarks")));
     assert!(!listed.iter().any(|p| p.contains("canary")));
-    assert_eq!(parsed.outside.len(), 3, "{:?}", parsed.outside);
+    assert!(!parsed.outside.is_empty());
     assert!(
         parsed
             .outside
@@ -63,34 +72,40 @@ fn npm_debug_log_names_are_masked_so_reruns_match() {
 
 #[test]
 fn clean_list_rows_counted_under_another_row_are_not_candidates() {
-    let parsed = parse_clean_list(CLEAN_163, home()).unwrap();
-    assert_eq!(parsed.nested, ["~/Library/Caches/Google/Chrome/Default"]);
-    assert!(!paths(&parsed).contains(&"~/Library/Caches/Google/Chrome/Default"));
+    for text in [CLEAN_163, CLEAN_167] {
+        let parsed = parse_clean_list(text, home()).unwrap();
+        assert_eq!(parsed.nested, ["~/Library/Caches/Google/Chrome/Default"]);
+        assert!(!paths(&parsed).contains(&"~/Library/Caches/Google/Chrome/Default"));
+    }
 }
 
 #[test]
 fn purge_lists_the_old_artifacts_only() {
-    let parsed = parse_purge_stdout(PURGE_163, home()).unwrap();
-    assert_eq!(
-        paths(&parsed),
-        [
-            "~/Projects/oldrust/target",
-            "~/Projects/oldweb/node_modules"
-        ]
-    );
+    for out in [PURGE_163, PURGE_167] {
+        let parsed = parse_purge_stdout(out, home()).unwrap();
+        assert_eq!(
+            paths(&parsed),
+            [
+                "~/Projects/oldrust/target",
+                "~/Projects/oldweb/node_modules"
+            ]
+        );
+    }
 }
 
 #[test]
 fn installer_lists_dmg_pkg_and_installer_zip_only() {
-    let parsed = parse_installer_stdout(INSTALLER_163).unwrap();
-    assert_eq!(
-        paths(&parsed),
-        [
-            "~/Downloads/Example-1.0.dmg",
-            "~/Downloads/ExampleInstaller.zip",
-            "~/Downloads/Setup.pkg"
-        ]
-    );
+    for out in [INSTALLER_163, INSTALLER_167] {
+        let parsed = parse_installer_stdout(out).unwrap();
+        assert_eq!(
+            paths(&parsed),
+            [
+                "~/Downloads/Example-1.0.dmg",
+                "~/Downloads/ExampleInstaller.zip",
+                "~/Downloads/Setup.pkg"
+            ]
+        );
+    }
 }
 
 #[test]

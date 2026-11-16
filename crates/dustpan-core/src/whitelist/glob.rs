@@ -118,6 +118,9 @@ impl Glob {
         let Some(text) = name.to_str() else {
             return Ok(None);
         };
+        if !text.contains(['*', '?', '[', '\\']) {
+            return Ok(None);
+        }
         let text: Cow<'_, str> = if fold_case {
             Cow::Owned(text.nfc().collect())
         } else {

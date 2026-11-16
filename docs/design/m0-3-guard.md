@@ -435,27 +435,29 @@ A config path the guard cannot take, such as an `XDG_CONFIG_HOME` with `..`, sto
 
 ### Parsing an entry
 
-A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load.
+A leading `~`, `$HOME` or `${HOME}` ends at a separator or at the end of the line, and every separator after it is dropped. `~//x` is the home's `x`, never `/x`. `$HOMEX/y` is not expanded, so it is a relative path and stops the load. On Windows, `~/D:\work` would name another drive, so it stops the load too.
 
-Each name of an entry is matched as Mole matches it with `[[ $path == $pattern ]]`:
+Mole matches an entry with `[[ $path == $pattern ]]`, and its commands export `LC_ALL=C` (`bin/clean.sh:15`). Its `?` and `[...]` therefore take one byte, and its classes hold ASCII only. A name of a dustpan entry matches when any of these holds:
 
-- `*` is any run of characters inside one name. Mole's `*` also crosses `/`. An earlier decision row keeps it inside one name.
-- `?` is one character. `[...]` is one character from a set, with ranges, `!` or `^` negation, and the POSIX classes. `\` takes the next character as written.
-- A `[` with no closing `]` is a plain character, as in a shell.
-- A name with a wildcard also matches its own text, as Mole's quoted comparison does. An entry for a folder named `[2020] Album` keeps that folder.
-- An unknown class, a range that runs backwards, and `[=e=]` or `[.e.]` stop the load and name the line. Mole's shell would read them another way, so a silent guess could keep less.
+1. Its bytes match the pattern under those C-locale rules, as Mole's would. `caf??` keeps an NFC `café`, whose `é` is two bytes.
+2. Its fold key equals the entry's text folded, as Mole's quoted comparison does. An entry for a folder named `[2020] Album` keeps that folder.
+3. Its fold key matches the pattern with `?` and `[...]` taking one character and the combining marks after it. `caf?` keeps `café` in either normalization form, and `Stra?e` keeps `STRAßE`.
+
+The first is Mole's meaning. The other two only add names. In every form, `*` is any run inside one name: Mole's `*` also crosses `/`, and an earlier decision row keeps it inside one name. Sets take ranges, `!` or `^` negation, the POSIX classes, and `[=e=]` or `[.e.]` for one character, as the C locale reads them. `\` takes the next byte as written. A `[` with no closing `]` is a plain character, as in a shell.
+
+An unknown class, a range that runs backwards, and `[=ab=]` or `[.ab.]` stop the load and name the line. The C locale has no element of more than one character, so dustpan cannot say what Mole would match.
 
 ### Every spelling of an entry
 
 `Guard::new` resolves each entry once through the probe, the way layer 4 binds its anchors.
 
 1. The leading names that hold no wildcard are walked from the root with `lstat`. A link is followed with `probe::physical`, the last name included. Everything inside a link to a folder lies in that folder, so the entry keeps the target too.
-2. The walk stops at the first name that does not exist. The physical path found so far is spelled as stored (`Probe::spelling`). If the probe cannot answer, the physical path stands, and folding still meets its case and normalization aliases.
+2. The walk stops at the first name that does not exist. The physical path found so far is spelled as stored (`Probe::spelling`). The probe resolves aliases folding cannot meet, such as Windows 8.3 short names, so a spelling it cannot give stops the guard build like an unreadable folder.
 3. The entry goes into the trie twice, under the data-volume firmlink mapping (`Policy::canonical`). One copy is as written. The other is the found path, with the rest of the entry appended as written. The found names come from disk, so they go in as plain names even when they hold `*` or `[`.
 
 Both copies carry the same entry index, so a hit names the entry as the user wrote it. Every folder above either copy is kept as `contains-whitelisted`. This covers `/tmp/x` judged as `/private/tmp/x`, Fedora Atomic's `/home` link to `/var/home`, and an entry spelled `/System/Volumes/Data/...`.
 
-A `lstat` that cannot answer (`EACCES`, `EIO`) stops the guard build with `PolicyError::AnchorUnreadable` naming the entry, as a protected anchor does. Keeping only the written spelling would protect less than the user wrote if the unreadable name were a link.
+An `lstat` that cannot answer (`EACCES`, `EIO`) stops the guard build with `PolicyError::AnchorUnreadable` naming the entry, as a protected anchor does. Keeping only the written spelling would protect less than the user wrote if the unreadable name were a link.
 
 Layer 5 binds no file identity. A Linux bind mount of a whitelisted folder at another path is not kept by this layer. Layer 1 refuses every path below a linked ancestor, so a scanner never judges a spelling through a link.
 
@@ -479,7 +481,7 @@ The key has to meet every name the volume treats as the same. Matching more can 
 
 The resolution through `Probe::spelling` already meets any spelling the volume itself accepts for an existing name. The fold matters for names after a wildcard and for names that do not exist yet.
 
-A set compares both cases of the folded character, because the folded name no longer says which case Mole would have seen. A negated set therefore also matches a letter it names in another case: `com.[!z]oo.bar` keeps `com.zoo.bar` on macOS. That keeps more than Mole, never less.
+In the key form, a set compares both cases of the folded character, because the folded name no longer says which case Mole would have seen. A negated set therefore also matches a letter it names in another case: `com.[!z]oo.bar` keeps `com.zoo.bar` on macOS. That keeps more than Mole, never less.
 
 On Linux the key is the name's bytes. ext4 compares bytes, so an NFC entry does not keep an NFD folder there, and the two are different files.
 
@@ -493,5 +495,5 @@ A `Pass` keeps one trie position per ancestor frame, as before. Resolution costs
 
 - `Policy::from_table` builds the whitelist after `verified_firmlinks`, because resolution needs `canonical`. The struct starts with `Whitelisted::empty`.
 - `Whitelisted::compile` takes the probe and `canonical` and returns `Result<_, PolicyError>`. `Guard::new` can now fail with `AnchorUnreadable` for a whitelist entry.
-- `whitelist::LoadError::BadEntry` carries `EntryError` (`Shape` or `Glob`) in place of `ShapeError`.
+- `whitelist::LoadError::BadEntry` carries `EntryError` (`Shape`, `Glob` or `OutsideHome`) in place of `ShapeError`.
 - `protect/names.rs`, `guard/pass.rs` and `guard/verdict.rs` are unchanged by the fix round.

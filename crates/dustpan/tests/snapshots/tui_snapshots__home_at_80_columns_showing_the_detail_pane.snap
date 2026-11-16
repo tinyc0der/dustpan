@@ -7,12 +7,12 @@ expression: screen(&s)
 
  Uninstall
 
- Remove apps completely
+ Remove an app and its leftovers
 
- Status  Coming in M5
+ Status  Arrives in M5
  Key     2
 
-
+ Press Enter to see what it will do.
 
 
 
@@ -25,4 +25,4 @@ expression: screen(&s)
 
 
 ────────────────────────────────────────────────────────────────────────────────
- ↑↓ Move  Enter Open  1-9 Jump  Tab Detail  , Settings  ? Help  q Quit
+ ↑↓ Move  Enter Open  0-9 Jump  Tab Detail  , Settings  ? Help  q Quit

@@ -1,0 +1,693 @@
+//! The About, History and Check screens drawn into a test terminal, against a fixture home.
+use dustpan::tui::app::{Size, State, update, view};
+use dustpan::tui::facts::{Environment, Facts};
+use dustpan::tui::keys::Input;
+use dustpan::tui::theme::Look;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use ratatui::style::Color;
+use unicode_width::UnicodeWidthStr;
+
+fn unicode() -> Look {
+    Look::new(false, true)
+}
+
+fn draw(state: &State) -> Buffer {
+    let backend = TestBackend::new(state.size.width, state.size.height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| view(state, frame)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn screen(state: &State) -> String {
+    let buffer = draw(state);
+    let width = buffer.area.width as usize;
+    (0..buffer.area.height as usize)
+        .map(|y| {
+            let mut row = String::new();
+            let mut skip = 0;
+            for x in 0..width {
+                if skip > 0 {
+                    skip -= 1;
+                    continue;
+                }
+                let symbol = buffer[(x as u16, y as u16)].symbol();
+                skip = symbol.width().saturating_sub(1);
+                row.push_str(symbol);
+            }
+            row.trim_end().to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn after(state: State, inputs: &[Input]) -> State {
+    inputs.iter().cloned().fold(state, update)
+}
+
+fn type_in(state: State, text: &str) -> State {
+    text.chars().fold(state, |s, c| update(s, Input::Text(c)))
+}
+
+fn env_for(home: &std::path::Path) -> Environment {
+    let home = home.to_string_lossy().into_owned();
+    Environment::fixed(&[
+        ("HOME", home.clone()),
+        ("USERPROFILE", home.clone()),
+        ("APPDATA", format!("{home}/AppData/Roaming")),
+        ("LOCALAPPDATA", format!("{home}/AppData/Local")),
+    ])
+}
+
+fn canonical_home() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let root = if cfg!(windows) {
+        dir.path().to_path_buf()
+    } else {
+        dir.path().canonicalize().unwrap()
+    };
+    (dir, root)
+}
+
+fn state(look: Look, width: u16, height: u16, env: Environment) -> State {
+    State::new(look, Facts { volume: None, env }, Size { width, height })
+}
+
+const LOG: &[u8] = b"\n# ========== clean run=20261116094500-42-9f3a session started at 2026-11-16 09:45:00 +0700 ==========\n\
+[2026-11-16 09:45:01] [clean run=20261116094500-42-9f3a] REMOVED /home/a/Library/Caches/com.example.app/Cache.db (sink=delete size=1500000)\n\
+[2026-11-16 09:45:01] [clean run=20261116094500-42-9f3a] SKIPPED /home/a/Library/Caches/com.example.busy (sink=trash reason=owner-running)\n\
+# ========== clean run=20261116094500-42-9f3a session ended at 2026-11-16 09:45:02, 1 items, 1.5 MB ==========\n";
+
+fn home_with_log(log: Option<&[u8]>) -> (tempfile::TempDir, Environment) {
+    let (dir, root) = canonical_home();
+    let env = env_for(&root);
+    if let Some(log) = log {
+        let folder =
+            dustpan_core::paths::log_dir(dustpan_core::paths::Os::current(), &|name| env.get(name))
+                .unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("operations.log"), log).unwrap();
+    }
+    (dir, env)
+}
+
+/// The log line names the fixture folder, which differs on every run.
+fn masked(screen: String) -> String {
+    screen
+        .lines()
+        .map(|line| {
+            if line.starts_with(" Log: ") {
+                " Log: <fixture>".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn history(look: Look, width: u16, height: u16, env: Environment) -> State {
+    after(
+        state(look, width, height, env),
+        &[Input::Jump(9), Input::Open],
+    )
+}
+
+fn check(look: Look, width: u16, height: u16, env: Environment) -> State {
+    after(
+        state(look, width, height, env),
+        &[Input::Jump(0), Input::Open],
+    )
+}
+
+fn no_env() -> Environment {
+    Environment::fixed(&[])
+}
+
+#[test]
+fn history_with_a_log_at_120_columns() {
+    let (_home, env) = home_with_log(Some(LOG));
+    insta::assert_snapshot!(masked(screen(&history(unicode(), 120, 36, env))));
+}
+
+#[test]
+fn history_with_a_log_at_60_columns() {
+    let (_home, env) = home_with_log(Some(LOG));
+    insta::assert_snapshot!(masked(screen(&history(unicode(), 60, 16, env))));
+}
+
+#[test]
+fn history_with_no_log_says_nothing_has_been_cleaned() {
+    let (home, env) = home_with_log(None);
+    let text = screen(&history(unicode(), 80, 24, env));
+    assert!(text.contains("Nothing has been cleaned yet."), "{text}");
+    assert!(text.contains("Every removal dustpan makes will show up here."));
+    assert!(text.contains("dustpan › Home › History"));
+    assert_eq!(
+        std::fs::read_dir(home.path()).unwrap().count(),
+        0,
+        "opening History created something in the home"
+    );
+    insta::assert_snapshot!(masked(text));
+}
+
+#[test]
+fn about_pages_at_the_smallest_size_and_wide() {
+    insta::assert_snapshot!(
+        "about_installers_at_60_columns",
+        screen(&after(
+            state(unicode(), 60, 16, no_env()),
+            &[Input::Jump(7), Input::Open]
+        ))
+    );
+    insta::assert_snapshot!(
+        "about_clean_at_120_columns",
+        screen(&after(state(unicode(), 120, 36, no_env()), &[Input::Open]))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn check_starts_with_a_placeholder_and_a_promise_to_only_read() {
+    let (_home, env) = home_with_log(None);
+    let text = screen(&check(unicode(), 80, 24, env));
+    assert!(
+        text.contains("Type a path, e.g. ~/Library/Caches"),
+        "{text}"
+    );
+    assert!(text.contains("Nothing is changed or removed"));
+    assert!(text.contains("dustpan › Home › Check a path"));
+    insta::assert_snapshot!(text);
+}
+
+#[cfg(unix)]
+#[test]
+fn check_shows_typed_text_and_stacks_two_verdicts_newest_first() {
+    let (_dir, root) = canonical_home();
+    std::fs::create_dir_all(root.join("scratch")).unwrap();
+    let env = env_for(&root);
+    let s = check(unicode(), 120, 36, env);
+    let typing = type_in(s.clone(), "~/qu");
+    assert!(
+        screen(&typing).contains("Path  ~/qu"),
+        "{}",
+        screen(&typing)
+    );
+    let s = type_in(s, "~/scratch");
+    let s = update(s, Input::Open);
+    let protected = if cfg!(windows) { "C:\\Windows" } else { "/usr" };
+    let s = type_in(s, protected);
+    let s = update(s, Input::Open);
+    let text = screen(&s);
+    let kept = text.find("Kept").unwrap();
+    let eligible = text.find("Eligible").unwrap();
+    assert!(kept < eligible, "newest first: {text}");
+    assert!(text.contains("dustpan may clean this when Clean arrives"));
+}
+
+#[cfg(unix)]
+#[test]
+fn check_at_the_smallest_size_keeps_the_field_and_a_result() {
+    let (_home, env) = home_with_log(None);
+    let protected = if cfg!(windows) { "C:\\Windows" } else { "/usr" };
+    let s = check(unicode(), 60, 16, env);
+    let s = update(type_in(s, protected), Input::Open);
+    let text = screen(&s);
+    assert!(text.contains("Path"), "{text}");
+    assert!(text.contains("Kept"), "{text}");
+    assert!(
+        text.lines().last().unwrap().contains("Enter Check"),
+        "{text}"
+    );
+}
+
+#[cfg(unix)]
+fn check_results(state: &State) -> Vec<dustpan::check::Checked> {
+    use dustpan::tui::app::Screen;
+    match &state.screen {
+        Screen::Check(view) => view.results.clone(),
+        other => panic!("not on Check: {other:?}"),
+    }
+}
+
+/// The lines of the results pane, after the rule under the note.
+#[cfg(unix)]
+fn results_pane(text: &str) -> Vec<&str> {
+    let rule = |l: &&str| !l.is_empty() && l.chars().all(|c| c == '\u{2500}');
+    let second = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| rule(l))
+        .nth(1)
+        .map(|(i, _)| i)
+        .unwrap();
+    text.lines().skip(second + 1).collect()
+}
+
+/// The path a result shows: the lines above its verdict, put back together.
+#[cfg(unix)]
+fn judged_path(text: &str) -> String {
+    let pane = results_pane(text);
+    let verdict = pane
+        .iter()
+        .position(|l| l.trim_start().starts_with("Eligible") || l.trim_start().starts_with("Kept"))
+        .unwrap();
+    pane[..verdict].iter().map(|l| &l[1..]).collect()
+}
+
+fn squeezed(text: &str) -> String {
+    text.replace('\u{2502}', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pasted_escaped_path_with_a_trailing_space_is_checked_as_the_real_path() {
+    let (_dir, root) = canonical_home();
+    let env = env_for(&root);
+    let pasted = format!("{}/My\\ Folder ", root.display());
+    for width in [60, 120] {
+        let s = check(unicode(), width, 24, env.clone());
+        let s = update(s, Input::Paste(pasted.clone()));
+        let text = screen(&s);
+        assert_eq!(
+            judged_path(&text).replace(' ', ""),
+            format!("{}/My Folder", root.display()).replace(' ', ""),
+            "{text}"
+        );
+        assert!(text.contains("Eligible"), "{text}");
+    }
+}
+
+#[cfg(unix)]
+fn write_whitelist(root: &std::path::Path, body: &str) {
+    let dir = root.join(".config").join("dustpan");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("whitelist"), body).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_paste_of_two_paths_gets_one_result_for_each_and_never_a_glued_path() {
+    let (_dir, root) = canonical_home();
+    write_whitelist(&root, "~/keepme\n");
+    let (scratch, keepme) = (root.join("scratch"), root.join("keepme"));
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::create_dir_all(&keepme).unwrap();
+    let env = env_for(&root);
+    for pasted in [
+        format!("{}\n{}", scratch.display(), keepme.display()),
+        format!("{} {} ", scratch.display(), keepme.display()),
+    ] {
+        let s = check(unicode(), 120, 36, env.clone());
+        let s = update(s, Input::Paste(pasted.clone()));
+        let paths: Vec<_> = check_results(&s).iter().map(|r| r.path.clone()).collect();
+        assert_eq!(
+            paths,
+            [scratch.display().to_string(), keepme.display().to_string()],
+            "{pasted:?}"
+        );
+        let text = screen(&s);
+        let eligible = text.find("Eligible").expect(&text);
+        let kept = text.find("Kept").expect(&text);
+        assert!(eligible < kept, "paste order, scratch then keepme: {text}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_edit_to_the_whitelist_is_seen_by_the_next_check_on_the_same_screen() {
+    let (_dir, root) = canonical_home();
+    std::fs::create_dir_all(root.join("keepme")).unwrap();
+    let env = env_for(&root);
+    let folder = format!("{}/keepme", root.display());
+    let s = check(unicode(), 120, 36, env);
+    let s = update(type_in(s, &folder), Input::Open);
+    assert!(screen(&s).contains("Eligible"), "{}", screen(&s));
+    write_whitelist(&root, "~/keepme\n");
+    let s = update(type_in(s, &folder), Input::Open);
+    assert!(
+        check_results(&s)[0].verdict.kept().is_some(),
+        "{}",
+        screen(&s)
+    );
+    write_whitelist(&root, "\n");
+    let s = update(type_in(s, &folder), Input::Open);
+    assert!(
+        check_results(&s)[0].verdict.kept().is_none(),
+        "an edit that removes the entry is seen too"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_check_error_wraps_so_its_cause_shows_at_every_width() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_dir, root) = canonical_home();
+    write_whitelist(&root, "~/keepme\n");
+    let file = root.join(".config").join("dustpan").join("whitelist");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::File::open(&file).is_ok() {
+        return;
+    }
+    let env = env_for(&root);
+    for width in [60, 80, 100] {
+        let s = check(unicode(), width, 24, env.clone());
+        let s = update(type_in(s, "/usr"), Input::Open);
+        let text = screen(&s);
+        let flat = squeezed(&text);
+        assert!(
+            flat.contains("nothing is cleaned until it can be read"),
+            "{width}: {text}"
+        );
+        assert!(flat.contains("Permission denied"), "{width}: {text}");
+        assert!(text.lines().all(|l| l.width() <= width as usize));
+    }
+}
+
+#[test]
+fn every_help_overlay_and_the_empty_check_hint_fit_at_the_smallest_size() {
+    use dustpan::tui::home::ENTRIES;
+    use dustpan::tui::keys::Help;
+    let (_home, env) = home_with_log(None);
+    let open = |s: State| update(s, Input::Help);
+    let home = state(unicode(), 60, 16, env.clone());
+    let about = after(home.clone(), &[Input::Jump(3), Input::Open]);
+    let history = history(unicode(), 60, 16, env.clone());
+    let check_screen = check(unicode(), 60, 16, env.clone());
+    for (help, s) in [
+        (Help::Home, home),
+        (Help::About, about),
+        (Help::History, history),
+        (Help::Check, check_screen.clone()),
+    ] {
+        let text = squeezed(&screen(&open(s)));
+        for doc in help.docs() {
+            assert!(
+                text.contains(doc.action),
+                "{help:?}: {} in {text}",
+                doc.action
+            );
+        }
+        if help == Help::Home {
+            for entry in ENTRIES {
+                let jump = format!("{} {}", entry.key, entry.label);
+                assert!(text.contains(&jump), "{help:?}: {jump} in {text}");
+            }
+        }
+    }
+    let empty = squeezed(&screen(&check_screen));
+    assert!(
+        empty.contains("Drag a file in, or paste a path, to check it at once."),
+        "{empty}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_typed_backslash_is_part_of_the_path_but_a_pasted_one_is_an_escape() {
+    let (_dir, root) = canonical_home();
+    let env = env_for(&root);
+    let typed = format!("{}/back\\slash", root.display());
+    let s = check(unicode(), 120, 36, env.clone());
+    let s = update(type_in(s, &typed), Input::Open);
+    assert_eq!(check_results(&s)[0].path, typed);
+    let s = check(unicode(), 120, 36, env);
+    let s = update(s, Input::Paste(typed.clone()));
+    assert_eq!(
+        check_results(&s)[0].path,
+        format!("{}/backslash", root.display())
+    );
+}
+
+#[test]
+fn ascii_mode_draws_only_ascii_and_no_color_draws_no_color_on_every_screen() {
+    let (_home, env) = home_with_log(Some(LOG));
+    for look in [Look::new(true, true), Look::new(false, false)] {
+        for key in [3u8, 9, 0] {
+            let s = after(
+                state(look, 80, 24, env.clone()),
+                &[Input::Jump(key), Input::Open],
+            );
+            let s = if key == 0 {
+                update(type_in(s, "/usr"), Input::Open)
+            } else {
+                s
+            };
+            if look.glyphs.hline == "-" {
+                assert!(screen(&s).is_ascii(), "{}", screen(&s));
+            } else {
+                for cell in draw(&s).content() {
+                    assert_eq!((cell.fg, cell.bg), (Color::Reset, Color::Reset));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn every_screen_has_its_own_footer_and_help() {
+    let (_home, env) = home_with_log(None);
+    let footer = |s: &State| screen(s).lines().last().unwrap().to_string();
+    let home = state(unicode(), 120, 36, env.clone());
+    assert!(footer(&home).contains("Enter Open"));
+    let about = after(home, &[Input::Open]);
+    assert!(footer(&about).contains("Esc Back") && footer(&about).contains("0 9 Try it now"));
+    let history = history(unicode(), 120, 36, env.clone());
+    assert!(footer(&history).contains("Esc Back") && footer(&history).contains("Scroll"));
+    let check = check(unicode(), 120, 36, env);
+    assert!(footer(&check).contains("Enter Check") && footer(&check).contains("F1 Help"));
+    for (s, title) in [
+        (&about, "Help for About"),
+        (&history, "Help for History"),
+        (&check, "Help for Check a path"),
+    ] {
+        assert!(
+            screen(&update(s.clone(), Input::Help)).contains(title),
+            "{title}"
+        );
+    }
+}
+
+#[test]
+fn every_screen_fits_its_rows_in_the_window_from_60_to_140_columns() {
+    let (_home, env) = home_with_log(Some(LOG));
+    for width in (60..=140u16).step_by(10) {
+        for opening in [[Input::Jump(7)], [Input::Jump(9)], [Input::Jump(0)]] {
+            let s = after(
+                state(unicode(), width, 16, env.clone()),
+                &[opening[0].clone(), Input::Open],
+            );
+            for line in screen(&s).lines() {
+                assert!(line.width() <= width as usize, "{width}: {line}");
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+mod pasted_paths {
+    use super::*;
+    use dustpan::tui::app::Screen;
+
+    const UNMATCHED: &str = "This paste has an unmatched quote.";
+    const AMBIGUOUS: &str = "This looks like several paths, or one path with spaces.";
+
+    enum Want<'a> {
+        Paths(&'a [&'a str]),
+        Message(&'a str),
+        Nothing,
+    }
+
+    /// A fixture home with a whitelisted `keepme`, a plain `scratch`, and folders whose names
+    /// need quoting.
+    fn fixture() -> (tempfile::TempDir, std::path::PathBuf, Environment) {
+        let (dir, root) = canonical_home();
+        write_whitelist(&root, "~/keepme\n");
+        for name in [
+            "scratch",
+            "keepme",
+            "one",
+            "two",
+            "with space",
+            "My Folder (1)",
+            "it's here",
+            "back\\slash",
+            "a ",
+        ] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let env = env_for(&root);
+        (dir, root, env)
+    }
+
+    fn view_of(state: &State) -> &dustpan::tui::check::CheckView {
+        match &state.screen {
+            Screen::Check(view) => view,
+            other => panic!("not on Check: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_paste_is_checked_at_once_by_the_shell_word_rules_and_never_guessed() {
+        let (_dir, root, env) = fixture();
+        let h = root.display().to_string();
+        let cases: Vec<(&str, String, Want)> = vec![
+            (
+                "two single-quoted paths",
+                format!("'{h}/scratch' '{h}/keepme' "),
+                Want::Paths(&["$H/scratch", "$H/keepme"]),
+            ),
+            (
+                "two double-quoted paths",
+                format!("\"{h}/scratch\" \"{h}/keepme\""),
+                Want::Paths(&["$H/scratch", "$H/keepme"]),
+            ),
+            (
+                "escapes mixed with a quote",
+                format!("{h}/My\\ Folder\\ \\(1\\) '{h}/keepme'"),
+                Want::Paths(&["$H/My Folder (1)", "$H/keepme"]),
+            ),
+            (
+                "a missing path with a space is not split",
+                format!("{h}/Backup ~2024"),
+                Want::Message(AMBIGUOUS),
+            ),
+            (
+                "an existing folder with a space, unquoted, is one path",
+                format!("{h}/with space"),
+                Want::Paths(&["$H/with space"]),
+            ),
+            (
+                "a missing path with a space, unquoted, is refused",
+                format!("{h}/missing folder"),
+                Want::Message(AMBIGUOUS),
+            ),
+            (
+                "two existing paths split by a space are two paths",
+                format!("{h}/one {h}/two"),
+                Want::Paths(&["$H/one", "$H/two"]),
+            ),
+            (
+                "the folder `a ` with a missing child is refused",
+                format!("{h}/a /c"),
+                Want::Message(AMBIGUOUS),
+            ),
+            (
+                "tilde words expand",
+                "~/scratch ~/keepme".to_owned(),
+                Want::Paths(&["$H/scratch", "$H/keepme"]),
+            ),
+            (
+                "tilde in a quoted word expands",
+                "'~/one' \"~/two\"".to_owned(),
+                Want::Paths(&["$H/one", "$H/two"]),
+            ),
+            (
+                "lines are separate paths, in order",
+                format!("{h}/scratch\n{h}/keepme\r\n\n  \n{h}/one"),
+                Want::Paths(&["$H/scratch", "$H/keepme", "$H/one"]),
+            ),
+            (
+                "an escaped apostrophe",
+                format!("{h}/it\\'s\\ here"),
+                Want::Paths(&["$H/it's here"]),
+            ),
+            (
+                "an apostrophe inside double quotes",
+                format!("\"{h}/it's here\""),
+                Want::Paths(&["$H/it's here"]),
+            ),
+            (
+                "a pasted backslash escapes",
+                format!("{h}/back\\\\slash"),
+                Want::Paths(&["$H/back\\slash"]),
+            ),
+            (
+                "single quotes keep a backslash literal",
+                format!("'{h}/back\\slash'"),
+                Want::Paths(&["$H/back\\slash"]),
+            ),
+            (
+                "an unmatched single quote",
+                format!("'{h}/scratch"),
+                Want::Message(UNMATCHED),
+            ),
+            (
+                "an unmatched double quote after a good word",
+                format!("{h}/one \"{h}/two"),
+                Want::Message(UNMATCHED),
+            ),
+            ("an empty paste", String::new(), Want::Nothing),
+            ("a blank paste", " \t\n  \r\n".to_owned(), Want::Nothing),
+        ];
+        for (name, pasted, want) in cases {
+            let s = check(unicode(), 120, 36, env.clone());
+            let s = update(s, Input::Paste(pasted.clone()));
+            let view = view_of(&s);
+            assert!(
+                view.input.is_empty(),
+                "{name}: a paste never joins the field"
+            );
+            let paths: Vec<String> = view
+                .results
+                .iter()
+                .map(|r| r.path.replace(&h, "$H"))
+                .collect();
+            match want {
+                Want::Paths(expected) => {
+                    assert_eq!(paths, expected, "{name}: {pasted:?}");
+                    assert_eq!(view.error, None, "{name}");
+                }
+                Want::Message(text) => {
+                    assert!(paths.is_empty(), "{name}: checked {paths:?}");
+                    let message = view.error.as_deref().unwrap_or("");
+                    assert!(message.contains(text), "{name}: {message:?}");
+                }
+                Want::Nothing => {
+                    assert!(paths.is_empty() && view.error.is_none(), "{name}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_quoted_pair_gives_scratch_eligible_and_keepme_kept() {
+        let (_dir, root, env) = fixture();
+        let h = root.display();
+        let s = check(unicode(), 120, 36, env);
+        let s = update(s, Input::Paste(format!("'{h}/scratch' '{h}/keepme' ")));
+        let results = check_results(&s);
+        assert!(results[0].verdict.kept().is_none(), "scratch is eligible");
+        assert!(results[1].verdict.kept().is_some(), "keepme is whitelisted");
+    }
+
+    #[test]
+    fn two_pastes_before_enter_are_two_checks_and_typed_text_is_left_alone() {
+        let (_dir, root, env) = fixture();
+        let h = root.display();
+        let s = check(unicode(), 120, 36, env);
+        let s = type_in(s, "half a pa");
+        let s = update(s, Input::Paste(format!("{h}/scratch")));
+        let s = update(s, Input::Paste(format!("{h}/keepme")));
+        let paths: Vec<_> = check_results(&s).iter().map(|r| r.path.clone()).collect();
+        assert_eq!(paths, [format!("{h}/keepme"), format!("{h}/scratch")]);
+        assert_eq!(view_of(&s).input, "half a pa");
+    }
+
+    #[test]
+    fn a_refused_paste_leaves_earlier_results_and_the_field_alone() {
+        let (_dir, root, env) = fixture();
+        let h = root.display();
+        let s = check(unicode(), 120, 36, env);
+        let s = update(s, Input::Paste(format!("{h}/scratch")));
+        let s = type_in(s, "typed");
+        let s = update(s, Input::Paste("'oops".to_owned()));
+        assert_eq!(check_results(&s).len(), 1);
+        assert_eq!(view_of(&s).input, "typed");
+        assert!(screen(&s).contains("unmatched quote"), "{}", screen(&s));
+    }
+}

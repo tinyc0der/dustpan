@@ -4,41 +4,41 @@ expression: "screen(&state(Look::new(true, true), 120, 40))"
 ---
  dustpan > Home                                                                                Macintosh HD  88 GB free
 ------------------------------------------------------------------------------------------------------------------------
-                                                                           |
- > 1  Clean       Coming in M3                                             | Clean
-   2  Uninstall   Coming in M5                                             |
-   3  Analyze     Coming in M1                                             | Free up disk space
-   4  Optimize    Coming in M4                                             |
-   5  Status      Coming in M2                                             | Status  Coming in M3
-  -----------------------------------------------------------------------  | Key     1
-   6  Purge       Coming in M6                                             |
-   7  Installers  Coming in M6                                             |
-   8  Slim        Coming in M7                                             |
-   9  History     Coming in M3                                             |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
-                                                                           |
+ Welcome. Pick a tool with ^v and Enter, or click one.                           |
+                                                                                 | Clean
+ > 1  Clean         Clear caches, logs and leftovers                    soon     |
+   2  Uninstall     Remove an app and its leftovers                     soon     | Clear caches, logs and leftovers
+   3  Analyze       See what is using your disk                         soon     |
+   4  Optimize      Refresh caches and services                         soon     | Status  Arrives in M3
+   5  Status        Watch CPU, memory, disk, battery                    soon     | Key     1
+  ------------------------------------------------------------------------       |
+   6  Purge         Remove old projects' build files                    soon     | Press Enter to see what it will do.
+   7  Installers    Find installer files to delete                      soon     |
+   8  Slim          Trim unused code from apps                          soon     |
+   9  History       Review what past cleanups removed                  ready     |
+   0  Check a path  Ask if dustpan keeps a path                        ready     |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
+                                                                                 |
 
 ------------------------------------------------------------------------------------------------------------------------
- ^v Move  Enter Open  1-9 Jump  , Settings  ? Help  q Quit  Ctrl+C Quit now
+ ^v Move  Enter Open  0-9 Jump  , Settings  ? Help  q Quit  Ctrl+C Quit now

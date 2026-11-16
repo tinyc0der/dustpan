@@ -1,0 +1,29 @@
+---
+source: crates/dustpan/tests/tui_screens.rs
+assertion_line: 181
+expression: text
+---
+ dustpan › Home › Check a path
+────────────────────────────────────────────────────────────────────────────────
+ Path   Type a path, e.g. ~/Library/Caches
+ Enter checks it. Nothing is changed or removed.
+────────────────────────────────────────────────────────────────────────────────
+ Results show here, newest first.
+ Drag a file in, or paste a path, to check it at once.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+ Enter Check  Esc Back  Ctrl+U Clear  ↑↓ Scroll  F1 Help  Ctrl+C Quit now

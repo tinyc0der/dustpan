@@ -369,7 +369,7 @@ This is the largest milestone, because the catalog is curated data. Split it int
 - [ ] Review, Progress and Summary widgets, shared by all later flows. Confirm comes from M1.
 - [ ] `clean --dry-run` writes the preview list. `--json` emits the same items.
 - [ ] The protected-paths editor in Settings and `clean --whitelist`. Hard-safety patterns always merge back in. An unreadable whitelist file stops the run.
-- [ ] The History screen in the TUI, over the `history` command M0-5 built.
+- [x] The History screen in the TUI, over the `history` command M0-5 built. It landed ahead of M3 with the friendly Home (`docs/decisions.md`, 2026-11-16).
 - [ ] Every incident in `safety-invariants.md` section 7 has a fixture test that fails without its guard.
 
 ### M4 Clean (admin) and optimize

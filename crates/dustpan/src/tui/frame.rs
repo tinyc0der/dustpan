@@ -10,7 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
 pub const DETAIL_MIN_WIDTH: u16 = 100;
-const DETAIL_WIDTH: u16 = 44;
+const DETAIL_WIDTH: u16 = 38;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Regions {
@@ -156,6 +156,24 @@ pub fn header_line<'a>(look: &Look, header: &Header, width: usize) -> Line<'a> {
     ])
 }
 
+/// The columns of the breadcrumb at `index` (0 is `Home`), after the leading `dustpan`.
+pub fn crumb_columns(
+    look: &Look,
+    breadcrumb: &[&str],
+    index: usize,
+) -> Option<std::ops::Range<u16>> {
+    let sep = format!(" {} ", look.glyphs.sep).width();
+    let mut start = 1 + "dustpan".width() + sep;
+    for (i, crumb) in breadcrumb.iter().enumerate() {
+        let end = start + crumb.width();
+        if i == index {
+            return Some(start as u16..end as u16);
+        }
+        start = end + sep;
+    }
+    None
+}
+
 fn right_candidates(glyphs: &Glyphs, volume: &BootVolume) -> Vec<String> {
     let free = format!("{} free ", format_size(volume.free_bytes));
     let name = cut_middle(&volume.name, 24, glyphs.ellipsis);
@@ -245,6 +263,14 @@ pub fn cut_middle(text: &str, max: usize, ellipsis: &str) -> String {
     format!("{head}{ellipsis}{tail}")
 }
 
+pub fn pad_end(text: &str, width: usize) -> String {
+    format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
+}
+
+pub fn pad_start(text: &str, width: usize) -> String {
+    format!("{}{text}", " ".repeat(width.saturating_sub(text.width())))
+}
+
 pub fn cut_end(text: &str, max: usize, ellipsis: &str) -> String {
     if text.width() <= max {
         return text.to_string();
@@ -267,21 +293,53 @@ fn take_cells(chars: impl Iterator<Item = char>, budget: usize) -> String {
     out
 }
 
+/// Breaks `text` into lines of at most `width` cells at spaces. A word wider than a line is
+/// broken across lines, so a long path is never cut off.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let word = cut_end(word, width, "");
+        let mut word = word;
+        while word.width() > width {
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            let mut head = take_cells(word.chars(), width);
+            if head.is_empty() {
+                head.extend(word.chars().next());
+            }
+            let taken = head.len();
+            lines.push(head);
+            word = &word[taken..];
+        }
         if !line.is_empty() && line.width() + 1 + word.width() > width {
             lines.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
             line.push(' ');
         }
-        line.push_str(&word);
+        line.push_str(word);
     }
     if !line.is_empty() {
         lines.push(line);
+    }
+    lines
+}
+
+/// Breaks `text` into lines of exactly `width` cells, except the last, with no regard for
+/// spaces, so a path is shown as it is spelled.
+pub fn wrap_exact(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut head = take_cells(rest.chars(), width);
+        if head.is_empty() {
+            head.extend(rest.chars().next());
+        }
+        rest = &rest[head.len()..];
+        lines.push(head);
     }
     lines
 }
@@ -311,6 +369,20 @@ mod tests {
     fn cut_counts_wide_glyphs_as_two_cells() {
         assert_eq!(cut_end("🧹🧹🧹🧹", 5, "…").width(), 5);
         assert!(cut_middle("🧹🧹🧹🧹🧹🧹", 7, "…").width() <= 7);
+    }
+
+    #[test]
+    fn wrap_breaks_a_word_wider_than_the_line_instead_of_cutting_it() {
+        let lines = wrap("see /a/very/long/path ok", 8);
+        assert_eq!(lines, ["see", "/a/very/", "long/pat", "h ok"]);
+        assert_eq!(wrap("abc", 0), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn wrap_exact_keeps_every_character_and_every_space() {
+        let lines = wrap_exact("/a/b  c/日本", 4);
+        assert_eq!(lines, ["/a/b", "  c/", "日本"]);
+        assert_eq!(lines.concat(), "/a/b  c/日本");
     }
 
     #[test]

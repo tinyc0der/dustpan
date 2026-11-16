@@ -1,8 +1,8 @@
 use dustpan::tui::app::{Size, State, update, view};
+use dustpan::tui::facts::{Environment, Facts};
 use dustpan::tui::frame::Pane;
 use dustpan::tui::frame::{self, Header};
-use dustpan::tui::home::ENTRIES;
-use dustpan::tui::home::Facts;
+use dustpan::tui::home::{ENTRIES, Kind};
 use dustpan::tui::keys::{self, Input};
 use dustpan::tui::theme::Look;
 use dustpan_sys::BootVolume;
@@ -18,6 +18,7 @@ fn facts() -> Facts {
             name: "Macintosh HD".to_string(),
             free_bytes: 88_400_000_000,
         }),
+        env: Environment::fixed(&[]),
     }
 }
 
@@ -62,7 +63,7 @@ fn screen(state: &State) -> String {
 }
 
 fn after(state: State, inputs: &[Input]) -> State {
-    inputs.iter().fold(state, |s, input| update(s, *input))
+    inputs.iter().cloned().fold(state, update)
 }
 
 #[test]
@@ -133,41 +134,42 @@ fn header_drops_the_volume_name_before_the_free_space() {
 }
 
 #[test]
-fn home_lists_every_mole_menu_entry_and_every_later_milestone() {
+fn home_lists_every_entry_with_its_blurb_and_a_ready_or_soon_tag() {
     let screen = screen(&state(unicode(), 80, 24));
     for label in ["Clean", "Uninstall", "Optimize", "Analyze", "Status"] {
         assert!(screen.contains(label), "missing {label}");
     }
-    for (label, milestone) in [
-        ("Analyze", 1),
-        ("Status", 2),
-        ("Clean", 3),
-        ("History", 3),
-        ("Optimize", 4),
-        ("Uninstall", 5),
-        ("Purge", 6),
-        ("Installers", 6),
-        ("Slim", 7),
-    ] {
-        let row = screen.lines().find(|l| l.contains(label)).unwrap();
-        assert!(row.contains(&format!("Coming in M{milestone}")), "{row}");
+    assert!(!screen.contains("Coming in"), "{screen}");
+    assert!(screen.contains("Welcome. Pick a tool with ↑↓ and Enter"));
+    for entry in &ENTRIES {
+        let row = screen.lines().find(|l| l.contains(entry.label)).unwrap();
+        assert!(row.contains(entry.blurb), "{row}");
+        let tag = match entry.kind {
+            Kind::Ready(_) => "ready",
+            Kind::Planned { .. } => "soon",
+        };
+        assert!(row.trim_end().ends_with(tag), "{row}");
     }
 }
 
 #[test]
-fn enter_shows_a_toast_and_the_screen_stays_on_home() {
+fn enter_opens_the_about_page_and_esc_returns_to_the_same_row() {
     let s = after(
         state(unicode(), 80, 24),
         &[Input::Down, Input::Down, Input::Open],
     );
-    let screen = screen(&s);
-    assert!(screen.contains("Analyze: Coming in M1"));
-    assert!(screen.contains("dustpan › Home"));
+    let page = screen(&s);
+    assert!(page.contains("dustpan › Home › Analyze"), "{page}");
+    assert!(page.contains("What it will do") && page.contains("Arrives in milestone M1."));
+    assert!(page.contains("Until then: Check a path (0) or History (9)"));
+    let home = screen(&after(s, &[Input::Back]));
+    let marked: Vec<&str> = home.lines().filter(|l| l.contains('➤')).collect();
+    assert!(marked.len() == 1 && marked[0].contains("Analyze"), "{home}");
 }
 
 #[test]
 fn the_cursor_row_shows_an_arrow_not_only_a_style() {
-    let s = after(state(unicode(), 80, 24), &[Input::Down; 4]);
+    let s = after(state(unicode(), 80, 24), &vec![Input::Down; 4]);
     let screen = screen(&s);
     let marked: Vec<&str> = screen.lines().filter(|l| l.contains('➤')).collect();
     assert_eq!(marked.len(), 1);
@@ -179,7 +181,7 @@ fn expected_home_texts(look: &Look, width: u16, pane: Pane) -> Vec<String> {
         "dustpan › Home".to_string(),
         "Macintosh HD  88 GB free".to_string(),
     ];
-    let hints = keys::home_hints(width);
+    let hints = keys::Help::Home.hints(width);
     for hint in frame::visible_hints(&hints, &look.glyphs, width as usize) {
         expected.push(format!("{} {}", hint.keys(&look.glyphs), hint.label));
     }
@@ -187,8 +189,8 @@ fn expected_home_texts(look: &Look, width: u16, pane: Pane) -> Vec<String> {
         let label_width = ENTRIES.iter().map(|e| e.label.len()).max().unwrap();
         for entry in &ENTRIES {
             expected.push(format!(
-                "{}  {:<label_width$}  Coming in M{}",
-                entry.key, entry.label, entry.milestone
+                "{}  {:<label_width$}  {}",
+                entry.key, entry.label, entry.blurb
             ));
         }
     }
@@ -289,10 +291,10 @@ fn tab_swaps_between_the_list_and_the_detail_pane_below_100_columns() {
     let list = after(state(unicode(), 80, 24), &[Input::Down, Input::Down]);
     let detail = after(list.clone(), &[Input::SwapPane]);
     let list_text = screen(&list);
-    assert!(list_text.contains("Uninstall") && !list_text.contains("Explore disk usage"));
+    assert!(list_text.contains("Uninstall") && !list_text.contains("Arrives in M1"));
     let text = screen(&detail);
     assert!(
-        text.contains("Explore disk usage") && !text.contains("Uninstall"),
+        text.contains("Arrives in M1") && !text.contains("Uninstall"),
         "{text}"
     );
     assert!(screen(&after(detail.clone(), &[Input::SwapPane])).contains("Uninstall"));
@@ -316,7 +318,7 @@ fn every_help_row_names_every_home_key() {
     for needle in [
         "↑ ↓ j k",
         "Enter → l",
-        "1..9",
+        "0..9",
         "Tab",
         ",",
         "?",
@@ -324,6 +326,7 @@ fn every_help_row_names_every_home_key() {
         "Wheel, click",
         "Jump keys",
         "9 History",
+        "0 Check a path",
     ] {
         assert!(screen.contains(needle), "help lacks {needle}");
     }
@@ -415,5 +418,8 @@ fn no_color_draws_no_foreground_or_background_color() {
 fn color_mode_uses_color_only_with_a_word_beside_it() {
     let buffer = draw(&after(state(unicode(), 120, 40), &[Input::Open]));
     assert!(buffer.content().iter().any(|cell| cell.fg != Color::Reset));
-    assert!(screen(&after(state(unicode(), 120, 40), &[Input::Open])).contains("Coming in M3"));
+    assert!(
+        screen(&after(state(unicode(), 120, 40), &[Input::Open]))
+            .contains("Arrives in milestone M3")
+    );
 }

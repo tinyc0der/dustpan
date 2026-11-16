@@ -7,7 +7,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Build once: `cargo build --release -p dustpan`. Set `BIN=$PWD/target/release/dustpan` and `V=.claude/skills/verify/scripts/pty-drive.sh`.
 - Drive only panes this run started. `pty-drive.sh` uses its own tmux socket, so nothing else is touched.
 - Start each recipe from a fresh pane at 120 by 40 unless the recipe sets another size.
-- Home never scans, so no data directory or seed is needed. M0 ships no cleaning, so no recipe can delete anything.
+- Home never scans, so no data directory or seed is needed. Nothing ships that cleans, so no recipe can delete anything. History and Check only read, and their lanes use fixture homes in the output folder.
 
 ## Driving conventions
 
@@ -25,7 +25,8 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 | File | Feature |
 |---|---|
-| `home.md` | Home list, cursor, number keys, toasts, mouse |
+| `home.md` | Home list, blurbs, tags, cursor, number keys, mouse |
+| `about-history-check.md` | About pages, History, Check a path, paste, per-screen help |
 | `frame-and-resize.md` | Header, footer hint dropping, detail pane, minimum size |
 | `help-overlay.md` | `?` overlay and its border |
 | `terminal-restore.md` | Terminal restored on `q`, `Ctrl+C`, SIGTERM and panic |

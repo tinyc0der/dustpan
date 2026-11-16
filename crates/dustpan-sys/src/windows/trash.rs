@@ -294,8 +294,17 @@ mod tests {
     use crate::windows::delete::tests::{abs, exists, temp};
     use std::ffi::OsStr;
 
+    /// One shell operation at a time: the tests share the user's Recycle Bin, and a file test
+    /// once came back `NoTrash` on windows-11-arm while the folder test ran beside it.
+    static SHELL: Mutex<()> = Mutex::new(());
+
+    fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+        SHELL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn a_file_reaches_the_recycle_bin_as_itself() {
+        let _shell = one_at_a_time();
         let (_dir, base) = temp();
         let file = base.join("recycle-me.txt");
         std::fs::write(&file, b"x").unwrap();
@@ -313,6 +322,7 @@ mod tests {
 
     #[test]
     fn a_folder_reaches_the_recycle_bin_whole() {
+        let _shell = one_at_a_time();
         let (_dir, base) = temp();
         let folder = base.join("recycle-me");
         std::fs::create_dir_all(&folder).unwrap();
@@ -328,6 +338,7 @@ mod tests {
 
     #[test]
     fn an_entry_that_changed_stays_where_it_is() {
+        let _shell = one_at_a_time();
         let (_dir, base) = temp();
         let file = base.join("keep-me.txt");
         std::fs::write(&file, b"x").unwrap();

@@ -1,0 +1,61 @@
+//! Allocated size (SAFE-21). Unknown never renders or sums as 0.
+use std::fmt;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Size {
+    Known(u64),
+    /// A sizing deadline or a permission gap cut the walk short. Renders as `N+`.
+    Partial(u64),
+    Unknown,
+}
+
+/// SI units, as Finder and `diskutil` print them: `999 B`, `1.5 MB`.
+fn si(f: &mut fmt::Formatter<'_>, bytes: u64) -> fmt::Result {
+    const UNITS: [&str; 6] = ["kB", "MB", "GB", "TB", "PB", "EB"];
+    if bytes < 1000 {
+        return write!(f, "{bytes} B");
+    }
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    // 999,950 bytes would print as `1000.0 kB`; it steps up to `1.0 MB` instead.
+    while value >= 999.95 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    write!(f, "{value:.1} {}", UNITS[unit])
+}
+
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Known(bytes) => si(f, bytes),
+            Self::Partial(bytes) => {
+                si(f, bytes)?;
+                f.write_str("+")
+            }
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Size;
+
+    #[test]
+    fn sizes_print_in_si_units() {
+        assert_eq!(Size::Known(0).to_string(), "0 B");
+        assert_eq!(Size::Known(999).to_string(), "999 B");
+        assert_eq!(Size::Known(1000).to_string(), "1.0 kB");
+        assert_eq!(Size::Known(1_500_000).to_string(), "1.5 MB");
+        assert_eq!(Size::Known(999_950).to_string(), "1.0 MB");
+        assert_eq!(Size::Known(u64::MAX).to_string(), "18.4 EB");
+    }
+
+    #[test]
+    fn a_partial_size_is_marked_and_an_unknown_size_is_never_zero() {
+        assert_eq!(Size::Partial(12_300_000_000).to_string(), "12.3 GB+");
+        assert_eq!(Size::Unknown.to_string(), "unknown");
+        assert_ne!(Size::Unknown, Size::Known(0));
+    }
+}

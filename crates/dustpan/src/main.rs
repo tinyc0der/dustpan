@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod cmd;
 mod debug;
 mod exit;
 
@@ -46,6 +47,10 @@ fn main() -> ExitCode {
                 )
             }
         }
+    }
+
+    if let Some(cli::Cmd::Explain { json, paths }) = &cli.command {
+        return cmd::explain::run(paths, *json, &mut std::io::stdout().lock()).into();
     }
 
     // A closed pipe is not an error: write and ignore failure instead of panicking in print macros.

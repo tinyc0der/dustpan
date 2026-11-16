@@ -32,7 +32,6 @@ impl LiveDisk {
 #[cfg(unix)]
 pub struct DirHandle(pub(crate) std::os::fd::OwnedFd);
 #[cfg(windows)]
-#[expect(dead_code, reason = "the Windows sinks are not built yet")]
 pub struct DirHandle(pub(crate) std::os::windows::io::OwnedHandle);
 
 /// `Probe::list`: open by path with no link in any component, then the listing the walk uses.

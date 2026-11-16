@@ -504,7 +504,7 @@ class Lanes:
         home = self.fixture_home("check", dirs=["scratch", "My Folder (1)"])
         self.start_in(home, 120, 40)
         drive("keys", SESSION, "0", "Enter")
-        drive("wait", SESSION, "Type or paste a path", "3")
+        drive("wait", SESSION, "Type a path", "3")
         empty = drive("screen", SESSION)
         drive("keys", SESSION, "q", "j", "1")
         time.sleep(0.2)
@@ -522,29 +522,27 @@ class Lanes:
         drive("wait", SESSION, "Eligible", "3")
         two = drive("screen", SESSION)
         drive("paste", SESSION, home + "/My\\ Folder\\ \\(1\\) ")
-        time.sleep(0.2)
-        pasted_field = drive("screen", SESSION)
-        drive("keys", SESSION, "Enter")
-        time.sleep(0.3)
+        time.sleep(0.4)
         pasted = drive("screen", SESSION)
+        pasted_field = pasted.split("\n")[2]
         drive("keys", SESSION, "Escape")
         time.sleep(0.2)
         back = drive("screen", SESSION)
         drive("stop", SESSION)
-        self.save("check.txt", f"=== open ===\n{empty}\n=== q j 1 typed ===\n{typed}\n{alive}\n=== Ctrl+U ===\n{cleared}\n=== /System Enter ===\n{kept}\n=== ~/scratch Enter ===\n{two}\n=== pasted escaped path ===\n{pasted_field}\n=== Enter ===\n{pasted}\n=== Esc ===\n{back}")
+        self.save("check.txt", f"=== open ===\n{empty}\n=== q j 1 typed ===\n{typed}\n{alive}\n=== Ctrl+U ===\n{cleared}\n=== /System Enter ===\n{kept}\n=== ~/scratch Enter ===\n{two}\n=== pasted escaped path, no Enter ===\n{pasted}\n=== Esc ===\n{back}")
         lines = two.split("\n")
         kept_at = next((i for i, line in enumerate(lines) if "Kept" in line), -1)
         eligible_at = next((i for i, line in enumerate(lines) if "Eligible" in line), -1)
         ok = (
             "Path  qj1" in typed
             and "dead=0" in alive
-            and "Type or paste a path, e.g. ~/Library/Caches" in cleared
+            and "Type a path, e.g. ~/Library/Caches" in cleared
             and re.search(r"Kept +\S", kept)
             and 0 <= eligible_at < kept_at
             and "dustpan may clean this when Clean arrives" in two
             and same_path(result_paths(two)[0], home + "/scratch")
-            and "My Folder (1)" in pasted_field
-            and "My\\ Folder" not in pasted_field
+            and "Type a path, e.g." in pasted_field
+            and "My\\ Folder" not in pasted
             and same_path(result_paths(pasted)[0], home + "/My Folder (1)")
             and "\\" not in result_paths(pasted)[0]
             and "Welcome." in back
@@ -572,7 +570,7 @@ class Lanes:
         time.sleep(0.2)
         small_selected = drive("screen", SESSION)
         drive("click", SESSION, "10", "13")
-        drive("wait", SESSION, "Type or paste a path", "3")
+        drive("wait", SESSION, "Type a path", "3")
         small_opened = drive("screen", SESSION)
         drive("stop", SESSION)
         self.save("mouse.txt", f"=== click row 6 ===\n{selected}\n=== click again ===\n{opened}\n=== click Home crumb ===\n{home}\n=== wheel down x2 ===\n{wheeled}\n=== 60x16 click row 13 ===\n{small_selected}\n=== click again ===\n{small_opened}")
@@ -600,7 +598,7 @@ class Lanes:
     def open_check(self, home, cols, rows):
         self.start_in(home, cols, rows)
         drive("keys", SESSION, "0", "Enter")
-        drive("wait", SESSION, "Type or paste a path", "3")
+        drive("wait", SESSION, "Type a path", "3")
 
     def submit(self):
         drive("keys", SESSION, "Enter")
@@ -619,44 +617,59 @@ class Lanes:
         os.chmod(path, mode)
 
     def lane19(self):
-        home = self.fixture_home("check-many", dirs=["scratch", "keepme", "My Folder (1)"])
+        home = self.fixture_home("check-many", dirs=["scratch", "keepme", "My Folder (1)", "with space", "a "])
         self.write_whitelist(home, "~/keepme\n")
         before = self.listing(home)
-        scratch, keepme = f"{home}/scratch", f"{home}/keepme"
-        self.open_check(home, 120, 40)
+        scratch, keepme, folder = f"{home}/scratch", f"{home}/keepme", f"{home}/My Folder (1)"
+        escaped = f"{home}/My\\ Folder\\ \\(1\\)"
+        cases = {
+            "two lines": ([f"{scratch}\n{keepme}"], [scratch, keepme], None),
+            "terminal two-file drag": ([f"{escaped} {keepme} "], [folder, keepme], None),
+            "single-quoted pair": ([f"'{scratch}' '{keepme}' "], [scratch, keepme], None),
+            "double-quoted pair": ([f'"{scratch}" "{keepme}"'], [scratch, keepme], None),
+            "escapes then a quote": ([f"{escaped} '{keepme}'"], [folder, keepme], None),
+            "two drags before Enter": ([scratch, keepme], [keepme, scratch], None),
+            "plain space, existing": ([f"{home}/with space"], [f"{home}/with space"], None),
+            "plain space, missing": ([f"{home}/Backup ~2024"], [], "This looks like several paths, or one path with spaces. Quote it, or paste one path at a time."),
+            "child of the folder a-space": ([f"{home}/a /c"], [], "This looks like several paths, or one path with spaces."),
+            "unmatched quote": ([f"'{scratch}"], [], "This paste has an unmatched quote. Paste one path at a time, or type it."),
+        }
         captures = {}
-        for name, text in {
-            "two lines": f"{scratch}\n{keepme}",
-            "terminal two-file drag": f"{scratch} {keepme} ",
-            "escaped name then a file": f"{home}/My\\ Folder\\ \\(1\\) {keepme} ",
-            "plain space, existing": f"{home}/My Folder (1)",
-            "plain space, missing": f"{home}/not here",
-        }.items():
-            drive("keys", SESSION, "C-u")
-            drive("paste", SESSION, text)
-            time.sleep(0.2)
-            field = drive("screen", SESSION).split("\n")[2]
-            captures[name] = (field, self.submit())
-        drive("stop", SESSION)
+        for name, (pastes, _, _) in cases.items():
+            self.open_check(home, 120, 40)
+            for text in pastes:
+                drive("paste", SESSION, text)
+                time.sleep(0.3)
+            captures[name] = drive("screen", SESSION)
+            drive("stop", SESSION)
         after = self.listing(home)
-        out = "".join(f"=== {name}: field ===\n{field}\n=== after Enter ===\n{screen}\n" for name, (field, screen) in captures.items())
+        out = "".join(f"=== {name} ===\n{screen}\n" for name, screen in captures.items())
         self.save("check-many.txt", out + f"=== fixture before ===\n{before}\n=== fixture after ===\n{after}\n")
-        top = {name: result_paths(screen) for name, (_, screen) in captures.items()}
-        ok = (
-            all(same_path(a, b) for a, b in zip(top["two lines"][:2], [scratch, keepme]))
-            and all(same_path(a, b) for a, b in zip(top["terminal two-file drag"][:2], [scratch, keepme]))
-            and all(same_path(a, b) for a, b in zip(top["escaped name then a file"][:2], [f"{home}/My Folder (1)", keepme]))
-            and same_path(top["plain space, existing"][0], f"{home}/My Folder (1)")
-            and same_path(top["plain space, missing"][0], f"{home}/not here")
-            and top["plain space, missing"][1:5] == top["plain space, existing"][:4]
-            and top["plain space, existing"][1:5] == top["escaped name then a file"][:4]
-            and len(top["two lines"]) == 2
-            and top["terminal two-file drag"][2:] == top["two lines"]
-            and "Eligible" in captures["two lines"][1]
-            and "Kept" in captures["two lines"][1]
-            and before == after
-        )
-        self.report(19, True if ok else "paste of several paths did not match; see check-many.txt", "Check: a paste of two lines or two dragged files gets one result each, a plain space stays one path, never glued")
+
+        def flat(screen):
+            return " ".join(screen.replace("│", " ").split())
+
+        problems = []
+        for name, (_, expected, message) in cases.items():
+            screen = captures[name]
+            shown = result_paths(screen)
+            if len(shown) != len(expected) or not all(same_path(a, b) for a, b in zip(shown, expected)):
+                problems.append(f"{name}: judged {shown}")
+            if "Type a path, e.g." not in screen.split("\n")[2]:
+                problems.append(f"{name}: the field is not empty")
+            if message and message not in flat(screen):
+                problems.append(f"{name}: no message")
+            if not message and "unmatched" in screen:
+                problems.append(f"{name}: a message was shown")
+        pair = captures["single-quoted pair"]
+        lines = pair.split("\n")
+        eligible_at = next((i for i, line in enumerate(lines) if "Eligible" in line), -1)
+        kept_at = next((i for i, line in enumerate(lines) if re.search(r"Kept +protected by your whitelist", line)), -1)
+        if not 0 <= eligible_at < kept_at:
+            problems.append("the quoted pair is not scratch Eligible then keepme Kept")
+        if before != after:
+            problems.append("the fixture changed")
+        self.report(19, True if not problems else f"paste cases did not match: {problems}; see check-many.txt", "Check: each paste is checked at once by the shell word rules (quotes, escapes, lines, two drags), nothing is glued or guessed, and the field stays empty")
 
     def lane20(self):
         home = self.fixture_home("check-whitelist", dirs=["keepme"])
@@ -711,7 +724,7 @@ class Lanes:
             ),
             "about": (["3", "Enter", "?"], ["Back to Home", "Open Check a path or History now", "Quit now", "? or Esc closes"]),
             "history": (["9", "Enter", "?"], ["Scroll", "Back to Home", "Quit now", "? or Esc closes"]),
-            "check": (["0", "Enter", "F1"], ["Check the path", "Back to Home", "Erase a letter", "Clear the field", "Scroll the results", "Quit now", "Paste a path, or drag one in from Finder", "? or Esc closes"]),
+            "check": (["0", "Enter", "F1"], ["Check the path", "Back to Home", "Erase a letter", "Clear the field", "Scroll the results", "Quit now", "Drag a file in, or paste a path, to check it at once", "? or Esc closes"]),
         }
         shots, missing = {}, []
         for name, (keys, needles) in wanted.items():
@@ -725,10 +738,10 @@ class Lanes:
             drive("stop", SESSION)
         self.start_in(home, 60, 16)
         drive("keys", SESSION, "0", "Enter")
-        drive("wait", SESSION, "Type or paste a path", "3")
+        drive("wait", SESSION, "Type a path", "3")
         shots["check empty"] = drive("screen", SESSION)
         flat = " ".join(shots["check empty"].split())
-        if "Try a folder like ~/Library/Caches, or drag one in from Finder." not in flat:
+        if "Drag a file in, or paste a path, to check it at once." not in flat:
             missing.append("check empty: hint")
         drive("stop", SESSION)
         self.save("small-60x16.txt", "".join(f"=== {name} ===\n{shot}\n" for name, shot in shots.items()))
@@ -740,11 +753,11 @@ class Lanes:
         self.open_check(home, 120, 40)
         by_typing = self.type_and_submit(typed)
         drive("paste", SESSION, typed)
-        time.sleep(0.2)
-        by_pasting = self.submit()
+        time.sleep(0.4)
+        by_pasting = drive("screen", SESSION)
         drive("stop", SESSION)
         self.save("check-backslash.txt", f"=== typed ===\n{by_typing}\n=== pasted ===\n{by_pasting}")
-        ok = same_path(result_paths(by_typing)[0], typed) and "\\" in result_paths(by_typing)[0] and same_path(result_paths(by_pasting)[0], f"{home}/backslash")
+        ok = same_path(result_paths(by_typing)[0], typed) and "\\" in result_paths(by_typing)[0] and same_path(result_paths(by_pasting)[0], f"{home}/backslash") and len(result_paths(by_pasting)) == 2
         self.report(23, True if ok else "typed backslash dropped or pasted one kept; see check-backslash.txt", "Check: a typed backslash is part of the path, a pasted one is an escape")
 
 

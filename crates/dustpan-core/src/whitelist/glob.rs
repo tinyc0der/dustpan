@@ -75,6 +75,7 @@ pub(crate) struct Subject<'a> {
     chars: OnceCell<Vec<char>>,
     one_for_one: OnceCell<Vec<char>>,
     decomposed: OnceCell<Vec<char>>,
+    hangul: OnceCell<Option<Vec<char>>>,
 }
 
 impl<'a> Subject<'a> {
@@ -85,6 +86,7 @@ impl<'a> Subject<'a> {
             chars: OnceCell::new(),
             one_for_one: OnceCell::new(),
             decomposed: OnceCell::new(),
+            hangul: OnceCell::new(),
         }
     }
 
@@ -105,6 +107,38 @@ impl<'a> Subject<'a> {
     fn decomposed_chars(&self) -> &[char] {
         self.decomposed
             .get_or_init(|| String::from_utf8_lossy(self.key).nfd().collect())
+    }
+
+    /// The key with each Hangul syllable that ends in a final consonant split into the
+    /// syllable without it and that consonant: U+AC01 `각` becomes U+AC00 `가` and U+11A8 `ᆨ`,
+    /// which is canonically the same. A precomposed syllable in a set can stop there, where NFD
+    /// would take it apart. `None` when the key has no such syllable.
+    fn hangul_split_chars(&self) -> Option<&[char]> {
+        const SYLLABLES: std::ops::RangeInclusive<u32> = 0xAC00..=0xD7A3;
+        const FINALS: u32 = 28;
+        const NO_FINAL: u32 = 0x11A7;
+        self.hangul
+            .get_or_init(|| {
+                let key = self.key_chars();
+                let finals = |c: char| {
+                    let n = u32::from(c);
+                    let t = if SYLLABLES.contains(&n) {
+                        (n - 0xAC00) % FINALS
+                    } else {
+                        0
+                    };
+                    (t != 0).then(|| (char::from_u32(n - t), char::from_u32(NO_FINAL + t)))
+                };
+                key.iter().any(|&c| finals(c).is_some()).then(|| {
+                    key.iter()
+                        .flat_map(|&c| match finals(c) {
+                            Some((Some(lv), Some(t))) => vec![lv, t],
+                            _ => vec![c],
+                        })
+                        .collect()
+                })
+            })
+            .as_deref()
     }
 }
 
@@ -312,7 +346,10 @@ impl Glob {
                     || self
                         .decomposed
                         .as_ref()
-                        .is_some_and(|p| p.matches(name.decomposed_chars()))))
+                        .is_some_and(|p| p.matches(name.decomposed_chars()))
+                    || name
+                        .hangul_split_chars()
+                        .is_some_and(|split| self.chars.matches(split))))
     }
 }
 

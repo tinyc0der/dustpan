@@ -816,3 +816,22 @@ fn a_space_outside_ascii_at_the_end_of_a_line_stays_in_the_entry() {
     );
     kept(&fs, "~/P/?\u{2002}\n", &[("/Users/alice/P/a\u{2000}", w)]);
 }
+
+/// A precomposed Hangul syllable in a set can stop inside a stored syllable that also has a
+/// final consonant: `[가]ᆨ` spells `각` (U+AC00 then U+11A8 against U+AC01).
+#[test]
+fn a_hangul_syllable_in_a_set_with_its_final_consonant_after_keeps_the_name() {
+    for (name, entry) in [
+        ("cb\u{ac01}t", "cb[\u{ac00}]\u{11a8}t"),
+        ("cb\u{ac01}t", "cb?\u{11a8}t"),
+        ("cc\u{d7a3}", "cc[\u{d788}]\u{11c2}"),
+    ] {
+        let path = format!("/Users/alice/U/{name}");
+        let fs = FakeProbe::new().dir(&path);
+        let got = outcome(&judge(&fs, text(&format!("~/U/{entry}\n")), &path));
+        assert_eq!(
+            got, "whitelist/whitelisted",
+            "entry {entry:?}, name {name:?}"
+        );
+    }
+}

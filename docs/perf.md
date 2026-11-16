@@ -80,3 +80,30 @@ Five runs of each side, alternated (before, after, and so on), 2026-11-16, same 
 **History.** The first working build measured 415,627 for `scan` at a load average near 7. Two changes followed: `*x*` bundle patterns are grouped by first byte, and a cache folder's owner is looked up without building an owner value per file. The same fixture then measured 874,594 at the same load.
 
 **Not measured.** Linux and Windows. A cold fixture. More than one thread: a scan uses one `Pass` per worker, and the passes share nothing but the read-only policy.
+
+## Guard with a 500-line whitelist (M0-4)
+
+**Budget.** The head's `scan` median must not be more than 25 percent below the M0-3 head's (`a2b9f07`), with a 500-line whitelist loaded.
+
+**Probe.** `cargo bench -p dustpan-core --bench guard`, from two exports of the repository in sibling folders with paths of the same length (`side-a` holds `a2b9f07`, `side-b` holds `c5dd004`). The M0-3 bench has no whitelist, so the head's bench loads 500 user lines (250 literals under `~/Projects`, 150 literal cache folders, 100 cache globs beside the fixture's) that name none of the fixture paths. Every path is still judged eligible, so the number is what layer 5 costs to say no. The bench checks that a path the whitelist names is kept.
+
+**Baseline.** Trunk median for `scan`, recorded first: 822,299 evaluations per second.
+
+**Runs.** Three runs of each side, alternated (trunk, head, trunk, head, trunk, head), 2026-11-16. Each cell is the median of five rounds in paths per second.
+
+| Run | Side | Load (1 min) | `scan` | `explain` | `cpu` |
+|---|---|---|---|---|---|
+| 1 | trunk | 5.77 | 814,402 | 210,888 | 1,265,907 |
+| 1 | head | 5.63 | 827,668 | 211,821 | 1,289,325 |
+| 2 | trunk | 5.44 | 826,197 | 211,641 | 1,296,806 |
+| 2 | head | 5.57 | 828,388 | 210,286 | 1,282,668 |
+| 3 | trunk | 5.33 | 822,299 | 199,214 | 1,296,313 |
+| 3 | head | 5.22 | 750,732 | 185,167 | 1,233,515 |
+
+Medians of the three runs: `scan` 822,299 on trunk and 827,668 on head (0.7% faster, inside the spread); `explain` 210,888 and 210,286; `cpu` 1,296,313 and 1,282,668. The rule passes by a wide margin. Run 3 of the head was the slowest cell, and its trunk neighbour was the slowest trunk cell for `explain`, so a background process most likely caused both.
+
+**What limits the number.** A `Pass` keeps one position in the whitelist trie per ancestor folder, so a path outside every entry costs one comparison and a path in a folder with entries costs one hash lookup plus a glob match per glob in that folder. A first version walked every component from the top for each path and measured 445,000 for `scan` (48% slower), almost all of it per-component allocation. The 100 cache globs are matched only for the 100 cache folders, not for the 100,000 files below them.
+
+**The work happened.** Every run reports 99,998 of 100,000 eligible for `scan` and `explain` on both sides, the same count as M0-3.
+
+**Machine.** Apple M1 Pro, 10 cores, 32 GB, macOS 26.6.2. Other agents were building on the machine, load average 5.2 to 5.8.
